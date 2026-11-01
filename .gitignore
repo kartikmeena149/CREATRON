@@ -29,3 +29,6 @@ models/
 # Python
 __pycache__/
 .venv/
+
+# Working files
+work/

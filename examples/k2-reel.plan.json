@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "segments": [
+    { "start": 0.01, "end": 4.5 },
+    { "start": 8.28, "end": 18.2, "zoom": 1.15 },
+    { "start": 18.05, "end": 23.9, "speed": 1.1 }
+  ],
+  "aspect": "9:16",
+  "reframeX": 0.5,
+  "captions": { "enabled": true, "style": "minimal", "wordsPerCaption": 4 },
+  "notes": "Hand-written example: kept the hook, cut the channel intro, punched in on the explanation and sped up the last line."
+}
