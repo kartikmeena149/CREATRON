@@ -86,6 +86,29 @@ button.link:hover { text-decoration: underline; background: none; }
 .slider .value { color: var(--accent-2); font-variant-numeric: tabular-nums; }
 input[type="range"] { width: 100%; accent-color: var(--accent); height: 16px; margin: 0; }
 
+/* Position & Size */
+.pos-size h3 .reset { background: none; border: none; color: var(--dim); font-size: 15px; padding: 0 2px; line-height: 1; }
+.pos-size h3 .reset:hover:not(:disabled) { color: var(--text); background: none; }
+.field-label { margin: 12px 0 6px; }
+.field-label:first-of-type { margin-top: 0; }
+.field-row { display: flex; align-items: center; gap: 8px; }
+.num-field { display: flex; align-items: stretch; gap: 3px; }
+.num-box { display: flex; align-items: center; background: var(--raised); border: 1px solid transparent; border-radius: 6px; height: 30px; padding: 0 8px; min-width: 0; }
+.num-box:focus-within { border-color: var(--accent); }
+.num-prefix { color: var(--faint); cursor: ew-resize; padding-right: 8px; user-select: none; }
+.num-prefix:hover { color: var(--accent-2); }
+.num-box input { width: 54px; background: none; border: none; outline: none; color: var(--text); font: inherit; text-align: right; font-variant-numeric: tabular-nums; }
+.field-row > .num-field { flex: none; }
+.field-row > .num-field + .num-field { margin-left: auto; }
+.stepper { display: flex; flex-direction: column; gap: 1px; }
+.stepper button { flex: 1; width: 18px; padding: 0; border: none; background: var(--raised); color: var(--dim); border-radius: 4px; display: grid; place-items: center; }
+.stepper svg path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.stepper button:hover:not(:disabled) { color: var(--text); }
+.dial { width: 30px; height: 30px; border-radius: 50%; background: var(--bg); border: 1px solid var(--line); position: relative; cursor: grab; margin-left: auto; flex: none; }
+.dial.active { cursor: grabbing; border-color: var(--accent); }
+.dial i { position: absolute; left: 50%; top: 50%; width: 11px; height: 2px; margin-top: -1px; background: var(--text); border-radius: 1px; transform-origin: 0 50%; }
+.dial i::after { content: ""; position: absolute; right: -2px; top: -1px; width: 4px; height: 4px; border-radius: 50%; background: var(--voice); }
+
 .segmented { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 2px; gap: 2px; margin-bottom: 6px; }
 .segmented button { flex: 1; border: none; background: transparent; color: var(--dim); padding: 4px 0; border-radius: 5px; }
 .segmented button.on { background: var(--raised); color: var(--text); }
@@ -101,7 +124,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 16px; ma
 .viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .viewer-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 18px; }
 .viewer-frame { position: relative; max-width: 100%; max-height: 100%; height: 100%; background: #000; overflow: hidden; box-shadow: 0 0 0 1px var(--line), 0 20px 60px rgba(0, 0, 0, 0.5); }
-.viewer-frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.viewer-frame { cursor: grab; }
+.viewer-frame.dragging { cursor: grabbing; }
+.video-box { position: absolute; overflow: hidden; }
+.video-box video { display: block; width: 100%; height: 100%; object-fit: fill; }
+.viewer-frame.dragging::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to right, transparent calc(50% - 0.5px), rgba(255, 255, 255, 0.35) calc(50% - 0.5px), rgba(255, 255, 255, 0.35) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(50% - 0.5px), rgba(255, 255, 255, 0.35) calc(50% - 0.5px), rgba(255, 255, 255, 0.35) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+}
 .caption { position: absolute; left: 7%; right: 7%; transform: translateY(-50%); text-align: center; line-height: 1.2; pointer-events: none; }
 /* Outline drawn with shadows around the letters, like the export's stroke-then-fill. */
 .caption.bold span {

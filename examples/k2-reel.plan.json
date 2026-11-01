@@ -6,7 +6,7 @@
     { "start": 18.05, "end": 23.9, "speed": 1.1 }
   ],
   "aspect": "9:16",
-  "reframeX": 0.5,
+  "transform": { "scale": 1, "x": 0, "y": 0, "rotate": 0 },
   "captions": { "enabled": true, "style": "minimal", "wordsPerCaption": 4 },
   "notes": "Hand-written example: kept the hook, cut the channel intro, punched in on the explanation and sped up the last line."
 }

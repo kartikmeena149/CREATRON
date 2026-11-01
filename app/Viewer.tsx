@@ -3,6 +3,7 @@
 // reframing is object-fit/position (the same crop the renderer does), captions are DOM text,
 // and voice tweaks run through Web Audio.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import { locate, useEditor } from "./store.ts";
 import { timecode } from "./format.ts";
@@ -88,22 +89,73 @@ export function Viewer() {
   const cue = cues.find((c) => time >= c.start && time < c.end);
   const bold = plan.captions.style === "bold";
   const capSize = Math.min(frameSize.w, frameSize.h) * (bold ? 0.075 : 0.05);
+  const place = placement(plan, a?.width ?? 16, a?.height ?? 9, frameSize.w, frameSize.h);
+
+  // Drag the picture to move it, like in a phone editor. One undo step per drag.
+  const [dragging, setDragging] = useState(false);
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0 || !frameSize.w) return;
+    const { checkpoint, live } = useEditor.getState();
+    const start = useEditor.getState().plan;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      if (!moved) {
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
+        moved = true;
+        checkpoint();
+        setDragging(true);
+      }
+      const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+      live({
+        ...start,
+        transform: {
+          ...start.transform,
+          x: clamp(start.transform.x + (ev.clientX - x0) / frameSize.w),
+          y: clamp(start.transform.y + (ev.clientY - y0) / frameSize.h),
+        },
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", up);
+      setDragging(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", up);
+  };
 
   if (!project) return <div className="viewer" />;
   return (
     <div className="viewer">
       <div className="viewer-stage">
-        <div className="viewer-frame" ref={frame} style={{ aspectRatio: String(ratio) }}>
-          <video
-            ref={video}
-            src={project.videoUrl}
-            crossOrigin="anonymous"
-            preload="auto"
+        <div
+          className={`viewer-frame ${dragging ? "dragging" : ""}`}
+          ref={frame}
+          style={{ aspectRatio: String(ratio) }}
+          onPointerDown={startDrag}
+          title="Drag to move the video"
+        >
+          {/* Same placement math as the export. The box clips the per-clip punch-in like the renderer's crop. */}
+          <div
+            className="video-box"
             style={{
-              objectPosition: `${plan.reframeX * 100}% 50%`,
-              transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined,
+              width: place.w,
+              height: place.h,
+              left: place.cx - place.w / 2,
+              top: place.cy - place.h / 2,
+              transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined,
             }}
-          />
+          >
+            <video
+              ref={video}
+              src={project.videoUrl}
+              crossOrigin="anonymous"
+              preload="auto"
+              style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
+            />
+          </div>
           {cue && (
             <div
               className={`caption ${bold ? "bold" : "minimal"}`}

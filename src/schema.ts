@@ -22,12 +22,16 @@ export const EditPlan = z.object({
     .enum(["source", "9:16", "1:1", "16:9"])
     .default("source")
     .describe("Output frame shape. 9:16 for Reels/Shorts/TikTok."),
-  reframeX: z
-    .number()
-    .min(0)
-    .max(1)
-    .default(0.5)
-    .describe("When cropping to a narrower aspect, horizontal center of the crop: 0 = left, 0.5 = middle, 1 = right"),
+  // Where the video sits in the output frame. At scale 1 it exactly fills the frame (no bars);
+  // x / y move it by a fraction of the frame's width / height, so 0.1 = 10% right / down.
+  transform: z
+    .object({
+      scale: z.number().min(0.1).max(3).default(1).describe("1 = fill the frame, 1.5 = 50% bigger, 0.8 = smaller with bars"),
+      x: z.number().min(-1).max(1).default(0).describe("Horizontal shift as a fraction of frame width; negative = left"),
+      y: z.number().min(-1).max(1).default(0).describe("Vertical shift as a fraction of frame height; negative = up"),
+      rotate: z.number().min(-180).max(180).default(0).describe("Rotation in degrees, clockwise"),
+    })
+    .default({ scale: 1, x: 0, y: 0, rotate: 0 }),
   captions: z
     .object({
       enabled: z.boolean(),

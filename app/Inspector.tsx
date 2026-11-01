@@ -2,6 +2,7 @@
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
 import type { EditPlan } from "../src/schema.ts";
 import { timecode } from "./format.ts";
+import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
 export function Inspector() {
@@ -51,11 +52,9 @@ export function Inspector() {
           options={[["source", "Original"], ["9:16", "9:16"], ["1:1", "1:1"], ["16:9", "16:9"]]}
           onChange={(aspect) => setPlan({ aspect: aspect as EditPlan["aspect"] })}
         />
-        {plan.aspect !== "source" && (
-          <Slider label="Position" min={0} max={1} step={0.01} value={plan.reframeX} display={(v) => (v < 0.45 ? "left" : v > 0.55 ? "right" : "center")}
-            onStart={checkpoint} onChange={(v) => live({ ...plan, reframeX: v })} />
-        )}
       </section>
+
+      <PositionSize />
 
       <section>
         <h3>

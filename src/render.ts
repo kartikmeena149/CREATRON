@@ -3,21 +3,13 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
+import { isIdentity, outputSize, placement } from "./frame.ts";
 import { audioChain, segmentAudio } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
-
-/** Output frame size for an aspect, capped so the long side is at most 1920. */
-export function outputSize(plan: EditPlan, a: Analysis): { width: number; height: number } {
-  if (plan.aspect === "9:16") return { width: 1080, height: 1920 };
-  if (plan.aspect === "1:1") return { width: 1080, height: 1080 };
-  if (plan.aspect === "16:9") return { width: 1920, height: 1080 };
-  const scale = Math.min(1, 1920 / Math.max(a.width, a.height));
-  return { width: even(a.width * scale), height: even(a.height * scale) };
-}
 
 export async function render(
   plan: EditPlan,
@@ -53,7 +45,7 @@ export async function render(
   });
   const n = plan.segments.length;
   filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat]${analysis.hasAudio ? "[acat]" : ""}`);
-  filters.push(`[cat]${reframe(plan, W, H)}scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p[framed]`);
+  filters.push(...frameFilters(plan, W, H, size, fps, total));
 
   let videoOut = "[framed]";
   const dir = join(workDir(analysis.source), "render");
@@ -89,16 +81,23 @@ export async function render(
   return resolve(out);
 }
 
-/** Crop the source to the target aspect around plan.reframeX. Empty when no crop is needed. */
-function reframe(plan: EditPlan, W: number, H: number): string {
-  if (plan.aspect === "source") return "";
-  const [aw, ah] = plan.aspect.split(":").map(Number);
-  const target = aw / ah;
-  if (Math.abs(W / H - target) < 0.01) return "";
-  if (W / H > target) {
-    const cw = even(H * target);
-    return `crop=${cw}:${H}:${Math.round((W - cw) * plan.reframeX)}:0,`;
+/** Turns the joined video [cat] into the output frame [framed], placed per plan.transform. */
+function frameFilters(
+  plan: EditPlan, W: number, H: number, size: { width: number; height: number }, fps: number, total: number,
+): string[] {
+  const { width: OW, height: OH } = size;
+  // Untouched transform: a centered cover crop is all that's needed (and cheapest).
+  if (isIdentity(plan.transform)) {
+    const k = Math.max(OW / W, OH / H);
+    return [`[cat]scale=${even(W * k)}:${even(H * k)}:flags=lanczos,crop=${OW}:${OH},format=yuv420p[framed]`];
   }
-  const ch = even(W / target);
-  return `crop=${W}:${ch}:0:${Math.round((H - ch) / 2)},`;
+  // Otherwise: size the video, rotate it, and place its center on a black frame (bars where it doesn't reach).
+  const p = placement(plan, W, H, OW, OH);
+  const rad = ((p.rotate * Math.PI) / 180).toFixed(6);
+  const rotate = p.rotate ? `,format=rgba,rotate=${rad}:ow='rotw(${rad})':oh='roth(${rad})':c=none` : "";
+  return [
+    `[cat]scale=${even(p.w)}:${even(p.h)}:flags=lanczos${rotate}[placed]`,
+    `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[bg]`,
+    `[bg][placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[framed]`,
+  ];
 }
