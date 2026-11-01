@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Node / Electron
+node_modules/
+dist/
+out/
+build/
+*.log
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Media (footage and renders stay local)
+*.mp4
+*.mov
+*.m4a
+*.wav
+*.mp3
+renders/
+samples/
+
+# Whisper models
+*.bin
+models/
+
+# Python
+__pycache__/
+.venv/
