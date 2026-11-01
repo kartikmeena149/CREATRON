@@ -1,6 +1,7 @@
 // The timeline: one row per layer (video, captions, voice), on the OUTPUT clock.
 // Drag clip edges to trim, click to select, S to split, Delete to ripple-delete.
 import { useEffect, useMemo, useRef } from "react";
+import { removePauses } from "../src/autocut.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import type { Segment } from "../src/schema.ts";
 import { shortTime } from "./format.ts";
@@ -10,7 +11,7 @@ const LABEL_W = 132;
 
 export function Timeline() {
   const { project, plan, time, pxPerSec, selected, past, future } = useEditor();
-  const { seek, select, setZoom, split, deleteSelected, undo, redo } = useEditor();
+  const { seek, select, setZoom, split, deleteSelected, undo, redo, commit, say } = useEditor();
   const scroller = useRef<HTMLDivElement>(null);
   const total = outputDuration(plan);
   const width = Math.max(total * pxPerSec + 200, 400);
@@ -53,6 +54,25 @@ export function Timeline() {
     window.addEventListener("pointerup", up);
   };
 
+  // First pass of an edit: drop all detected pauses, keep everything spoken.
+  const roughCut = () => {
+    if (!project) return;
+    const after = removePauses(plan, project.analysis);
+    const before = outputDuration(plan);
+    const now = outputDuration(after);
+    if (after === plan || before - now < 0.05) {
+      say({ role: "assistant", text: "Rough cut: no pauses left to remove." });
+      return;
+    }
+    commit(after);
+    say({
+      role: "assistant",
+      text: `Rough cut: removed ${(before - now).toFixed(1)}s of pauses.`,
+      before: plan,
+      meta: `instant · ${before.toFixed(1)}s → ${now.toFixed(1)}s`,
+    });
+  };
+
   const onWheel = (e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
@@ -69,6 +89,9 @@ export function Timeline() {
         <button title="Split at playhead (S)" onClick={split}>✂ Split</button>
         <button title="Delete clip (⌫)" disabled={selected === null || plan.segments.length < 2} onClick={deleteSelected}>
           ⌫ Delete
+        </button>
+        <button title="Cut out every pause and dead air (instant, undoable)" onClick={roughCut}>
+          ⚡ Rough Cut
         </button>
         <span className="grow" />
         <span className="dim small">{plan.segments.length} clips · {total.toFixed(1)}s</span>
