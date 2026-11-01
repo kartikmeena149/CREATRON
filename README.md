@@ -48,12 +48,12 @@ node src/cli.ts edit talk.mp4 "..." -m google/gemini-3-flash-preview   # any Ope
 | `src/plan.ts` | Prompt + OpenRouter call with a forced `submit_edit_plan` tool; one self-repair retry |
 | `src/snap.ts` | Moves cut edges onto the real waveform (Whisper times drift ~0.2 s) |
 | `src/captions.ts` | Groups words into cues on the output timeline, draws them as PNGs |
+| `src/loudness.ts` | Measures the edit and sets gain + limiter so every export is -14 LUFS, true peak under -1.5 dBTP |
 | `src/render.ts` | Builds the ffmpeg graph: per-segment seek, speed, zoom, 10 ms audio fades, reframe, overlay, loudness |
 
 ## Known limits (prototype)
 
 - Captions are drawn as PNG overlays because the Homebrew ffmpeg has no libass/freetype. The shipped app will bundle an **LGPL** ffmpeg with libass (the Homebrew build is GPL and can't be shipped).
-- Loudness is single-pass `loudnorm`: lands around -16 LUFS instead of the -14 target. Two-pass fixes it.
 - Reframing is a fixed horizontal position; speakers who move need face tracking.
 - Whisper model is English-only (`small.en`); Hindi/Hinglish needs a multilingual model.
 - Render runs at about real time with x264; VideoToolbox hardware encoding will be several times faster.

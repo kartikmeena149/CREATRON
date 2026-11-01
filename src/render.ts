@@ -2,6 +2,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildCues, drawCues, outputDuration } from "./captions.ts";
+import { gainForTarget, levelFilter, segmentAudio } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
@@ -34,17 +35,12 @@ export async function render(plan: EditPlan, analysis: Analysis, out: string, lo
   const filters: string[] = [];
   const pads: string[] = [];
   plan.segments.forEach((s, i) => {
-    const dur = (s.end - s.start) / s.speed;
     const zoom =
       s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "";
     filters.push(`[${i}:v]scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}${zoom},fps=${fps},setsar=1[v${i}]`);
     pads.push(`[v${i}]`);
     if (analysis.hasAudio) {
-      // 10 ms fades at every cut so joins don't click.
-      const fadeOut = Math.max(dur - 0.01, 0).toFixed(3);
-      filters.push(
-        `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01,aresample=48000[a${i}]`,
-      );
+      filters.push(segmentAudio(s, i));
       pads.push(`[a${i}]`);
     }
   });
@@ -65,7 +61,10 @@ export async function render(plan: EditPlan, analysis: Analysis, out: string, lo
     filters.push(`[framed][caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
     videoOut = "[final]";
   }
-  if (analysis.hasAudio) filters.push(`[acat]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]`);
+  if (analysis.hasAudio) {
+    const gain = await gainForTarget(plan, analysis, log);
+    filters.push(`[acat]${levelFilter(gain)},aresample=48000[aout]`);
+  }
 
   args.push("-filter_complex", filters.join(";"), "-map", videoOut);
   if (analysis.hasAudio) args.push("-map", "[aout]", "-c:a", "aac", "-b:a", "192k");
