@@ -3,7 +3,7 @@
 import { z } from "zod";
 import type { Analysis } from "./schema.ts";
 import { EditPlan, checkPlan } from "./schema.ts";
-import { round } from "./tools.ts";
+import { round } from "./round.ts";
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
@@ -29,6 +29,7 @@ export async function makePlan(
   request: string,
   model = process.env.CREATRON_MODEL || DEFAULT_MODEL,
   log = console.error,
+  current?: EditPlan,
 ): Promise<PlanResult> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -43,7 +44,17 @@ export async function makePlan(
   };
   const messages: any[] = [
     { role: "system", content: SYSTEM },
-    { role: "user", content: `${describe(analysis)}\n\nREQUEST: ${request}` },
+    {
+      role: "user",
+      content: [
+        describe(analysis),
+        // In the app the user is mid-edit: the model changes their timeline instead of starting over.
+        current
+          ? `\nCURRENT EDIT PLAN (the user's timeline; keep everything the request doesn't ask to change):\n${JSON.stringify(current)}`
+          : "",
+        `\nREQUEST: ${request}`,
+      ].join("\n"),
+    },
   ];
 
   const totals = { inputTokens: 0, outputTokens: 0, cost: 0 };

@@ -23,8 +23,25 @@ export function levelFilter(gainDb: number): string {
   return `volume=${gainDb.toFixed(2)}dB,alimiter=limit=${limit}:attack=5:release=50:level=disabled`;
 }
 
+/** The voice tweaks from the plan, applied before levelling. Empty when nothing is switched on. */
+export function voiceFilter(plan: EditPlan): string {
+  const parts: string[] = [];
+  if (plan.audio.denoise) parts.push("highpass=f=80", "afftdn=nr=12:nf=-40:tn=1");
+  if (plan.audio.clarity > 0) parts.push(`equalizer=f=3500:t=q:w=1:g=${plan.audio.clarity}`);
+  return parts.join(",");
+}
+
+/** Everything that happens to the joined audio: voice tweaks, then levelling (or manual volume). */
+export async function audioChain(plan: EditPlan, analysis: Analysis, log = console.error): Promise<string> {
+  const voice = voiceFilter(plan);
+  const level = plan.audio.normalize
+    ? levelFilter(await gainForTarget(plan, analysis, log))
+    : levelFilter(plan.audio.volumeDb);
+  return voice ? `${voice},${level}` : level;
+}
+
 /** Measures the edited audio (with an optional chain applied) and returns integrated LUFS and true peak. */
-async function measure(plan: EditPlan, analysis: Analysis, chain: string) {
+async function measureChain(plan: EditPlan, analysis: Analysis, chain: string) {
   const args: string[] = ["-v", "info", "-nostats"];
   for (const s of plan.segments) args.push("-ss", String(s.start), "-to", String(s.end), "-i", analysis.source);
   const filters = plan.segments.map(segmentAudio);
@@ -40,13 +57,16 @@ async function measure(plan: EditPlan, analysis: Analysis, chain: string) {
 
 /** Works out the gain that lands the edit on TARGET_LUFS after limiting. */
 export async function gainForTarget(plan: EditPlan, analysis: Analysis, log = console.error): Promise<number> {
-  const before = await measure(plan, analysis, "");
+  // Measure after the voice tweaks so denoise and clarity are levelled too.
+  const voice = voiceFilter(plan);
+  const measure = (chain: string) => measureChain(plan, analysis, [voice, chain].filter(Boolean).join(","));
+  const before = await measure("");
   if (!Number.isFinite(before.lufs)) return 0; // silent edit: nothing to level
   let gain = TARGET_LUFS - before.lufs;
   // The limiter eats more loudness the harder it is pushed, so correct until within 0.2 LU.
   let result = before.lufs;
   for (let pass = 0; pass < 4; pass++) {
-    result = (await measure(plan, analysis, levelFilter(gain))).lufs;
+    result = (await measure(levelFilter(gain))).lufs;
     if (!Number.isFinite(result) || Math.abs(TARGET_LUFS - result) <= 0.2) break;
     gain += TARGET_LUFS - result;
   }

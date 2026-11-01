@@ -1,8 +1,9 @@
 // Step 3: turn an edit plan into a finished video with ffmpeg, on the user's machine.
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildCues, drawCues, outputDuration } from "./captions.ts";
-import { gainForTarget, levelFilter, segmentAudio } from "./loudness.ts";
+import { drawCues } from "./captions.ts";
+import { buildCues, outputDuration } from "./timeline.ts";
+import { audioChain, segmentAudio } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
@@ -18,7 +19,13 @@ export function outputSize(plan: EditPlan, a: Analysis): { width: number; height
   return { width: even(a.width * scale), height: even(a.height * scale) };
 }
 
-export async function render(plan: EditPlan, analysis: Analysis, out: string, log = console.error): Promise<string> {
+export async function render(
+  plan: EditPlan,
+  analysis: Analysis,
+  out: string,
+  log = console.error,
+  onProgress?: (fraction: number) => void,
+): Promise<string> {
   const problems = checkPlan(plan, analysis);
   if (problems.length) throw new Error(`edit plan does not fit this video:\n- ${problems.join("\n- ")}`);
 
@@ -62,8 +69,7 @@ export async function render(plan: EditPlan, analysis: Analysis, out: string, lo
     videoOut = "[final]";
   }
   if (analysis.hasAudio) {
-    const gain = await gainForTarget(plan, analysis, log);
-    filters.push(`[acat]${levelFilter(gain)},aresample=48000[aout]`);
+    filters.push(`[acat]${await audioChain(plan, analysis, log)},aresample=48000[aout]`);
   }
 
   args.push("-filter_complex", filters.join(";"), "-map", videoOut);
@@ -75,7 +81,11 @@ export async function render(plan: EditPlan, analysis: Analysis, out: string, lo
   );
 
   log(`render: ${n} segments -> ${total.toFixed(1)}s ${size.width}x${size.height}`);
-  await run("ffmpeg", args);
+  // ffmpeg -stats prints "time=00:00:12.34" as it goes; turn that into a 0..1 fraction.
+  await run("ffmpeg", args, (chunk) => {
+    const m = chunk.match(/time=(\d+):(\d+):([\d.]+)/g)?.at(-1)?.match(/(\d+):(\d+):([\d.]+)/);
+    if (m && onProgress) onProgress(Math.min(1, (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / total));
+  });
   return resolve(out);
 }
 

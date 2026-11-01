@@ -32,3 +32,6 @@ __pycache__/
 
 # Working files
 work/
+
+# App build output
+out/

@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { analyze } from "./analyze.ts";
-import { outputDuration } from "./captions.ts";
+import { outputDuration } from "./timeline.ts";
 import { DEFAULT_MODEL, describe, makePlan } from "./plan.ts";
 import { render } from "./render.ts";
 import { EditPlan } from "./schema.ts";

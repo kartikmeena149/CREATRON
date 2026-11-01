@@ -5,18 +5,22 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
-export const ROOT = resolve(import.meta.dirname, "..");
+// The app sets CREATRON_ROOT because its bundled code runs from out/, not src/.
+export const ROOT = process.env.CREATRON_ROOT || resolve(import.meta.dirname, "..");
 
 export type RunResult = { stdout: string; stderr: string };
 
 /** Runs a command and resolves with its output; rejects with the tail of stderr on failure. */
-export function run(cmd: string, args: string[]): Promise<RunResult> {
+export function run(cmd: string, args: string[], onStderr?: (chunk: string) => void): Promise<RunResult> {
   return new Promise((ok, fail) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
-    child.stderr.on("data", (d) => (stderr += d));
+    child.stderr.on("data", (d) => {
+      stderr += d;
+      onStderr?.(String(d));
+    });
     child.on("error", (e) => fail(new Error(`could not start ${cmd}: ${e.message}`)));
     child.on("close", (code) => {
       if (code === 0) ok({ stdout, stderr });
@@ -51,4 +55,4 @@ export function whisperModel(): string {
   return found;
 }
 
-export const round = (n: number, places = 2) => Math.round(n * 10 ** places) / 10 ** places;
+export { round } from "./round.ts";

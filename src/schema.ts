@@ -35,6 +35,14 @@ export const EditPlan = z.object({
       wordsPerCaption: z.number().int().min(1).max(8).default(3),
     })
     .default({ enabled: false, style: "bold", wordsPerCaption: 3 }),
+  audio: z
+    .object({
+      denoise: z.boolean().default(false).describe("Remove background hiss and hum from the voice"),
+      clarity: z.number().min(0).max(6).default(0).describe("Presence boost in dB that makes speech cut through, 0-6"),
+      normalize: z.boolean().default(true).describe("Level the export to -14 LUFS, the Reels/YouTube standard"),
+      volumeDb: z.number().min(-12).max(12).default(0).describe("Extra volume in dB, used when normalize is off"),
+    })
+    .default({ denoise: false, clarity: 0, normalize: true, volumeDb: 0 }),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

@@ -2,7 +2,26 @@
 
 Cursor for video. Describe the edit, pick any AI model, get a finished video. Rendering happens on your Mac and your footage never leaves it. See [PLAN.md](PLAN.md) for the product plan.
 
-This is the **command-line prototype** of the core loop:
+## The app
+
+```bash
+npm install
+npm start          # builds and opens the editor
+npm run dev        # same, with hot reload while working on the UI
+```
+
+A Mac editor with four areas:
+
+- **Viewer**: live preview of the edit straight from the original file (cuts, speed, zoom, 9:16 crop, captions, voice EQ). No render needed.
+- **Timeline**: V1 video (thumbnails), T1 captions, A1 voice (waveform). Drag clip edges to trim, `S` split, `⌫` ripple delete, `⌘Z` / `⇧⌘Z` undo/redo, `Space` play, `⌘`+scroll to zoom.
+- **Inspector**: clip speed and punch-in zoom, frame shape and position, caption style, voice cleanup / clarity / loudness.
+- **Creatron AI**: type an edit and the AI changes the current timeline; quick actions (remove pauses, make a reel, clean up voice, punch-in zooms) run instantly with no AI. Every change has "Undo this".
+
+Export renders the same plan with the engine below. App code: `electron/` (window, media server, IPC) and `app/` (React UI).
+
+## The engine
+
+The engine is also usable from the terminal:
 
 ```
 video ──► analyze (local) ──► plan (AI, text only) ──► snap cuts to waveform ──► render (local ffmpeg)
