@@ -35,3 +35,6 @@ work/
 
 # App build output
 out/
+
+# Cloned voices (personal recordings)
+voices/

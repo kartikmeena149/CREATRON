@@ -7,7 +7,8 @@ import { CaptionOverlay } from "./CaptionOverlay.tsx";
 import { placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import { locate, useEditor } from "./store.ts";
-import { timecode } from "./format.ts";
+import { mediaUrl, timecode } from "./format.ts";
+import type { Voiceover } from "../src/schema.ts";
 
 export function Viewer() {
   const { project, plan, time, playing, seek, setPlaying } = useEditor();
@@ -84,7 +85,10 @@ export function Viewer() {
     // Restart the loop when the edit changes mid-play so it follows the new cuts.
   }, [playing, plan]);
 
-  useVoicePreview(video, plan.audio);
+  // While a voiceover plays, dip the original like the export does.
+  const underVoiceover = plan.voiceovers.some((v) => time >= v.at && time < v.at + v.duration);
+  useVoicePreview(video, plan.audio, underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1);
+  useVoiceoverPlayback(plan.voiceovers, time, playing);
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
@@ -174,7 +178,11 @@ export function Viewer() {
 }
 
 /** Routes the preview's sound through the same voice tweaks the export applies. */
-function useVoicePreview(video: React.RefObject<HTMLVideoElement | null>, audio: { denoise: boolean; clarity: number; normalize: boolean; volumeDb: number }) {
+function useVoicePreview(
+  video: React.RefObject<HTMLVideoElement | null>,
+  audio: { denoise: boolean; clarity: number; normalize: boolean; volumeDb: number },
+  duck: number,
+) {
   const nodes = useRef<{ ctx: AudioContext; hp: BiquadFilterNode; eq: BiquadFilterNode; gain: GainNode }>(null);
   useEffect(() => {
     const v = video.current;
@@ -199,6 +207,35 @@ function useVoicePreview(video: React.RefObject<HTMLVideoElement | null>, audio:
     if (!n) return;
     n.hp.frequency.value = audio.denoise ? 80 : 10;
     n.eq.gain.value = audio.clarity;
-    n.gain.gain.value = audio.normalize ? 1 : 10 ** (audio.volumeDb / 20);
-  }, [audio.denoise, audio.clarity, audio.normalize, audio.volumeDb]);
+    const level = (audio.normalize ? 1 : 10 ** (audio.volumeDb / 20)) * duck;
+    n.gain.gain.setTargetAtTime(level, n.ctx.currentTime, 0.08); // smooth, like the export's ramp
+  }, [audio.denoise, audio.clarity, audio.normalize, audio.volumeDb, duck]);
+}
+
+/** Plays each A2 voiceover in step with the edit's clock while the preview plays. */
+function useVoiceoverPlayback(voiceovers: Voiceover[], time: number, playing: boolean) {
+  const players = useRef(new Map<string, HTMLAudioElement>());
+  useEffect(() => {
+    const map = players.current;
+    // Drop players for voiceovers that were deleted.
+    for (const [id, a] of map) if (!voiceovers.some((v) => v.id === id)) (a.pause(), map.delete(id));
+    for (const v of voiceovers) {
+      let a = map.get(v.id);
+      if (!a) {
+        a = new Audio(mediaUrl(v.file));
+        a.preload = "auto";
+        map.set(v.id, a);
+      }
+      a.volume = Math.min(1, 10 ** (v.volumeDb / 20));
+      const inside = playing && time >= v.at && time < v.at + v.duration;
+      const want = v.offset + (time - v.at);
+      if (!inside) {
+        if (!a.paused) a.pause();
+      } else if (a.paused) {
+        a.currentTime = want;
+        a.play().catch(() => {});
+      } else if (Math.abs(a.currentTime - want) > 0.2) a.currentTime = want; // re-sync after a seek
+    }
+  }, [voiceovers, time, playing]);
+  useEffect(() => () => players.current.forEach((a) => a.pause()), []);
 }

@@ -115,7 +115,8 @@ export function wholeVideo(analysis: Analysis): EditPlan {
     aspect: "source",
     transform: { scale: 1, x: 0, y: 0, rotate: 0 },
     captions: { ...DEFAULT_CAPTIONS },
-    audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0 },
+    audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },
+    voiceovers: [],
     notes: "",
   };
 }

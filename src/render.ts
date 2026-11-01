@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
 import { isIdentity, outputSize, placement } from "./frame.ts";
-import { audioChain, segmentAudio } from "./loudness.ts";
+import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
@@ -61,7 +61,12 @@ export async function render(
     videoOut = "[final]";
   }
   if (analysis.hasAudio) {
-    filters.push(`[acat]${await audioChain(plan, analysis, log)},aresample=48000[aout]`);
+    // Voiceover files come after the segment (and caption) inputs.
+    const firstVo = args.filter((a) => a === "-i").length;
+    args.push(...voiceoverInputs(plan));
+    const { origGainDb, level } = await prepareAudio(plan, analysis, log);
+    filters.push(...mixFilters(plan, "[acat]", firstVo, origGainDb));
+    filters.push(`[mix]${level},aresample=48000[aout]`);
   }
 
   args.push("-filter_complex", filters.join(";"), "-map", videoOut);

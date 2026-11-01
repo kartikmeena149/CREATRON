@@ -7,6 +7,7 @@ import { makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
+import { cloneVoice, deleteVoice, generateVoiceover, importSkillVoice, listVoices, stopVoiceEngine } from "../src/voice.ts";
 import { handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
 
 registerMediaScheme();
@@ -96,9 +97,38 @@ ipcMain.handle(
 
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
 
+// ---- Voice Lab ----
+ipcMain.handle("voices", safe(async () => listVoices().map((v) => ({ ...v, url: v.file ? mediaUrl(v.file) : undefined }))));
+
+ipcMain.handle("pick-audio", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile"],
+    filters: [{ name: "Audio or video", extensions: ["wav", "mp3", "m4a", "aac", "flac", "ogg", "mp4", "mov", "m4v", "webm"] }],
+  });
+  return r.canceled ? undefined : r.filePaths[0];
+});
+
+ipcMain.handle(
+  "clone-voice",
+  safe(async (opts: { source: string; start: number; duration: number; name: string; consent: boolean }) => cloneVoice(opts)),
+);
+
+ipcMain.handle("delete-voice", safe(async (id: string) => deleteVoice(id)));
+
+ipcMain.handle(
+  "generate-voiceover",
+  safe(async (opts: { text: string; voiceId: string; speed: number }) => {
+    const r = await generateVoiceover(opts, status);
+    status("");
+    return { ...r, url: mediaUrl(r.file) };
+  }),
+);
+
 app.whenReady().then(() => {
   handleMedia();
+  importSkillVoice(); // your voice from the my-voiceover skill shows up in the Voice Lab
   createWindow();
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
 app.on("window-all-closed", () => app.quit());
+app.on("will-quit", stopVoiceEngine);

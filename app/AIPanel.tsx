@@ -6,6 +6,7 @@ import { DEFAULT_MODEL } from "../src/plan.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
 import { CaptionList } from "./CaptionList.tsx";
+import { VoiceLab } from "./VoiceLab.tsx";
 import { useEditor } from "./store.ts";
 
 type Quick = { label: string; run: (plan: EditPlan) => EditPlan; says: string };
@@ -89,11 +90,14 @@ export function AIPanel() {
           <button className={rightTab === "captions" ? "on" : ""} onClick={() => set({ rightTab: "captions" })}>
             Captions
           </button>
+          <button className={rightTab === "voice" ? "on" : ""} onClick={() => set({ rightTab: "voice" })}>
+            Voice
+          </button>
         </div>
         {rightTab === "ai" && <div className="dim small">{DEFAULT_MODEL.split("/").pop()}</div>}
       </div>
 
-      {rightTab === "captions" ? <CaptionList /> : <>
+      {rightTab === "voice" ? <VoiceLab /> : rightTab === "captions" ? <CaptionList /> : <>
       <div className="ai-messages" ref={list}>
         {!messages.length && (
           <div className="ai-empty">

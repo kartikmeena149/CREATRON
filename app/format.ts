@@ -11,3 +11,6 @@ export function shortTime(t: number): string {
   const s = Math.round(t - m * 60);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+/** URL the app's media:// handler serves a local file at (same as electron/media.ts). */
+export const mediaUrl = (path: string) => `media://local/?p=${encodeURIComponent(path)}`;

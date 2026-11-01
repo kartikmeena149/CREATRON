@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { roughCut } from "../src/autocut.ts";
 import { type Cue, buildCues, captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
-import type { Segment } from "../src/schema.ts";
+import type { Segment, Voiceover } from "../src/schema.ts";
 import { shortTime } from "./format.ts";
 import { type Thumbs, type Wave, useEditor } from "./store.ts";
 
@@ -117,6 +117,7 @@ export function Timeline() {
           <div className="track-label video"><b>V1</b> Video</div>
           <div className="track-label captions"><b>T1</b> Captions{!plan.captions.enabled && <em> off</em>}</div>
           <div className="track-label voice"><b>A1</b> Voice</div>
+          <div className="track-label voiceover"><b>A2</b> Voiceover</div>
         </div>
 
         <div className="tl-scroll" ref={scroller} onWheel={onWheel}>
@@ -139,6 +140,13 @@ export function Timeline() {
               {segs.map(({ s, x, w }, i) => (
                 <WaveClip key={i} seg={s} x={x} w={w} wave={project.wave} selected={selected === i} />
               ))}
+            </div>
+
+            <div className="track voiceover" onPointerDown={(e) => e.target === e.currentTarget && (useEditor.getState().selectVo(null), scrub(e))}>
+              {plan.voiceovers.map((v) => (
+                <VoiceoverBlock key={v.id} vo={v} />
+              ))}
+              {!plan.voiceovers.length && <span className="track-empty">Make a voiceover in the Voice tab</span>}
             </div>
 
             <div className="playhead" style={{ left: time * pxPerSec }} />
@@ -301,6 +309,55 @@ function CueBlock({ cue }: { cue: Cue }) {
       <span>{cue.text}</span>
       <div className="handle left" onPointerDown={retime("start")} />
       <div className="handle right" onPointerDown={retime("end")} />
+    </div>
+  );
+}
+
+/** A voiceover on A2: drag to move it in time, drag an edge to trim, click to select. */
+function VoiceoverBlock({ vo }: { vo: Voiceover }) {
+  const { pxPerSec, selectedVo, selectVo } = useEditor();
+  const selected = selectedVo === vo.id;
+
+  const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    selectVo(vo.id);
+    const x0 = e.clientX;
+    const orig = { ...vo };
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const d = (ev.clientX - x0) / pxPerSec;
+      if (!moved) {
+        if (Math.abs(ev.clientX - x0) < 3) return;
+        moved = true;
+        useEditor.getState().checkpoint();
+      }
+      const up = useEditor.getState().updateVoiceover;
+      if (mode === "move") up(vo.id, { at: Math.max(0, orig.at + d) }, false);
+      else if (mode === "start") {
+        // Trim the front: start later in the file and later on the timeline.
+        const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.2, d));
+        up(vo.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
+      } else {
+        const max = (orig.length ?? Infinity) - orig.offset;
+        up(vo.id, { duration: Math.max(0.2, Math.min(max, orig.duration + d)) }, false);
+      }
+    };
+    const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+  };
+
+  return (
+    <div
+      className={`vo-clip ${selected ? "selected" : ""}`}
+      style={{ left: vo.at * pxPerSec, width: Math.max(6, vo.duration * pxPerSec - 1) }}
+      onPointerDown={drag("move")}
+      onDoubleClick={() => useEditor.getState().set({ rightTab: "voice" })}
+      title={`${vo.voice}: ${vo.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
+    >
+      <span className="vo-label">🎙 {vo.text}</span>
+      <div className="handle left" onPointerDown={drag("start")} />
+      <div className="handle right" onPointerDown={drag("end")} />
     </div>
   );
 }

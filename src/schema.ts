@@ -25,6 +25,20 @@ export const Caption = z.object({
 });
 export type Caption = z.infer<typeof Caption>;
 
+/** A generated voiceover clip on the A2 track. at/duration are output seconds; offset is seconds into the file. */
+export const Voiceover = z.object({
+  id: z.string(),
+  file: z.string(),
+  text: z.string().default(""),
+  voice: z.string().default(""),
+  at: z.number().min(0),
+  offset: z.number().min(0).default(0),
+  duration: z.number().positive(),
+  length: z.number().positive().optional().describe("Full length of the file, so trims can't run past it"),
+  volumeDb: z.number().min(-24).max(12).default(0),
+});
+export type Voiceover = z.infer<typeof Voiceover>;
+
 export const DEFAULT_CAPTIONS = {
   enabled: false,
   style: "bold" as const,
@@ -77,8 +91,11 @@ export const EditPlan = z.object({
       clarity: z.number().min(0).max(6).default(0).describe("Presence boost in dB that makes speech cut through, 0-6"),
       normalize: z.boolean().default(true).describe("Level the export to -14 LUFS, the Reels/YouTube standard"),
       volumeDb: z.number().min(-12).max(12).default(0).describe("Extra volume in dB, used when normalize is off"),
+      duckDb: z.number().min(-40).max(0).default(-14).describe("How much the original audio drops under a voiceover, dB"),
     })
-    .default({ denoise: false, clarity: 0, normalize: true, volumeDb: 0 }),
+    .default({ denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 }),
+  // Generated speech placed on the A2 track. Timed on the OUTPUT clock: it sits where you put it.
+  voiceovers: z.array(Voiceover).default([]),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

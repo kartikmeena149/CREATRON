@@ -3,7 +3,7 @@
 // Every change goes through history so anything (including an AI edit) can be undone.
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
-import { type Analysis, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment } from "../src/schema.ts";
+import { type Analysis, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment, type Voiceover } from "../src/schema.ts";
 import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
@@ -49,7 +49,7 @@ type State = {
 
   /** Selected caption (index into captionsOf), and which right-panel tab shows. */
   selectedCue: number | null;
-  rightTab: "ai" | "captions";
+  rightTab: "ai" | "captions" | "voice";
   selectCue(i: number | null): void;
   /** Change caption style/position (not the captions themselves). */
   setCaptionStyle(patch: Partial<EditPlan["captions"]>, record?: boolean): void;
@@ -61,6 +61,14 @@ type State = {
   /** Throw away caption edits and follow the transcript again. */
   resetCaptions(): void;
 
+  /** Selected voiceover clip on A2 (by id). */
+  selectedVo: string | null;
+  selectVo(id: string | null): void;
+  /** Drops a generated voiceover onto A2 at the playhead. */
+  addVoiceover(v: { file: string; duration: number; text: string; voice: string }): void;
+  updateVoiceover(id: string, patch: Partial<Voiceover>, record?: boolean): void;
+  deleteVoiceover(id: string): void;
+
   set(partial: Partial<State>): void;
   say(m: Message): void;
 };
@@ -71,7 +79,8 @@ const placeholder: EditPlan = {
   aspect: "source",
   transform: { scale: 1, x: 0, y: 0, rotate: 0 },
   captions: { ...DEFAULT_CAPTIONS },
-  audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0 },
+  audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },
+  voiceovers: [],
   notes: "",
 };
 
@@ -100,7 +109,7 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set({ project, plan: wholeVideo(project.analysis), past: [], future: [], selected: null, selectedCue: null, time: 0, playing: false }),
+    set({ project, plan: wholeVideo(project.analysis), past: [], future: [], selected: null, selectedCue: null, selectedVo: null, time: 0, playing: false }),
   commit: (plan) => set((s) => ({ plan, past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
   live: (plan) => set({ plan }),
@@ -108,15 +117,15 @@ export const useEditor = create<State>((set, get) => ({
     set((s) => {
       const prev = s.past.at(-1);
       if (!prev) return s;
-      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, selectedCue: null };
+      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, selectedCue: null, selectedVo: null };
     }),
   redo: () =>
     set((s) => {
       const next = s.future[0];
       if (!next) return s;
-      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, selectedCue: null };
+      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, selectedCue: null, selectedVo: null };
     }),
-  select: (selected) => set(selected === null ? { selected } : { selected, selectedCue: null }),
+  select: (selected) => set(selected === null ? { selected } : { selected, selectedCue: null, selectedVo: null }),
   seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, outputDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(2, Math.min(400, pxPerSec)) }),
@@ -150,7 +159,7 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedCue: null,
   rightTab: "ai",
-  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null }),
+  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, selectedVo: null }),
 
   setCaptionStyle: (patch, record = true) => {
     const { plan } = get();
@@ -189,6 +198,29 @@ export const useEditor = create<State>((set, get) => ({
     const { cues: _, ...rest } = plan.captions;
     get().commit({ ...plan, captions: rest });
     set({ selectedCue: null });
+  },
+
+  selectedVo: null,
+  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo } : { selectedVo, selected: null, selectedCue: null }),
+
+  addVoiceover: (v) => {
+    const { plan, time } = get();
+    const id = Math.random().toString(36).slice(2, 10);
+    const vo: Voiceover = { id, file: v.file, text: v.text, voice: v.voice, at: Math.max(0, time), offset: 0, duration: v.duration, length: v.duration, volumeDb: 0 };
+    get().commit({ ...plan, voiceovers: [...plan.voiceovers, vo] });
+    set({ selectedVo: id, selected: null, selectedCue: null });
+  },
+
+  updateVoiceover: (id, patch, record = true) => {
+    const { plan } = get();
+    const voiceovers = plan.voiceovers.map((v) => (v.id === id ? { ...v, ...patch } : v));
+    (record ? get().commit : get().live)({ ...plan, voiceovers });
+  },
+
+  deleteVoiceover: (id) => {
+    const { plan } = get();
+    get().commit({ ...plan, voiceovers: plan.voiceovers.filter((v) => v.id !== id) });
+    set({ selectedVo: null });
   },
 
   set: (partial) => set(partial),
