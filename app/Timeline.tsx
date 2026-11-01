@@ -1,7 +1,7 @@
 // The timeline: one row per layer (video, captions, voice), on the OUTPUT clock.
 // Drag clip edges to trim, click to select, S to split, Delete to ripple-delete.
 import { useEffect, useMemo, useRef } from "react";
-import { removePauses } from "../src/autocut.ts";
+import { roughCut } from "../src/autocut.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import type { Segment } from "../src/schema.ts";
 import { shortTime } from "./format.ts";
@@ -54,20 +54,23 @@ export function Timeline() {
     window.addEventListener("pointerup", up);
   };
 
-  // First pass of an edit: drop all detected pauses, keep everything spoken.
-  const roughCut = () => {
+  // First pass of an edit: keep only spoken lines, drop retakes, outtakes and pauses.
+  const doRoughCut = () => {
     if (!project) return;
-    const after = removePauses(plan, project.analysis);
+    const r = roughCut(plan, project.analysis);
     const before = outputDuration(plan);
-    const now = outputDuration(after);
-    if (after === plan || before - now < 0.05) {
-      say({ role: "assistant", text: "Rough cut: no pauses left to remove." });
+    const now = outputDuration(r.plan);
+    if (before - now < 0.05) {
+      say({ role: "assistant", text: "Rough cut: nothing left to cut. Every part of this edit is speech." });
       return;
     }
-    commit(after);
+    commit(r.plan);
+    const lines = ["• dead air and pauses"];
+    for (const t of r.retakes) lines.push(`• retake: “${t}”`);
+    for (const t of r.outtakes) lines.push(`• outtake: “${t}”`);
     say({
       role: "assistant",
-      text: `Rough cut: removed ${(before - now).toFixed(1)}s of pauses.`,
+      text: `Rough cut removed ${(before - now).toFixed(1)}s:\n${lines.join("\n")}`,
       before: plan,
       meta: `instant · ${before.toFixed(1)}s → ${now.toFixed(1)}s`,
     });
@@ -90,7 +93,7 @@ export function Timeline() {
         <button title="Delete clip (⌫)" disabled={selected === null || plan.segments.length < 2} onClick={deleteSelected}>
           ⌫ Delete
         </button>
-        <button title="Cut out every pause and dead air (instant, undoable)" onClick={roughCut}>
+        <button className="rough-cut" title="Keep only what you say: cuts dead air, pauses, retakes and outtakes (instant, undoable)" onClick={doRoughCut}>
           ⚡ Rough Cut
         </button>
         <span className="grow" />

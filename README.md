@@ -13,7 +13,7 @@ npm run dev        # same, with hot reload while working on the UI
 A Mac editor with four areas:
 
 - **Viewer**: live preview of the edit straight from the original file (cuts, speed, zoom, 9:16 crop, captions, voice EQ). No render needed.
-- **Timeline**: V1 video (thumbnails), T1 captions, A1 voice (waveform). Drag clip edges to trim, `S` split, `⌫` ripple delete, `⌘Z` / `⇧⌘Z` undo/redo, `Space` play, `⌘`+scroll to zoom.
+- **Timeline**: V1 video (thumbnails), T1 captions, A1 voice (waveform). Drag clip edges to trim, `S` split, `⌫` ripple delete, **⚡ Rough Cut** (keeps only spoken lines: drops dead air, pauses, retakes and "okay, thank you" outtakes), `⌘Z` / `⇧⌘Z` undo/redo, `Space` play, `⌘`+scroll to zoom.
 - **Inspector**: clip speed and punch-in zoom, frame shape and position, caption style, voice cleanup / clarity / loudness.
 - **Creatron AI**: type an edit and the AI changes the current timeline; quick actions (remove pauses, make a reel, clean up voice, punch-in zooms) run instantly with no AI. Every change has "Undo this".
 

@@ -161,6 +161,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 16px; ma
 .tl-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); }
 .tl-toolbar button { padding: 3px 9px; font-size: 12px; }
 .tl-toolbar input[type="range"] { width: 120px; }
+.tl-toolbar .rough-cut { border-color: rgba(139, 123, 255, 0.55); color: var(--accent-2); }
+.tl-toolbar .rough-cut:hover:not(:disabled) { background: rgba(139, 123, 255, 0.14); border-color: var(--accent); }
 .tl-toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
 .tl-body { flex: 1; display: flex; min-height: 0; }
 .tl-labels { flex: none; border-right: 1px solid var(--line); background: var(--panel-2); }
