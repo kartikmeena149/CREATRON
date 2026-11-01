@@ -17,6 +17,8 @@ const api = {
   onStatus: on("status"),
   onExportProgress: on("export-progress"),
   onOpenPath: on("open-path"),
+  // Launched with --creatron-debug (automated tests): the UI exposes its state for inspection.
+  debug: process.argv.includes("--creatron-debug"),
 };
 
 contextBridge.exposeInMainWorld("creatron", api);

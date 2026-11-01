@@ -15,6 +15,7 @@ A Mac editor with four areas:
 - **Viewer**: live preview of the edit straight from the original file (cuts, speed, zoom, 9:16 crop, captions, voice EQ). No render needed.
 - **Timeline**: V1 video (thumbnails), T1 captions, A1 voice (waveform). Drag clip edges to trim, `S` split, `⌫` ripple delete, **⚡ Rough Cut** (keeps only spoken lines: drops dead air, pauses, retakes and "okay, thank you" outtakes), `⌘Z` / `⇧⌘Z` undo/redo, `Space` play, `⌘`+scroll to zoom.
 - **Inspector**: clip speed and punch-in zoom, frame shape, **Position & Size** (scale, X/Y in output pixels, rotate; drag the video in the viewer to move it), caption style, voice cleanup / clarity / loudness.
+- **Captions**: real, editable captions stored in the plan (timed to the source speech, so they survive re-cuts). Double-click a caption in the viewer to edit it, drag to move all captions (⌥-drag moves one), style size / colour / case / position in the inspector, fix any word in the **Captions** tab, retime on the T1 track by dragging edges, ⌫ to delete, + to add. The AI can write captions too.
 - **Creatron AI**: type an edit and the AI changes the current timeline; quick actions (remove pauses, make a reel, clean up voice, punch-in zooms) run instantly with no AI. Every change has "Undo this".
 
 Export renders the same plan with the engine below. App code: `electron/` (window, media server, IPC) and `app/` (React UI).

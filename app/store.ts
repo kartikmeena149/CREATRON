@@ -3,8 +3,8 @@
 // Every change goes through history so anything (including an AI edit) can be undone.
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
-import type { Analysis, EditPlan, Segment } from "../src/schema.ts";
-import { outputDuration } from "../src/timeline.ts";
+import { type Analysis, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment } from "../src/schema.ts";
+import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 export type Wave = { rate: number; peaks: number[] };
@@ -46,6 +46,21 @@ type State = {
   updateSegment(i: number, patch: Partial<Segment>, record?: boolean): void;
   split(): void;
   deleteSelected(): void;
+
+  /** Selected caption (index into captionsOf), and which right-panel tab shows. */
+  selectedCue: number | null;
+  rightTab: "ai" | "captions";
+  selectCue(i: number | null): void;
+  /** Change caption style/position (not the captions themselves). */
+  setCaptionStyle(patch: Partial<EditPlan["captions"]>, record?: boolean): void;
+  /** Change one caption. The first edit turns auto captions into the user's own list. */
+  editCaption(i: number, patch: Partial<Caption>, record?: boolean): void;
+  deleteCaption(i: number): void;
+  /** New caption at the playhead, 2 s long (cut short if the clip ends sooner). */
+  addCaption(): void;
+  /** Throw away caption edits and follow the transcript again. */
+  resetCaptions(): void;
+
   set(partial: Partial<State>): void;
   say(m: Message): void;
 };
@@ -55,7 +70,7 @@ const placeholder: EditPlan = {
   segments: [{ start: 0, end: 1, speed: 1, zoom: 1 }],
   aspect: "source",
   transform: { scale: 1, x: 0, y: 0, rotate: 0 },
-  captions: { enabled: false, style: "bold", wordsPerCaption: 3 },
+  captions: { ...DEFAULT_CAPTIONS },
   audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0 },
   notes: "",
 };
@@ -85,7 +100,7 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set({ project, plan: wholeVideo(project.analysis), past: [], future: [], selected: null, time: 0, playing: false }),
+    set({ project, plan: wholeVideo(project.analysis), past: [], future: [], selected: null, selectedCue: null, time: 0, playing: false }),
   commit: (plan) => set((s) => ({ plan, past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
   live: (plan) => set({ plan }),
@@ -93,15 +108,15 @@ export const useEditor = create<State>((set, get) => ({
     set((s) => {
       const prev = s.past.at(-1);
       if (!prev) return s;
-      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null };
+      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, selectedCue: null };
     }),
   redo: () =>
     set((s) => {
       const next = s.future[0];
       if (!next) return s;
-      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null };
+      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, selectedCue: null };
     }),
-  select: (selected) => set({ selected }),
+  select: (selected) => set(selected === null ? { selected } : { selected, selectedCue: null }),
   seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, outputDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(2, Math.min(400, pxPerSec)) }),
@@ -131,6 +146,49 @@ export const useEditor = create<State>((set, get) => ({
     if (selected === null || plan.segments.length <= 1) return;
     get().commit({ ...plan, segments: plan.segments.filter((_, i) => i !== selected) });
     set((s) => ({ selected: null, time: Math.min(s.time, outputDuration(s.plan)) }));
+  },
+
+  selectedCue: null,
+  rightTab: "ai",
+  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null }),
+
+  setCaptionStyle: (patch, record = true) => {
+    const { plan } = get();
+    (record ? get().commit : get().live)({ ...plan, captions: { ...plan.captions, ...patch } });
+  },
+
+  editCaption: (i, patch, record = true) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const cues = captionsOf(plan, project.analysis.words).map((c, n) => (n === i ? { ...c, ...patch } : c));
+    get().setCaptionStyle({ cues }, record);
+  },
+
+  deleteCaption: (i) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const cues = captionsOf(plan, project.analysis.words).filter((_, n) => n !== i);
+    get().setCaptionStyle({ cues });
+    set({ selectedCue: null });
+  },
+
+  addCaption: () => {
+    const { plan, project, time } = get();
+    if (!project) return;
+    const seg = plan.segments[locate(plan, time).index];
+    const start = toSourceTime(plan, time);
+    const end = Math.min(seg.end, start + 2 * seg.speed);
+    if (end - start < 0.2) return;
+    const cues = [...captionsOf(plan, project.analysis.words), { start, end, text: "New caption" }].sort((a, b) => a.start - b.start);
+    get().setCaptionStyle({ cues, enabled: true });
+    set({ selectedCue: cues.findIndex((c) => c.start === start && c.text === "New caption"), rightTab: "captions" });
+  },
+
+  resetCaptions: () => {
+    const { plan } = get();
+    const { cues: _, ...rest } = plan.captions;
+    get().commit({ ...plan, captions: rest });
+    set({ selectedCue: null });
   },
 
   set: (partial) => set(partial),

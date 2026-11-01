@@ -15,6 +15,7 @@ declare global {
       onStatus(fn: (s: string) => void): () => void;
       onExportProgress(fn: (f: number) => void): () => void;
       onOpenPath(fn: (path: string) => void): () => void;
+      debug: boolean;
     };
   }
 }

@@ -2,6 +2,7 @@
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
 import type { EditPlan } from "../src/schema.ts";
 import { timecode } from "./format.ts";
+import { CaptionStyle } from "./CaptionStyle.tsx";
 import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
@@ -12,7 +13,7 @@ export function Inspector() {
   const seg = selected !== null ? plan.segments[selected] : undefined;
   const setPlan = (patch: Partial<EditPlan>) => commit({ ...plan, ...patch });
   const liveAudio = (patch: Partial<EditPlan["audio"]>) => live({ ...plan, audio: { ...plan.audio, ...patch } });
-  const liveCaptions = (patch: Partial<EditPlan["captions"]>) => commit({ ...plan, captions: { ...plan.captions, ...patch } });
+
 
   return (
     <aside className="panel inspector">
@@ -56,20 +57,7 @@ export function Inspector() {
 
       <PositionSize />
 
-      <section>
-        <h3>
-          Captions
-          <Toggle value={plan.captions.enabled} onChange={(enabled) => liveCaptions({ enabled })} />
-        </h3>
-        {plan.captions.enabled && (
-          <>
-            <Segmented value={plan.captions.style} options={[["bold", "Bold"], ["minimal", "Minimal"]]}
-              onChange={(style) => liveCaptions({ style: style as "bold" | "minimal" })} />
-            <Slider label="Words per caption" min={1} max={8} step={1} value={plan.captions.wordsPerCaption}
-              onStart={checkpoint} onChange={(v) => live({ ...plan, captions: { ...plan.captions, wordsPerCaption: v } })} />
-          </>
-        )}
-      </section>
+      <CaptionStyle />
 
       <section>
         <h3>Voice</h3>

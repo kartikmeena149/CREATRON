@@ -102,14 +102,14 @@ function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (el as HTMLInputElement).type !== "range")) return;
+      if (el.isContentEditable || el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (el as HTMLInputElement).type !== "range")) return;
       const s = useEditor.getState();
       if (!s.project) return;
       const frame = 1 / s.project.analysis.fps;
       if (e.code === "Space") (e.preventDefault(), s.setPlaying(!s.playing));
       else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") (e.preventDefault(), e.shiftKey ? s.redo() : s.undo());
       else if (e.key === "s" || e.key === "S") s.split();
-      else if (e.key === "Backspace" || e.key === "Delete") s.deleteSelected();
+      else if (e.key === "Backspace" || e.key === "Delete") s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));
       else if (e.key === "ArrowRight") s.seek(s.time + (e.shiftKey ? 1 : frame));
       else if (e.key === "Home") s.seek(0);

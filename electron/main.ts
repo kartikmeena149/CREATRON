@@ -22,7 +22,12 @@ function createWindow() {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 14, y: 14 },
     // No background throttling: playback and export progress keep updating behind other windows.
-    webPreferences: { preload: join(import.meta.dirname, "../preload/preload.cjs"), sandbox: false, backgroundThrottling: false },
+    webPreferences: {
+      preload: join(import.meta.dirname, "../preload/preload.cjs"),
+      sandbox: false,
+      backgroundThrottling: false,
+      additionalArguments: process.argv.includes("--creatron-debug") ? ["--creatron-debug"] : [],
+    },
   });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(join(import.meta.dirname, "../renderer/index.html"));

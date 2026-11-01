@@ -3,6 +3,7 @@
 // reframing is object-fit/position (the same crop the renderer does), captions are DOM text,
 // and voice tweaks run through Web Audio.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CaptionOverlay } from "./CaptionOverlay.tsx";
 import { placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import { locate, useEditor } from "./store.ts";
@@ -87,8 +88,6 @@ export function Viewer() {
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
-  const bold = plan.captions.style === "bold";
-  const capSize = Math.min(frameSize.w, frameSize.h) * (bold ? 0.075 : 0.05);
   const place = placement(plan, a?.width ?? 16, a?.height ?? 9, frameSize.w, frameSize.h);
 
   // Drag the picture to move it, like in a phone editor. One undo step per drag.
@@ -156,14 +155,7 @@ export function Viewer() {
               style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
             />
           </div>
-          {cue && (
-            <div
-              className={`caption ${bold ? "bold" : "minimal"}`}
-              style={{ top: `${bold ? 70 : 85}%`, fontSize: capSize }}
-            >
-              <span>{bold ? cue.text.toUpperCase() : cue.text}</span>
-            </div>
-          )}
+          {cue && frameSize.w > 0 && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
         </div>
       </div>
       <div className="transport">

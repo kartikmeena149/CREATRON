@@ -12,6 +12,30 @@ export const Segment = z
   })
   .refine((s) => s.end > s.start, { message: "end must be after start" });
 
+/**
+ * One caption, timed in SOURCE seconds so it stays on its words through any re-cut.
+ * x / y, when set, move just this caption (added to the shared caption position).
+ */
+export const Caption = z.object({
+  start: z.number().min(0),
+  end: z.number().positive(),
+  text: z.string(),
+  x: z.number().min(-1).max(1).optional(),
+  y: z.number().min(-1).max(1).optional(),
+});
+export type Caption = z.infer<typeof Caption>;
+
+export const DEFAULT_CAPTIONS = {
+  enabled: false,
+  style: "bold" as const,
+  wordsPerCaption: 3,
+  x: 0,
+  y: 0.2,
+  size: 1,
+  color: "#ffffff",
+  uppercase: true,
+};
+
 export const EditPlan = z.object({
   version: z.literal(1),
   segments: z
@@ -37,8 +61,16 @@ export const EditPlan = z.object({
       enabled: z.boolean(),
       style: z.enum(["bold", "minimal"]).default("bold"),
       wordsPerCaption: z.number().int().min(1).max(8).default(3),
+      // Where captions sit: center of the text as a shift from the frame center, in fractions of the frame.
+      x: z.number().min(-0.5).max(0.5).default(0),
+      y: z.number().min(-0.5).max(0.5).default(0.2).describe("0.2 = a little below the middle; negative = higher"),
+      size: z.number().min(0.4).max(3).default(1).describe("Text size multiplier"),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#ffffff"),
+      uppercase: z.boolean().default(true),
+      // Absent = captions follow the transcript automatically. Present = the user's (or AI's) own captions.
+      cues: z.array(Caption).optional().describe("Explicit captions in SOURCE seconds; set to fix wording or timing"),
     })
-    .default({ enabled: false, style: "bold", wordsPerCaption: 3 }),
+    .default(DEFAULT_CAPTIONS),
   audio: z
     .object({
       denoise: z.boolean().default(false).describe("Remove background hiss and hum from the voice"),

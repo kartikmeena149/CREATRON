@@ -5,6 +5,7 @@ import { removePauses } from "../src/autocut.ts";
 import { DEFAULT_MODEL } from "../src/plan.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
+import { CaptionList } from "./CaptionList.tsx";
 import { useEditor } from "./store.ts";
 
 type Quick = { label: string; run: (plan: EditPlan) => EditPlan; says: string };
@@ -33,7 +34,7 @@ const QUICK: Quick[] = [
 ];
 
 export function AIPanel() {
-  const { project, plan, messages, busy, status, commit, say, set } = useEditor();
+  const { project, plan, messages, busy, status, commit, say, set, rightTab } = useEditor();
   const [text, setText] = useState("");
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -81,10 +82,18 @@ export function AIPanel() {
   return (
     <aside className="panel ai">
       <div className="ai-head">
-        <div className="ai-title"><span className="spark">✦</span> Creatron AI</div>
-        <div className="dim small">{DEFAULT_MODEL.split("/").pop()}</div>
+        <div className="tabs">
+          <button className={rightTab === "ai" ? "on" : ""} onClick={() => set({ rightTab: "ai" })}>
+            <span className="spark">✦</span> Creatron AI
+          </button>
+          <button className={rightTab === "captions" ? "on" : ""} onClick={() => set({ rightTab: "captions" })}>
+            Captions
+          </button>
+        </div>
+        {rightTab === "ai" && <div className="dim small">{DEFAULT_MODEL.split("/").pop()}</div>}
       </div>
 
+      {rightTab === "captions" ? <CaptionList /> : <>
       <div className="ai-messages" ref={list}>
         {!messages.length && (
           <div className="ai-empty">
@@ -132,6 +141,7 @@ export function AIPanel() {
         />
         <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">↑</button>
       </div>
+      </>}
     </aside>
   );
 }

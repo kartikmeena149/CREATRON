@@ -1,5 +1,5 @@
 // Local edits that need no AI: fast, free, and work offline.
-import type { Analysis, EditPlan } from "./schema.ts";
+import { type Analysis, DEFAULT_CAPTIONS, type EditPlan } from "./schema.ts";
 import { round } from "./round.ts";
 
 /**
@@ -114,7 +114,7 @@ export function wholeVideo(analysis: Analysis): EditPlan {
     segments: [{ start: 0, end: analysis.duration, speed: 1, zoom: 1 }],
     aspect: "source",
     transform: { scale: 1, x: 0, y: 0, rotate: 0 },
-    captions: { enabled: false, style: "bold", wordsPerCaption: 3 },
+    captions: { ...DEFAULT_CAPTIONS },
     audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0 },
     notes: "",
   };

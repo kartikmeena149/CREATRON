@@ -19,6 +19,9 @@ Editing rules:
 - To remove a fumbled or repeated line, drop that phrase and keep the better take.
 - Punch-in zoom (1.1-1.25) on alternating segments keeps talking-head footage lively; only use it when it suits the request.
 - Reels/Shorts/TikTok mean aspect 9:16 and usually captions on.
+- Captions follow the transcript automatically. To change their wording (fix a misheard word, add an
+  emoji, shorten a line), write captions.cues: every caption with start/end in SOURCE seconds and text.
+  Keep the user's existing cues and positions unless the request is about them.
 - Never invent times outside 0..duration.
 - In notes, tell the user in one or two plain sentences what you did.`;
 

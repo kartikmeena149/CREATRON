@@ -1,19 +1,22 @@
-// Captions: group transcript words into short cues on the OUTPUT timeline, then draw each cue
+// Captions: draw each cue (already placed on the OUTPUT timeline by timeline.ts)
 // as a transparent PNG. The renderer overlays them as one image stream. (The ffmpeg we ship
 // later will have libass; this keeps the prototype working with any ffmpeg build.)
 import { GlobalFonts, createCanvas } from "@napi-rs/canvas";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EditPlan } from "./schema.ts";
-import type { Cue } from "./timeline.ts";
+import { type Cue, captionFontSize } from "./timeline.ts";
 
 const FONT = "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
+// Fallback so emoji in captions draw in colour instead of as empty boxes.
+const EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc";
 
 /** Writes one PNG per cue plus a blank, and an ffmpeg concat list that plays them on time. */
 export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: number, dir: string, total: number): string {
   GlobalFonts.registerFromPath(FONT, "CaptionFont");
+  GlobalFonts.registerFromPath(EMOJI_FONT, "CaptionEmoji");
   const bold = plan.captions.style === "bold";
-  const size = Math.round(Math.min(width, height) * (bold ? 0.075 : 0.05));
+  const size = Math.round(captionFontSize(plan, width, height));
   const maxWidth = width * 0.86;
 
   const blank = join(dir, "cap-blank.png");
@@ -27,13 +30,15 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
   cues.forEach((cue, i) => {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
-    ctx.font = `${size}px CaptionFont`;
+    ctx.font = `${size}px CaptionFont, CaptionEmoji`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const text = bold ? cue.text.toUpperCase() : cue.text;
-    const wrapped = wrap(ctx, text, maxWidth);
+    const text = plan.captions.uppercase ? cue.text.toUpperCase() : cue.text;
+    // Typed line breaks are kept; long lines wrap at 86% of the frame width.
+    const wrapped = text.split("\n").flatMap((part) => wrap(ctx, part, maxWidth));
     const lineHeight = size * 1.2;
-    const centerY = height * (bold ? 0.7 : 0.85);
+    const centerX = width * (0.5 + cue.x);
+    const centerY = height * (0.5 + cue.y);
     const top = centerY - ((wrapped.length - 1) * lineHeight) / 2;
 
     if (!bold) {
@@ -41,7 +46,7 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
       const h = wrapped.length * lineHeight + size * 0.4;
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.beginPath();
-      ctx.roundRect(width / 2 - w / 2, centerY - h / 2, w, h, size * 0.3);
+      ctx.roundRect(centerX - w / 2, centerY - h / 2, w, h, size * 0.3);
       ctx.fill();
     }
     wrapped.forEach((line, n) => {
@@ -50,10 +55,10 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
         ctx.lineJoin = "round";
         ctx.lineWidth = size * 0.16;
         ctx.strokeStyle = "black";
-        ctx.strokeText(line, width / 2, y);
+        ctx.strokeText(line, centerX, y);
       }
-      ctx.fillStyle = "white";
-      ctx.fillText(line, width / 2, y);
+      ctx.fillStyle = plan.captions.color;
+      ctx.fillText(line, centerX, y);
     });
 
     const file = join(dir, `cap-${String(i).padStart(4, "0")}.png`);

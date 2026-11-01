@@ -95,7 +95,7 @@ export function PositionSize() {
  * A number box like a pro editor's: type a value, use ↑/↓ (⇧ for ×10), click the arrows,
  * or drag the prefix letter left/right to scrub.
  */
-function NumberField(p: {
+export function NumberField(p: {
   value: number;
   format: (v: number) => string;
   step: number;
@@ -108,7 +108,8 @@ function NumberField(p: {
 
   const apply = () => {
     if (text === null) return;
-    const v = parseFloat(text.replace(/[^\d.-]/g, ""));
+    // Read the box itself: a quick type-then-Tab can arrive before React re-renders.
+    const v = parseFloat((input.current?.value ?? text).replace(/[^\d.-]/g, ""));
     if (Number.isFinite(v)) (p.onStart(), p.onChange(v));
     setText(null);
   };

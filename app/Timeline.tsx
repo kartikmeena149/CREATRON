@@ -2,7 +2,7 @@
 // Drag clip edges to trim, click to select, S to split, Delete to ripple-delete.
 import { useEffect, useMemo, useRef } from "react";
 import { roughCut } from "../src/autocut.ts";
-import { buildCues, outputDuration } from "../src/timeline.ts";
+import { type Cue, buildCues, captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
 import type { Segment } from "../src/schema.ts";
 import { shortTime } from "./format.ts";
 import { type Thumbs, type Wave, useEditor } from "./store.ts";
@@ -11,7 +11,7 @@ const LABEL_W = 132;
 
 export function Timeline() {
   const { project, plan, time, pxPerSec, selected, past, future } = useEditor();
-  const { seek, select, setZoom, split, deleteSelected, undo, redo, commit, say } = useEditor();
+  const { seek, select, selectCue, setZoom, split, deleteSelected, undo, redo, commit, say } = useEditor();
   const scroller = useRef<HTMLDivElement>(null);
   const total = outputDuration(plan);
   const width = Math.max(total * pxPerSec + 200, 400);
@@ -129,16 +129,9 @@ export function Timeline() {
               ))}
             </div>
 
-            <div className={`track captions ${plan.captions.enabled ? "" : "off"}`} onPointerDown={scrub}>
-              {cues.map((c, i) => (
-                <div
-                  key={i}
-                  className="cue"
-                  style={{ left: c.start * pxPerSec, width: Math.max(2, (c.end - c.start) * pxPerSec - 1) }}
-                  title={c.text}
-                >
-                  {c.text}
-                </div>
+            <div className={`track captions ${plan.captions.enabled ? "" : "off"}`} onPointerDown={(e) => e.target === e.currentTarget && (selectCue(null), scrub(e))}>
+              {cues.map((c) => (
+                <CueBlock key={c.index} cue={c} />
               ))}
             </div>
 
@@ -263,6 +256,51 @@ function WaveClip({ seg, x, w, wave, selected }: { seg: Segment; x: number; w: n
   return (
     <div className={`wave-clip ${selected ? "selected" : ""}`} style={{ left: x, width: Math.max(4, w - 1) }}>
       <canvas ref={canvas} style={{ width: Math.max(1, Math.floor(w)), height: 44 }} />
+    </div>
+  );
+}
+
+/** A caption on the T1 track: click to select and jump to it, drag an edge to change when it shows. */
+function CueBlock({ cue }: { cue: Cue }) {
+  const { pxPerSec, selectedCue, selectCue, seek, setPlaying } = useEditor();
+  const selected = selectedCue === cue.index;
+
+  const retime = (edge: "start" | "end") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    selectCue(cue.index);
+    const st = useEditor.getState();
+    st.checkpoint();
+    const x0 = e.clientX;
+    const from = edge === "start" ? cue.start : cue.end;
+    const caption = captionsOf(st.plan, st.project!.analysis.words)[cue.index];
+    const onMove = (ev: PointerEvent) => {
+      const s = useEditor.getState();
+      const t = Math.max(0, from + (ev.clientX - x0) / pxPerSec);
+      const src = toSourceTime(s.plan, t); // timeline position -> moment in the recording
+      if (edge === "start") s.editCaption(cue.index, { start: Math.min(src, caption.end - 0.1) }, false);
+      else s.editCaption(cue.index, { end: Math.max(src, caption.start + 0.1) }, false);
+    };
+    const up = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", up));
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", up);
+  };
+
+  return (
+    <div
+      className={`cue ${selected ? "selected" : ""}`}
+      style={{ left: cue.start * pxPerSec, width: Math.max(4, (cue.end - cue.start) * pxPerSec - 1) }}
+      title={`${cue.text}\nClick to select · drag the edges to retime · ⌫ to delete`}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        setPlaying(false);
+        selectCue(cue.index);
+        seek(cue.start + 0.01);
+      }}
+      onDoubleClick={() => useEditor.getState().set({ rightTab: "captions" })}
+    >
+      <span>{cue.text}</span>
+      <div className="handle left" onPointerDown={retime("start")} />
+      <div className="handle right" onPointerDown={retime("end")} />
     </div>
   );
 }
