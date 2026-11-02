@@ -1,5 +1,6 @@
 // Which AI models the editor can use: OpenRouter's tool-capable models, free ones first
 // when the account has no credits. Cached for an hour so the picker opens instantly.
+import { claudeAvailable } from "./claudecli.ts";
 import { DEFAULT_MODEL } from "./plan.ts";
 
 export type ModelInfo = { id: string; name: string; free: boolean; inPerM: number; outPerM: number };
@@ -20,10 +21,17 @@ let cache: { at: number; models: ModelInfo[] } | undefined;
 
 export async function listModels(key = process.env.OPENROUTER_API_KEY): Promise<ModelList> {
   if (!cache || Date.now() - cache.at > 3600_000) cache = { at: Date.now(), models: await fetchModels() };
-  const models = cache.models;
+  // Your Claude plan through the claude CLI: listed first, needs no OpenRouter credits.
+  const claude: ModelInfo[] = claudeAvailable()
+    ? [
+        { id: "claude-code/sonnet", name: "Claude Sonnet (your subscription)", free: true, inPerM: 0, outPerM: 0 },
+        { id: "claude-code/opus", name: "Claude Opus (your subscription)", free: true, inPerM: 0, outPerM: 0 },
+      ]
+    : [];
+  const models = [...claude, ...cache.models];
   const c = await credits(key);
   // No credits yet: start on the best free model so the AI works out of the box.
-  const recommended = c !== null && c <= 0 ? (models.find((m) => m.free)?.id ?? DEFAULT_MODEL) : DEFAULT_MODEL;
+  const recommended = c !== null && c <= 0 ? (cache.models.find((m) => m.free)?.id ?? DEFAULT_MODEL) : DEFAULT_MODEL;
   return { models, credits: c, recommended };
 }
 
@@ -60,4 +68,5 @@ async function credits(key?: string): Promise<number | null> {
 }
 
 /** Other free models to try, in order, when a free model is busy. */
-export const freeFallbacks = (model: string, list: ModelInfo[]) => list.filter((m) => m.free && m.id !== model).map((m) => m.id);
+export const freeFallbacks = (model: string, list: ModelInfo[]) =>
+  list.filter((m) => m.free && m.id !== model && !m.id.startsWith("claude-code/")).map((m) => m.id); // Claude only when picked

@@ -78,6 +78,8 @@ export function AIPanel() {
             ? "OpenRouter didn't accept the API key. Check the key in CREATRON/.env and restart the app."
             : /free-models-per-day/.test(r.error)
               ? `You've used today's free AI requests (OpenRouter allows 50 a day on free models, and each edit uses a few). They come back at ${freeResetTime()}. Adding $10 of OpenRouter credits once raises the limit to 1000 a day, even on free models.`
+            : /Claude .*Not logged in/i.test(r.error)
+              ? "Claude isn't signed in on this Mac yet. Open Terminal, type claude, press Enter, type /login and sign in with your Claude account. Then send your request again."
             : /OpenRouter (429|503)/.test(r.error)
               ? "That AI model is busy right now (free models share capacity). Try again in a minute, or pick another model."
               : r.error;

@@ -3,6 +3,7 @@
 import { z } from "zod";
 import type { Analysis } from "./schema.ts";
 import { EditPlan, type Segment, checkPlan } from "./schema.ts";
+import { claudeChat } from "./claudecli.ts";
 import { round } from "./round.ts";
 import type { Orientation, StockClip } from "./stock.ts";
 import { outputDuration, toOutputTime } from "./timeline.ts";
@@ -78,8 +79,9 @@ export async function makePlan(
   searchWeb?: WebSearch,
   focus?: Focus,
 ): Promise<PlanResult> {
+  const viaClaude = model.startsWith("claude-code/"); // your Claude plan, through the claude CLI
   const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
+  if (!key && !viaClaude) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
 
   const submit = {
     type: "function",
@@ -147,21 +149,9 @@ export async function makePlan(
   for (let round = 1; round <= 10; round++) {
     const mustSubmit = !searchTools.length || searches >= 6 || round === 10;
     log(`plan: asking ${model}${invalid ? " (fixing the plan)" : searches ? ` (looked for B-roll ${searches}×)` : ""}`);
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools: mustSubmit ? [submit] : [...searchTools, submit],
-        tool_choice: mustSubmit ? { type: "function", function: { name: "submit_edit_plan" } } : "required",
-        usage: { include: true },
-      }),
-    });
-    if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 500)}`);
-    const data = (await res.json()) as any;
-    // OpenRouter can answer 200 with an error inside (e.g. the model's provider is overloaded).
-    if (data.error) throw new Error(`OpenRouter ${data.error.code ?? res.status}: ${data.error.message ?? "unknown error"}`);
+    const tools = mustSubmit ? [submit] : [...searchTools, submit];
+    const toolChoice = mustSubmit ? { type: "function", function: { name: "submit_edit_plan" } } : "required";
+    const data = viaClaude ? await claudeChat(model, messages, tools as any, toolChoice) : await openRouter(key!, model, messages, tools, toolChoice);
     totals.inputTokens += data.usage?.prompt_tokens ?? 0;
     totals.outputTokens += data.usage?.completion_tokens ?? 0;
     totals.cost += data.usage?.cost ?? 0;
@@ -286,6 +276,19 @@ export function keepsUnpicked(before: EditPlan, after: EditPlan, picked: number[
   if (!problems.length && j < after.segments.length)
     problems.push("segments: picked clips may only use parts of their own source range; remove the extra segments");
   return { problems, kept };
+}
+
+async function openRouter(key: string, model: string, messages: any[], tools: unknown[], toolChoice: unknown): Promise<any> {
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
+    body: JSON.stringify({ model, messages, tools, tool_choice: toolChoice, usage: { include: true } }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  const data = (await res.json()) as any;
+  // OpenRouter can answer 200 with an error inside (e.g. the model's provider is overloaded).
+  if (data.error) throw new Error(`OpenRouter ${data.error.code ?? res.status}: ${data.error.message ?? "unknown error"}`);
+  return data;
 }
 
 /** Turns each B-roll's and text item's transcript time (atSource) into a timeline position; drops ones over cut parts. */
