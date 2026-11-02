@@ -100,6 +100,7 @@ async function ensureServer(log: (m: string) => void): Promise<number> {
     return server.port;
   }
   if (!existsSync(POCKET_TTS)) throw new Error(`Pocket TTS isn't installed (looked for ${POCKET_TTS}).`);
+  await stopStaleVoiceEngine();
   const port = await freePort();
   log("starting the voice engine (first time takes a few seconds)");
   const proc = spawn(POCKET_TTS, ["serve", "--port", String(port), "--host", "127.0.0.1"], { stdio: "ignore" });
@@ -114,13 +115,33 @@ async function ensureServer(log: (m: string) => void): Promise<number> {
     throw new Error("The voice engine took too long to start.");
   })();
   server = { proc, port, ready };
+  mkdirSync(join(ROOT, "work"), { recursive: true });
+  writeFileSync(PID_FILE, String(proc.pid));
   await ready;
   return port;
 }
 
+const PID_FILE = join(ROOT, "work", "voice-engine.pid");
+
 export function stopVoiceEngine() {
   server?.proc.kill();
   server = undefined;
+  rmSync(PID_FILE, { force: true });
+}
+
+/**
+ * Stops an engine left behind by an app that didn't shut down cleanly (crash, force quit).
+ * Only kills the process if it really is our Pocket TTS server.
+ */
+export async function stopStaleVoiceEngine() {
+  if (!existsSync(PID_FILE)) return;
+  const pid = Number(readFileSync(PID_FILE, "utf8"));
+  rmSync(PID_FILE, { force: true });
+  if (!pid || pid === server?.proc.pid) return;
+  try {
+    const { stdout } = await run("ps", ["-p", String(pid), "-o", "command="]);
+    if (stdout.includes("pocket-tts") && stdout.includes("serve")) process.kill(pid);
+  } catch {} // not running any more
 }
 
 /** Splits a script into short pieces: one per line, long lines at sentence ends (avoids clipped endings). */

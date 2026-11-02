@@ -7,7 +7,15 @@ import { makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
-import { cloneVoice, deleteVoice, generateVoiceover, importSkillVoice, listVoices, stopVoiceEngine } from "../src/voice.ts";
+import {
+  cloneVoice,
+  deleteVoice,
+  generateVoiceover,
+  importSkillVoice,
+  listVoices,
+  stopStaleVoiceEngine,
+  stopVoiceEngine,
+} from "../src/voice.ts";
 import { handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
 
 registerMediaScheme();
@@ -127,8 +135,13 @@ ipcMain.handle(
 app.whenReady().then(() => {
   handleMedia();
   importSkillVoice(); // your voice from the my-voiceover skill shows up in the Voice Lab
+  stopStaleVoiceEngine(); // one left behind by a crash or force quit
   createWindow();
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
 app.on("window-all-closed", () => app.quit());
+// Never leave the voice engine running: stop it on every way the app can end.
+app.on("before-quit", stopVoiceEngine);
 app.on("will-quit", stopVoiceEngine);
+process.on("exit", stopVoiceEngine);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => (stopVoiceEngine(), app.exit(0)));
