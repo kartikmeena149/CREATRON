@@ -370,6 +370,18 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
   );
 }
 
+/** Where a B-roll clip came from, shown on its block (stock libraries and CC BY ask for credit). */
+function brollSource(b: Broll): string {
+  if (b.source.startsWith("pexels:")) return "Pexels";
+  if (b.source.startsWith("pixabay:")) return "Pixabay";
+  // "Title by Channel (YouTube, CC BY) url" → "Channel · YouTube, CC BY"
+  const m = b.credit?.match(/ by (.+?) \(([^)]+)\)/);
+  if (b.source.startsWith("ytcc:")) return m ? `${m[1]} · ${m[2]}` : "YouTube, CC BY";
+  if (b.source.startsWith("yt:")) return m ? `${m[1]} · YouTube` : "YouTube";
+  if (b.source.startsWith("link:")) return m ? `${m[1]} · ${m[2]}` : "Link";
+  return "";
+}
+
 /** A B-roll clip on V2: drag to move, drag edges to trim, click to select, ⌫ to delete. */
 function BrollBlock({ b }: { b: Broll }) {
   const { pxPerSec, selectedBroll, selectBroll } = useEditor();
@@ -411,7 +423,7 @@ function BrollBlock({ b }: { b: Broll }) {
       {b.file && <video className="broll-thumb" src={`${mediaUrl(b.file)}#t=${(b.offset + 0.5).toFixed(1)}`} muted preload="metadata" />}
       <span className="broll-label">{b.query ?? b.source}</span>
       {/* Stock libraries ask apps to show where their videos come from. */}
-      <span className="broll-source">{b.source.startsWith("pexels:") ? "Pexels" : b.source.startsWith("pixabay:") ? "Pixabay" : ""}</span>
+      <span className="broll-source">{brollSource(b)}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>

@@ -11,12 +11,15 @@ export const ROOT = process.env.CREATRON_ROOT || resolve(import.meta.dirname, ".
 export type RunResult = { stdout: string; stderr: string };
 
 /** Runs a command and resolves with its output; rejects with the tail of stderr on failure. */
-export function run(cmd: string, args: string[], onStderr?: (chunk: string) => void): Promise<RunResult> {
+export function run(cmd: string, args: string[], onStderr?: (chunk: string) => void, onStdout?: (chunk: string) => void): Promise<RunResult> {
   return new Promise((ok, fail) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (d) => (stdout += d));
+    child.stdout.on("data", (d) => {
+      stdout += d;
+      onStdout?.(String(d));
+    });
     child.stderr.on("data", (d) => {
       stderr += d;
       onStderr?.(String(d));

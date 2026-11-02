@@ -372,3 +372,27 @@ button.wide { width: 100%; margin-top: 8px; }
 .broll-label { position: absolute; left: 6px; top: 4px; right: 8px; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; pointer-events: none; }
 .broll-clip:hover .handle, .broll-clip.selected .handle { background: rgba(251, 146, 60, 0.55); }
 .broll-source { position: absolute; left: 6px; bottom: 3px; font-size: 9px; color: #fed7aa; opacity: 0.9; text-shadow: 0 1px 2px #000; pointer-events: none; }
+
+/* Import from link + YouTube suggestions */
+.link-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; width: 560px; max-width: calc(100vw - 32px); display: grid; gap: 12px; user-select: text; }
+.link-head { display: flex; align-items: center; justify-content: space-between; }
+.link-head b { font-size: 14px; }
+.link-row { display: flex; gap: 8px; }
+.link-row .vl-input { flex: 1; }
+.link-info { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; }
+.link-info img { width: 160px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--raised); }
+.link-title { font-weight: 600; margin-bottom: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.link-range { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.link-range .vl-input { width: 84px; }
+.link-progress { position: relative; height: 22px; border-radius: 6px; background: var(--raised); overflow: hidden; display: grid; place-items: center; }
+.link-progress i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); opacity: 0.45; transition: width 0.2s; }
+.link-progress span { position: relative; }
+.link-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.rights { display: grid; gap: 6px; }
+.rights p { margin: 0; }
+.rights-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.suggestion { margin-top: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); display: grid; gap: 6px; }
+.suggestion-top { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: start; }
+.suggestion-top img { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 5px; }
+.suggestion-title { font-weight: 600; font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.suggestion-foot { display: flex; justify-content: space-between; align-items: center; }

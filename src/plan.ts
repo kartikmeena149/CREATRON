@@ -24,11 +24,16 @@ Editing rules:
 - Captions follow the transcript automatically. To change their wording (fix a misheard word, add an
   emoji, shorten a line), write captions.cues: every caption with start/end in SOURCE seconds and text.
   Keep the user's existing cues and positions unless the request is about them.
-- B-roll (stock clips shown over the speaker while they keep talking): only when the user asks for it.
-  Call search_broll with 1-3 concrete words for what should be ON SCREEN ("watering plants", "city street night"),
-  search again with other words if nothing fits, then add broll entries using ids it returned. Set atSource to
-  the transcript second where the matching words are said and duration 2-5 s. Keep the first 2 s on the speaker
-  (the hook) unless asked. Never use a clip id you did not get from search_broll.
+- B-roll (clips shown over the speaker while they keep talking): only when the user asks for it.
+  Search with 1-3 concrete words for what should be ON SCREEN ("watering plants", "city street night"):
+  search_broll finds licensed stock clips; search_youtube with creative_commons true finds Creative Commons
+  YouTube videos (ids "ytcc:…"; the app finds the right moment inside the video). Search again with other
+  words if nothing fits, then add broll entries using ids those searches returned, with query = what should be
+  on screen. Set atSource to the transcript second where the matching words are said and duration 2-5 s.
+  Keep the first 2 s on the speaker (the hook) unless asked. Never use a clip id you did not get from a search.
+- search_youtube with creative_commons false finds regular YouTube videos (ids "yt:…"). They are copyrighted:
+  NEVER put them in broll. If one would fit much better than the licensed clips, propose it with suggest_broll
+  (at most 3); the user decides whether to add it.
 - Never invent times outside 0..duration.
 - In notes, tell the user in one or two plain sentences what you did.`;
 
@@ -40,10 +45,17 @@ export type PlanResult = {
   cost?: number;
   /** Stock clips the model saw, by id, so the app can download the ones it chose. */
   clips: Map<string, StockClip>;
+  /** Regular YouTube clips the model proposed; the user adds them with one click (or not). */
+  suggestions: Suggestion[];
 };
+
+/** A copyrighted clip the AI proposes but never places itself. */
+export type Suggestion = { source: string; atSource: number; duration: number; why: string; query: string };
 
 /** Lets the model look for B-roll; absent when no stock-video key is configured. */
 export type BrollSearch = (query: string, orientation: Orientation) => Promise<StockClip[]>;
+/** Lets the model search YouTube; absent when yt-dlp isn't installed. */
+export type YoutubeSearch = (query: string, creativeCommons: boolean) => Promise<StockClip[]>;
 
 export async function makePlan(
   analysis: Analysis,
@@ -52,6 +64,7 @@ export async function makePlan(
   log = console.error,
   current?: EditPlan,
   searchBroll?: BrollSearch,
+  searchYoutube?: YoutubeSearch,
 ): Promise<PlanResult> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -79,6 +92,41 @@ export async function makePlan(
       },
     },
   };
+  const youtube = {
+    type: "function",
+    function: {
+      name: "search_youtube",
+      description:
+        "Search YouTube for B-roll. creative_commons true: only Creative Commons videos, which may go in broll. " +
+        "false: all videos; those are copyrighted and may only be proposed with suggest_broll.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "1-3 concrete words for what should be on screen" },
+          creative_commons: { type: "boolean", description: "true (default) for reusable videos only" },
+        },
+        required: ["query"],
+      },
+    },
+  };
+  const suggest = {
+    type: "function",
+    function: {
+      name: "suggest_broll",
+      description: "Propose a regular (copyrighted) YouTube clip. The user sees it as a card and adds it only if they choose to.",
+      parameters: {
+        type: "object",
+        properties: {
+          source: { type: "string", description: 'A "yt:…" id from search_youtube' },
+          atSource: { type: "number", description: "Transcript second where it should start" },
+          duration: { type: "number", description: "Seconds, 2-6" },
+          why: { type: "string", description: "One short sentence: why this clip fits there" },
+        },
+        required: ["source", "atSource", "why"],
+      },
+    },
+  };
+  const searchTools = [...(searchBroll ? [search] : []), ...(searchYoutube ? [youtube, suggest] : [])];
   const messages: any[] = [
     { role: "system", content: SYSTEM },
     {
@@ -89,7 +137,8 @@ export async function makePlan(
         current
           ? `\nCURRENT EDIT PLAN (the user's timeline; keep everything the request doesn't ask to change):\n${JSON.stringify(current)}`
           : "",
-        searchBroll ? "" : "\n(B-roll search is not available: no stock video key is set up. Don't add broll.)",
+        searchTools.length ? "" : "\n(B-roll search is not available: no stock video key or yt-dlp is set up. Don't add broll.)",
+        searchTools.length && !searchBroll ? "\n(Stock search is off: no stock video key. Use search_youtube for B-roll.)" : "",
         `\nREQUEST: ${request}`,
       ].join("\n"),
     },
@@ -97,13 +146,14 @@ export async function makePlan(
 
   const totals = { inputTokens: 0, outputTokens: 0, cost: 0 };
   const clips = new Map<string, StockClip>();
+  const suggestions: Suggestion[] = [];
   const shape = (current?.aspect ?? "source") === "9:16" || (current?.aspect === "source" && analysis.height > analysis.width)
     ? "portrait" : current?.aspect === "1:1" ? "square" : "landscape";
   let invalid = 0;
   let searches = 0;
   // A few rounds: the model may search for B-roll several times, then submits the plan.
-  for (let round = 1; round <= 8; round++) {
-    const mustSubmit = !searchBroll || searches >= 5 || round === 8;
+  for (let round = 1; round <= 10; round++) {
+    const mustSubmit = !searchTools.length || searches >= 6 || round === 10;
     log(`plan: asking ${model}${invalid ? " (fixing the plan)" : searches ? ` (looked for B-roll ${searches}×)` : ""}`);
     const res = await fetch(ENDPOINT, {
       method: "POST",
@@ -111,7 +161,7 @@ export async function makePlan(
       body: JSON.stringify({
         model,
         messages,
-        tools: mustSubmit ? [submit] : [search, submit],
+        tools: mustSubmit ? [submit] : [...searchTools, submit],
         tool_choice: mustSubmit ? { type: "function", function: { name: "submit_edit_plan" } } : "required",
         usage: { include: true },
       }),
@@ -147,13 +197,49 @@ export async function makePlan(
         let content: string;
         try {
           const found = (await searchBroll(query, args?.orientation ?? shape)).slice(0, 8);
-          found.forEach((c) => clips.set(c.id, c));
+          found.forEach((c) => clips.set(c.id, { ...c, query }));
           content = found.length
             ? JSON.stringify(found.map((c) => ({ id: c.id, description: c.description, seconds: c.duration, size: `${c.width}x${c.height}` })))
             : "No clips found. Try different, simpler words.";
         } catch (e) {
           content = `Search failed: ${e instanceof Error ? e.message : e}`;
         }
+        messages.push({ role: "tool", tool_call_id: call.id, content });
+        continue;
+      }
+      if (call.function.name === "search_youtube" && searchYoutube) {
+        searches++;
+        const query = String(args?.query ?? "").slice(0, 80);
+        const cc = args?.creative_commons !== false;
+        log(`plan: searching ${cc ? "Creative Commons " : ""}YouTube for "${query}"`);
+        let content: string;
+        try {
+          const found = await searchYoutube(query, cc);
+          found.forEach((c) => clips.set(c.id, { ...c, query }));
+          content = found.length
+            ? JSON.stringify(found.map((c) => ({ id: c.id, title: c.description, channel: c.author, seconds: c.duration })))
+            : "No videos found. Try different, simpler words.";
+        } catch (e) {
+          content = `Search failed: ${e instanceof Error ? e.message : e}`;
+        }
+        messages.push({ role: "tool", tool_call_id: call.id, content });
+        continue;
+      }
+      if (call.function.name === "suggest_broll" && searchYoutube) {
+        const clip = clips.get(String(args?.source));
+        const atSource = Number(args?.atSource);
+        let content = "Saved: the user will see it as a suggestion card.";
+        if (!clip || !clip.id.startsWith("yt:")) content = 'Not saved: source must be a "yt:…" id from search_youtube with creative_commons false.';
+        else if (!(atSource >= 0 && atSource < analysis.duration)) content = `Not saved: atSource must be within 0-${analysis.duration.toFixed(1)}.`;
+        else if (suggestions.length >= 3) content = "Not saved: at most 3 suggestions.";
+        else
+          suggestions.push({
+            source: clip.id,
+            atSource,
+            duration: Math.max(2, Math.min(6, Number(args?.duration) || 4)),
+            why: String(args?.why ?? "").slice(0, 200),
+            query: clip.query ?? clip.description,
+          });
         messages.push({ role: "tool", tool_call_id: call.id, content });
         continue;
       }
@@ -169,9 +255,14 @@ export async function makePlan(
         const known = (id: string) => clips.has(id) || Boolean(current?.broll.some((b) => b.source === id && b.file));
         problems = [
           ...checkPlan(plan, analysis),
-          ...plan.broll.filter((b) => !known(b.source)).map((b) => `broll ${b.source}: not a clip id returned by search_broll`),
+          ...plan.broll
+            .filter((b) => b.source.startsWith("yt:"))
+            .map((b) => `broll ${b.source}: regular YouTube clips are copyrighted; remove it (suggest_broll can propose it instead)`),
+          ...plan.broll
+            .filter((b) => !b.source.startsWith("yt:") && !known(b.source))
+            .map((b) => `broll ${b.source}: not a clip id returned by search_broll or search_youtube`),
         ];
-        if (!problems.length) return { plan, model, ...totals, clips };
+        if (!problems.length) return { plan, model, ...totals, clips, suggestions };
       } catch (e) {
         problems = [e instanceof z.ZodError ? z.prettifyError(e) : String(e)];
       }

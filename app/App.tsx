@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AIPanel } from "./AIPanel.tsx";
 import { Inspector } from "./Inspector.tsx";
+import { LinkImport } from "./LinkImport.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { Viewer } from "./Viewer.tsx";
 import { useEditor } from "./store.ts";
@@ -9,6 +10,7 @@ export function App() {
   const { project, status, set, load } = useEditor();
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
+  const [linkOpen, setLinkOpen] = useState(false);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
@@ -36,7 +38,7 @@ export function App() {
         if (file) open(window.creatron.pathForFile(file));
       }}
     >
-      <TopBar onOpen={() => open()} />
+      <TopBar onOpen={() => open()} onLink={() => setLinkOpen(true)} />
       <div className="workspace">
         <Inspector />
         <main className="center">
@@ -45,6 +47,7 @@ export function App() {
         <AIPanel />
       </div>
       <Timeline />
+      {linkOpen && <LinkImport onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
       {importing && (
         <div className="overlay">
           <div className="overlay-card">
@@ -58,7 +61,7 @@ export function App() {
   );
 }
 
-function TopBar({ onOpen }: { onOpen: () => void }) {
+function TopBar({ onOpen, onLink }: { onOpen: () => void; onLink: () => void }) {
   const { project, plan, exporting, exported, set } = useEditor();
   const doExport = async () => {
     if (!project) return;
@@ -71,6 +74,7 @@ function TopBar({ onOpen }: { onOpen: () => void }) {
     <header className="topbar">
       <div className="brand">CREATRON</div>
       <button className="ghost" onClick={onOpen}>Import video</button>
+      <button className="ghost" onClick={onLink}>＋ Import from link</button>
       <div className="title">{project ? project.analysis.source.split("/").pop() : "No video"}</div>
       <div className="grow" />
       {exported && (

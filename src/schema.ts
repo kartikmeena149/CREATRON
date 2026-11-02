@@ -46,7 +46,7 @@ export type Voiceover = z.infer<typeof Voiceover>;
  */
 export const Broll = z.object({
   id: z.string().default(""),
-  source: z.string().describe('Clip id from search_broll, e.g. "pexels:123456"'),
+  source: z.string().describe('Clip id from search_broll or a creative-commons search_youtube, e.g. "pixabay:123456" or "ytcc:abc123"'),
   atSource: z
     .number()
     .min(0)
@@ -57,7 +57,7 @@ export const Broll = z.object({
   offset: z.number().min(0).default(0),
   file: z.string().optional(),
   length: z.number().positive().optional(),
-  query: z.string().optional(),
+  query: z.string().optional().describe("What should be on screen, a few words"),
   credit: z.string().optional(),
 });
 export type Broll = z.infer<typeof Broll>;
@@ -119,7 +119,7 @@ export const EditPlan = z.object({
     .default({ denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 }),
   // Generated speech placed on the A2 track. Timed on the OUTPUT clock: it sits where you put it.
   voiceovers: z.array(Voiceover).default([]),
-  broll: z.array(Broll).default([]).describe("Stock clips over the main video. Only use ids returned by search_broll."),
+  broll: z.array(Broll).default([]).describe("Clips over the main video. Only ids returned by search_broll, or ytcc: ids from search_youtube."),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

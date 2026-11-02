@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
 import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment, type Voiceover } from "../src/schema.ts";
 import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
+import type { SuggestionCard } from "../src/youtube.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 export type Wave = { rate: number; peaks: number[] };
@@ -12,7 +13,7 @@ export type Project = { path: string; analysis: Analysis; videoUrl: string; thum
 
 export type Message =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; before?: EditPlan; meta?: string }
+  | { role: "assistant"; text: string; before?: EditPlan; meta?: string; suggestions?: SuggestionCard[] }
   | { role: "error"; text: string };
 
 type State = {
@@ -65,6 +66,8 @@ type State = {
   selectedBroll: string | null;
   selectBroll(id: string | null): void;
   updateBroll(id: string, patch: Partial<Broll>, record?: boolean): void;
+  /** Puts a downloaded clip on V2 at `at` (default: the playhead), up to 5 s or what's left of the video. */
+  addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number }): void;
   deleteBroll(id: string): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
@@ -213,6 +216,15 @@ export const useEditor = create<State>((set, get) => ({
     const { plan } = get();
     const broll = plan.broll.map((b) => (b.id === id ? { ...b, ...patch } : b));
     (record ? get().commit : get().live)({ ...plan, broll });
+  },
+  addBroll: (b) => {
+    const { plan, time } = get();
+    const at = Math.max(0, Math.min(b.at ?? time, outputDuration(plan) - 0.5));
+    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, 15, outputDuration(plan) - at));
+    const id = `b${Math.random().toString(36).slice(2, 10)}`;
+    const clip: Broll = { id, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
+    get().commit({ ...plan, broll: [...plan.broll, clip] });
+    set({ selectedBroll: id, selected: null, selectedCue: null, selectedVo: null });
   },
   deleteBroll: (id) => {
     const { plan } = get();

@@ -9,6 +9,8 @@ import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
+import { run } from "../src/tools.ts";
+import { type SuggestionCard, downloadLink, findMoment, linkInfo, searchYouTube, ytdlpAvailable } from "../src/youtube.ts";
 import {
   cloneVoice,
   deleteVoice,
@@ -88,10 +90,28 @@ ipcMain.handle(
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const result = await makePlan(analysis, request, m, say, current, stockAvailable() ? searchStock : undefined);
+        const result = await makePlan(
+          analysis, request, m, say, current,
+          stockAvailable() ? searchStock : undefined,
+          ytdlpAvailable() ? searchYouTube : undefined,
+        );
         const plan = await fetchBroll(snapEdges(result.plan, analysis), result.clips, say);
+        // Copyrighted clips the AI proposed: find the part to show, but download nothing until the user clicks Add.
+        const suggestions: SuggestionCard[] = [];
+        for (const [i, s] of result.suggestions.entries()) {
+          const clip = result.clips.get(s.source)!;
+          say(`finding the right moment in suggestion ${i + 1} of ${result.suggestions.length}`);
+          try {
+            const moment = await findMoment(clip.page, s.query, s.duration, say);
+            suggestions.push({
+              ...s,
+              url: moment.info.url, videoId: moment.info.id, title: moment.info.title, channel: moment.info.channel,
+              thumbnail: clip.thumbnail ?? moment.info.thumbnail, start: moment.start, end: moment.end, seen: moment.seen,
+            });
+          } catch {} // a suggestion that can't be looked at just doesn't show
+        }
         status("");
-        return { ...result, clips: undefined, plan };
+        return { ...result, clips: undefined, plan, suggestions };
       } catch (e) {
         lastError = e;
         if (!/OpenRouter (429|503)/.test(String(e))) break; // only "busy" is worth retrying elsewhere
@@ -103,6 +123,29 @@ ipcMain.handle(
 );
 
 ipcMain.handle("models", safe(async () => listModels()));
+
+// ---- Online video (yt-dlp): paste a link, or add a suggested YouTube clip ----
+ipcMain.handle(
+  "link-info",
+  safe(async (url: string) => {
+    const { captions: _, chapters: __, ...info } = await linkInfo(url);
+    return info;
+  }),
+);
+
+/** Downloads a link (or a from-to part of it). "broll" files go with the other B-roll clips. */
+ipcMain.handle(
+  "link-download",
+  safe(async (opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }) => {
+    const file = await downloadLink(
+      opts.url,
+      { id: opts.id, site: opts.site.toLowerCase(), start: opts.start, end: opts.end, dir: opts.purpose === "broll" ? join(app.getAppPath(), "work", "broll") : undefined },
+      (f) => win.webContents.send("link-progress", f),
+    );
+    const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
+    return { file, length: Number(stdout.trim()) || (opts.end ?? 0) - (opts.start ?? 0) };
+  }),
+);
 
 ipcMain.handle(
   "export",

@@ -1,4 +1,5 @@
 import type { Analysis, EditPlan } from "../src/schema.ts";
+import type { LinkInfo, SuggestionCard } from "../src/youtube.ts";
 import type { Thumbs, Wave } from "./store.ts";
 
 export type ModelInfo = { id: string; name: string; free: boolean; inPerM: number; outPerM: number };
@@ -11,7 +12,10 @@ declare global {
     creatron: {
       pickVideo(): Promise<string | undefined>;
       importVideo(path: string): Promise<Result<{ analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave }>>;
-      aiEdit(path: string, request: string, current: EditPlan, model?: string): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      aiEdit(path: string, request: string, current: EditPlan, model?: string): Promise<Result<{ plan: EditPlan; model: string; cost?: number; suggestions: SuggestionCard[] }>>;
+      linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
+      linkDownload(opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }): Promise<Result<{ file: string; length: number }>>;
+      onLinkProgress(fn: (f: number) => void): () => void;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;
       reveal(path: string): Promise<void>;
