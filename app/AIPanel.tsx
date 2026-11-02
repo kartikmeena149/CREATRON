@@ -3,12 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { removePauses } from "../src/autocut.ts";
 import type { EditPlan } from "../src/schema.ts";
-import { outputDuration, toOutputTime } from "../src/timeline.ts";
-import type { SuggestionCard } from "../src/youtube.ts";
+import { outputDuration } from "../src/timeline.ts";
 import { CaptionList } from "./CaptionList.tsx";
 import { VoiceLab } from "./VoiceLab.tsx";
-import { RightsAgreement, rightsAgreed } from "./LinkImport.tsx";
-import { shortTime } from "./format.ts";
 import type { ModelInfo } from "./env.d.ts";
 import { useEditor } from "./store.ts";
 
@@ -46,9 +43,9 @@ export function AIPanel() {
     list.current?.scrollTo({ top: list.current.scrollHeight, behavior: "smooth" });
   }, [messages.length, busy]);
 
-  const apply = (before: EditPlan, after: EditPlan, text: string, meta?: string, suggestions?: SuggestionCard[]) => {
+  const apply = (before: EditPlan, after: EditPlan, text: string, meta?: string) => {
     commit(after);
-    say({ role: "assistant", text, before, meta, suggestions: suggestions?.length ? suggestions : undefined });
+    say({ role: "assistant", text, before, meta });
   };
 
   const runQuick = (q: Quick) => {
@@ -84,7 +81,7 @@ export function AIPanel() {
     }
     const cost = r.value.cost ? ` · $${r.value.cost.toFixed(4)}` : "";
     const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
-    apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`, r.value.suggestions);
+    apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
   };
 
   return (
@@ -116,7 +113,6 @@ export function AIPanel() {
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
             <div className="bubble">{m.text}</div>
-            {m.role === "assistant" && m.suggestions?.map((s) => <Suggestion key={`${s.source}@${s.start}`} s={s} />)}
             {m.role === "assistant" && (
               <div className="msg-foot">
                 {m.meta && <span className="dim small">{m.meta}</span>}
@@ -155,57 +151,6 @@ export function AIPanel() {
       </div>
       </>}
     </aside>
-  );
-}
-
-/**
- * A regular YouTube clip the AI proposed. It's copyrighted, so nothing is downloaded or placed
- * until the user clicks Add; then only the suggested few seconds are downloaded.
- */
-function Suggestion({ s }: { s: SuggestionCard }) {
-  const [state, setState] = useState<"" | "agree" | "adding" | "added">("");
-  const [error, setError] = useState("");
-  const add = async () => {
-    if (!rightsAgreed()) return setState("agree");
-    setState("adding");
-    setError("");
-    const r = await window.creatron.linkDownload({ url: s.url, id: s.videoId, site: "youtube", start: s.start, end: s.end, purpose: "broll" });
-    if (!r.ok) return (setState(""), setError(r.error));
-    const { plan, time } = useEditor.getState();
-    useEditor.getState().addBroll({
-      file: r.value.file,
-      length: r.value.length,
-      source: s.source,
-      query: s.query,
-      credit: `${s.title} by ${s.channel} (YouTube) https://youtu.be/${s.videoId}?t=${Math.floor(s.start)}`,
-      at: toOutputTime(plan, s.atSource) ?? time,
-      duration: s.duration,
-    });
-    setState("added");
-  };
-  return (
-    <div className="suggestion">
-      <div className="suggestion-top">
-        {s.thumbnail && <img src={s.thumbnail} alt="" />}
-        <div>
-          <div className="suggestion-title" title={s.title}>{s.title}</div>
-          <div className="dim small">{s.channel} · {shortTime(s.start)}–{shortTime(s.end)} · at {shortTime(s.atSource)} in your video</div>
-        </div>
-      </div>
-      {s.why && <div className="small">{s.why}</div>}
-      {s.seen && <div className="dim small">Shows: {s.seen}</div>}
-      {state === "agree" ? (
-        <RightsAgreement onAgree={add} onCancel={() => setState("")} />
-      ) : (
-        <div className="suggestion-foot">
-          <span className="dim small">YouTube · not licensed for reuse</span>
-          <button className="small-btn" disabled={state === "adding" || state === "added"} onClick={add}>
-            {state === "adding" ? "Adding…" : state === "added" ? "Added ✓" : "Add"}
-          </button>
-        </div>
-      )}
-      {error && <div className="error small">{error}</div>}
-    </div>
   );
 }
 

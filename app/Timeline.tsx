@@ -374,12 +374,9 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
 function brollSource(b: Broll): string {
   if (b.source.startsWith("pexels:")) return "Pexels";
   if (b.source.startsWith("pixabay:")) return "Pixabay";
-  // "Title by Channel (YouTube, CC BY) url" → "Channel · YouTube, CC BY"
-  const m = b.credit?.match(/ by (.+?) \(([^)]+)\)/);
-  if (b.source.startsWith("ytcc:")) return m ? `${m[1]} · ${m[2]}` : "YouTube, CC BY";
-  if (b.source.startsWith("yt:")) return m ? `${m[1]} · YouTube` : "YouTube";
-  if (b.source.startsWith("link:")) return m ? `${m[1]} · ${m[2]}` : "Link";
-  return "";
+  // Web and link clips: "Title by Channel (YouTube, CC BY) url" → "Channel · YouTube, CC BY"
+  const m = b.credit?.match(/^.* by (.+?) \(([^)]+)\) \S+$/);
+  return m ? `${m[1]} · ${m[2]}` : b.source.startsWith("link:") ? "Link" : "Web";
 }
 
 /** A B-roll clip on V2: drag to move, drag edges to trim, click to select, ⌫ to delete. */

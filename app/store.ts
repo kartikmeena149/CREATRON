@@ -5,7 +5,6 @@ import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
 import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment, type Voiceover } from "../src/schema.ts";
 import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
-import type { SuggestionCard } from "../src/youtube.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 export type Wave = { rate: number; peaks: number[] };
@@ -13,7 +12,7 @@ export type Project = { path: string; analysis: Analysis; videoUrl: string; thum
 
 export type Message =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; before?: EditPlan; meta?: string; suggestions?: SuggestionCard[] }
+  | { role: "assistant"; text: string; before?: EditPlan; meta?: string }
   | { role: "error"; text: string };
 
 type State = {

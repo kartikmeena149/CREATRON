@@ -2,7 +2,7 @@
 // download it (or just a from-to part) as the main video or as B-roll at the playhead.
 // The first time, the user agrees once that they have the right to use what they download.
 import { useEffect, useState } from "react";
-import type { LinkInfo } from "../src/youtube.ts";
+import type { LinkInfo } from "../src/webvideo.ts";
 import { shortTime } from "./format.ts";
 import { useEditor } from "./store.ts";
 
@@ -16,7 +16,7 @@ export function rightsAgreed(): boolean {
   }
 }
 
-/** The one-time agreement, shown before the first download from a link or a YouTube suggestion. */
+/** The one-time agreement, shown before the first download from a link. */
 export function RightsAgreement({ onAgree, onCancel }: { onAgree: () => void; onCancel?: () => void }) {
   return (
     <div className="rights">

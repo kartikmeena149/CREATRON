@@ -10,7 +10,7 @@ import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { run } from "../src/tools.ts";
-import { type SuggestionCard, downloadLink, findMoment, linkInfo, searchYouTube, ytdlpAvailable } from "../src/youtube.ts";
+import { downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
   cloneVoice,
   deleteVoice,
@@ -93,25 +93,11 @@ ipcMain.handle(
         const result = await makePlan(
           analysis, request, m, say, current,
           stockAvailable() ? searchStock : undefined,
-          ytdlpAvailable() ? searchYouTube : undefined,
+          ytdlpAvailable() ? searchWeb : undefined,
         );
         const plan = await fetchBroll(snapEdges(result.plan, analysis), result.clips, say);
-        // Copyrighted clips the AI proposed: find the part to show, but download nothing until the user clicks Add.
-        const suggestions: SuggestionCard[] = [];
-        for (const [i, s] of result.suggestions.entries()) {
-          const clip = result.clips.get(s.source)!;
-          say(`finding the right moment in suggestion ${i + 1} of ${result.suggestions.length}`);
-          try {
-            const moment = await findMoment(clip.page, s.query, s.duration, say);
-            suggestions.push({
-              ...s,
-              url: moment.info.url, videoId: moment.info.id, title: moment.info.title, channel: moment.info.channel,
-              thumbnail: clip.thumbnail ?? moment.info.thumbnail, start: moment.start, end: moment.end, seen: moment.seen,
-            });
-          } catch {} // a suggestion that can't be looked at just doesn't show
-        }
         status("");
-        return { ...result, clips: undefined, plan, suggestions };
+        return { ...result, clips: undefined, plan };
       } catch (e) {
         lastError = e;
         if (!/OpenRouter (429|503)/.test(String(e))) break; // only "busy" is worth retrying elsewhere
@@ -124,7 +110,7 @@ ipcMain.handle(
 
 ipcMain.handle("models", safe(async () => listModels()));
 
-// ---- Online video (yt-dlp): paste a link, or add a suggested YouTube clip ----
+// ---- Video from links (yt-dlp) ----
 ipcMain.handle(
   "link-info",
   safe(async (url: string) => {

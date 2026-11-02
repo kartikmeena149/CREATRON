@@ -1,9 +1,13 @@
-// Online video through yt-dlp: look up any link (YouTube, Instagram, X, Vimeo…), search YouTube
-// (Creative Commons only, or everything), find the moment inside a video that shows what the
-// B-roll needs, and download just that part. Needs yt-dlp (brew install yt-dlp).
+// Video from the web through yt-dlp: look up any link (YouTube, Instagram, X, Vimeo…), search the
+// web for video (DuckDuckGo videos, Creative Commons YouTube, Wikimedia Commons, Dailymotion),
+// find the moment inside a video that shows what the B-roll needs, and download just that part.
+// Needs yt-dlp (brew install yt-dlp). All searches are free and need no key.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { extname, join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { cached, type StockClip } from "./stock.ts";
 import { ROOT, round, run } from "./tools.ts";
 
@@ -62,7 +66,8 @@ export async function linkInfo(url: string): Promise<LinkInfo> {
 async function streamDuration(urls: string[]): Promise<number> {
   for (const url of urls.slice(0, 3)) {
     try {
-      const { stdout } = await run("ffprobe", ["-v", "error", "-rw_timeout", "15000000", "-show_entries", "format=duration", "-of", "csv=p=0", url]);
+      const agent = /wikimedia\.org/.test(url) ? COMMONS_UA : UA;
+      const { stdout } = await run("ffprobe", ["-v", "error", "-rw_timeout", "15000000", "-user_agent", agent, "-show_entries", "format=duration", "-of", "csv=p=0", url]);
       const seconds = Number(stdout.trim());
       if (seconds > 0) return round(seconds, 2);
     } catch {}
@@ -82,6 +87,7 @@ export async function downloadLink(
   const height = opts.height ?? 1080;
   const base = join(dir, `${opts.site}-${opts.id}${range}${height < 1080 ? `-${height}p` : ""}`.replace(/[^\w./-]+/g, "-"));
   if (existsSync(`${base}.mp4`)) return `${base}.mp4`;
+  if (isFileUrl(url)) return cutFile(await fetchWhole(url, onProgress), `${base}.mp4`, height, opts.start, opts.end);
   const args = [
     "--no-playlist", "--no-warnings", "--newline", "--progress",
     // Best picture up to the cap; h264 + AAC first because every player handles them.
@@ -100,6 +106,50 @@ export async function downloadLink(
   return file;
 }
 
+/** A link straight to a video file (Wikimedia Commons hands these out), not a page or stream. */
+const isFileUrl = (url: string) => /\.(webm|ogv|ogg|mp4|m4v|mov|mkv)$/i.test(new URL(url).pathname);
+
+/** Downloads a video file once into work/web-files (cached by address; one download per file at a time). */
+const fetching = new Map<string, Promise<string>>();
+function fetchWhole(url: string, onProgress: (f: number) => void): Promise<string> {
+  let p = fetching.get(url);
+  if (!p) {
+    p = fetchWholeOnce(url, onProgress).finally(() => fetching.delete(url));
+    fetching.set(url, p);
+  }
+  return p;
+}
+
+async function fetchWholeOnce(url: string, onProgress: (f: number) => void): Promise<string> {
+  const dir = join(ROOT, "work", "web-files");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${createHash("sha1").update(url).digest("hex").slice(0, 16)}${extname(new URL(url).pathname)}`);
+  if (existsSync(file)) return file;
+  const res = await fetch(url, { headers: { "User-Agent": COMMONS_UA } });
+  if (!res.ok || !res.body) throw new Error(explain(`HTTP Error ${res.status}`));
+  const total = Number(res.headers.get("content-length")) || 0;
+  let got = 0;
+  const part = `${file}.part`; // a half-finished download never looks like a finished one
+  await pipeline(
+    Readable.fromWeb(res.body as any).on("data", (c: Buffer) => total && onProgress(Math.min(1, (got += c.length) / total))),
+    createWriteStream(part),
+  );
+  renameSync(part, file);
+  return file;
+}
+
+/** Cuts start-end (or all) of a local video into an h264/AAC mp4, at most `height` p tall. */
+async function cutFile(src: string, out: string, height: number, start?: number, end?: number): Promise<string> {
+  const range = start !== undefined && end !== undefined ? ["-ss", String(start), "-to", String(end)] : [];
+  await run("ffmpeg", [
+    "-y", "-v", "error", ...range, "-i", src,
+    "-vf", `scale=-2:'min(${height},ih)':flags=bicubic,format=yuv420p`,
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", `${out}.part.mp4`,
+  ]);
+  renameSync(`${out}.part.mp4`, out);
+  return out;
+}
+
 /** Searches YouTube. cc: only videos under a Creative Commons licence (YouTube's own filter). */
 export async function searchYouTube(query: string, cc: boolean, limit = 8): Promise<StockClip[]> {
   return cached(`youtube|${cc ? "cc" : "all"}|${query.trim().toLowerCase()}|${limit}`, async () => {
@@ -112,7 +162,7 @@ export async function searchYouTube(query: string, cc: boolean, limit = 8): Prom
       .filter((e) => e.ie_key === "Youtube" && e.duration >= 4 && e.duration <= 1800)
       .slice(0, limit)
       .map((e) => ({
-        id: `${cc ? "ytcc" : "yt"}:${e.id}`,
+        id: `web:youtube:${e.id}`,
         description: e.title,
         duration: e.duration,
         width: 0,
@@ -121,21 +171,109 @@ export async function searchYouTube(query: string, cc: boolean, limit = 8): Prom
         page: `https://www.youtube.com/watch?v=${e.id}`,
         download: `https://www.youtube.com/watch?v=${e.id}`,
         thumbnail: `https://i.ytimg.com/vi/${e.id}/hqdefault.jpg`,
+        license: cc ? "CC BY" : undefined,
       }));
   });
 }
 
-/** A copyrighted clip the AI proposed, ready to show as a card: nothing is downloaded until the user clicks Add. */
-export type SuggestionCard = import("./plan.ts").Suggestion & {
-  url: string;
-  videoId: string;
-  title: string;
-  channel: string;
-  thumbnail?: string;
-  start: number;
-  end: number;
-  seen?: string;
-};
+const COMMONS_UA = "Creatron/0.1 (https://github.com/kartikmeena149/CREATRON; video editor)";
+const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36";
+
+/**
+ * Searches the web for video: DuckDuckGo's video search (YouTube, Vimeo, Dailymotion and other
+ * sites), Creative Commons YouTube, Wikimedia Commons and Dailymotion, all at once. Ids are
+ * "web:<site>:<id>"; license is set when the source says the clip is free to reuse.
+ */
+export async function searchWeb(query: string, limit = 12): Promise<StockClip[]> {
+  return cached(`web|${query.trim().toLowerCase()}|${limit}`, async () => {
+    const found = await Promise.all([
+      searchYouTube(query, true, 4).catch(() => []),
+      searchCommons(query).catch(() => []),
+      searchDuckDuckGo(query).catch(() => []),
+      searchDailymotion(query).catch(() => []),
+    ]);
+    // Take turns between sources so each gets a say; one entry per video.
+    const seen = new Set<string>();
+    const out: StockClip[] = [];
+    for (let i = 0; out.length < limit && found.some((list) => i < list.length); i++)
+      for (const list of found) {
+        const c = list[i];
+        if (c && c.duration >= 4 && c.duration <= 3600 && !seen.has(c.page) && out.length < limit) (seen.add(c.page), out.push(c));
+      }
+    return out;
+  });
+}
+
+async function searchDuckDuckGo(query: string): Promise<StockClip[]> {
+  // The page hands out a token (vqd) that the video search needs.
+  const page = await (await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=videos&ia=videos`, { headers: { "User-Agent": UA } })).text();
+  const vqd = page.match(/vqd=["']?([\d-]+)/)?.[1];
+  if (!vqd) return [];
+  const url = `https://duckduckgo.com/v.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}&f=,,,&p=1`;
+  const data = (await (await fetch(url, { headers: { "User-Agent": UA, Referer: "https://duckduckgo.com/" } })).json()) as any;
+  return ((data.results ?? []) as any[]).slice(0, 8).map((v) => {
+    const site = String(v.publisher || new URL(v.content).hostname.replace(/^www\./, ""));
+    const yt = String(v.content).match(/youtube\.com\/watch\?v=([\w-]{11})/)?.[1];
+    return {
+      id: yt ? `web:youtube:${yt}` : `web:${site.toLowerCase()}:${hash(v.content)}`,
+      description: v.title,
+      duration: seconds(v.duration),
+      width: 0,
+      height: 0,
+      author: v.uploader || site,
+      page: v.content,
+      download: v.content,
+      thumbnail: v.images?.medium ?? v.images?.small,
+    };
+  });
+}
+
+async function searchCommons(query: string): Promise<StockClip[]> {
+  const url = new URL("https://commons.wikimedia.org/w/api.php");
+  url.search = new URLSearchParams({
+    action: "query", format: "json", generator: "search", gsrnamespace: "6", gsrlimit: "6",
+    gsrsearch: `${query} filetype:video`, prop: "imageinfo", iiprop: "url|size|extmetadata",
+    iiextmetadatafilter: "LicenseShortName|Artist", iiurlwidth: "320",
+  }).toString();
+  const data = (await (await fetch(url, { headers: { "User-Agent": COMMONS_UA } })).json()) as any;
+  return Object.values(data.query?.pages ?? {}).flatMap((p: any) => {
+    const i = p.imageinfo?.[0];
+    if (!i?.duration || i.size > 300e6) return []; // no length known, or too big to fetch whole
+    const artist = String(i.extmetadata?.Artist?.value ?? "Wikimedia Commons").replace(/<[^>]+>/g, "").trim();
+    return [{
+      id: `web:commons:${hash(p.title)}`,
+      description: String(p.title).replace(/^File:/, "").replace(/\.\w+$/, ""),
+      duration: i.duration,
+      width: i.width,
+      height: i.height,
+      author: artist.slice(0, 60),
+      page: i.descriptionurl,
+      download: i.url, // the video file itself
+      thumbnail: i.thumburl,
+      license: i.extmetadata?.LicenseShortName?.value,
+    }];
+  });
+}
+
+async function searchDailymotion(query: string): Promise<StockClip[]> {
+  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(query)}&fields=id,title,duration,owner.screenname,url,thumbnail_360_url&limit=4`;
+  const data = (await (await fetch(url)).json()) as any;
+  return ((data.list ?? []) as any[]).map((v) => ({
+    id: `web:dailymotion:${v.id}`,
+    description: v.title,
+    duration: v.duration,
+    width: 0,
+    height: 0,
+    author: v["owner.screenname"] ?? "Dailymotion",
+    page: v.url,
+    download: v.url,
+    thumbnail: v.thumbnail_360_url,
+  }));
+}
+
+const hash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 10);
+/** "1:02:03" / "4:05" → seconds; 0 when missing. */
+const seconds = (s?: string) => (s ? s.split(":").reduce((sum, n) => sum * 60 + Number(n), 0) || 0 : 0);
 
 /** The part of a video that shows what the B-roll needs. score is the vision model's 0-10 (undefined if it couldn't look). */
 export type Moment = { start: number; end: number; score?: number; seen?: string; info: LinkInfo };
@@ -254,6 +392,8 @@ function overlap(words: string[], text: string) {
 /** Runs yt-dlp, turning its error lines into something a person can act on. */
 async function ytdlp(args: string[], onStdout?: (chunk: string) => void) {
   if (!ytdlpAvailable()) throw new Error("Importing from links needs yt-dlp. Install it with: brew install yt-dlp");
+  // Wikimedia turns away downloads that look like a browser but aren't; it asks apps to name themselves.
+  if (args.some((a) => /wikimedia\.org|wikipedia\.org/.test(a))) args = ["--user-agent", COMMONS_UA, ...args];
   try {
     return await run("yt-dlp", args, undefined, onStdout);
   } catch (e) {
@@ -269,6 +409,7 @@ function explain(err: string): string {
   if (/log ?in|sign in|login required|cookies|authentication|rate-limit reached/i.test(err)) return "This site only shows that video to signed-in accounts, so Creatron can't download it. Try a public link.";
   if (/unsupported url/i.test(err)) return "Creatron can't download from that site. Links from YouTube, Instagram, X, Vimeo, TikTok and most video sites work.";
   if (/unavailable|removed|not available|does not exist|404/i.test(err)) return "That video isn't available (it may have been removed, or it's blocked in your country).";
+  if (/HTTP Error 429|too many requests/i.test(err)) return "That site is limiting downloads right now (too many requests). Try again in a few minutes.";
   if (/Unable to download webpage|timed out|getaddrinfo|network/i.test(err)) return `Couldn't reach that site. Check your internet connection. (${line})`;
   return `Couldn't get that video: ${line}`;
 }
