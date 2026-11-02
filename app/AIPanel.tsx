@@ -2,11 +2,11 @@
 // anything typed goes to the AI, which edits the current timeline. Each change can be undone.
 import { useEffect, useRef, useState } from "react";
 import { removePauses } from "../src/autocut.ts";
-import { DEFAULT_MODEL } from "../src/plan.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
 import { CaptionList } from "./CaptionList.tsx";
 import { VoiceLab } from "./VoiceLab.tsx";
+import type { ModelInfo } from "./env.d.ts";
 import { useEditor } from "./store.ts";
 
 type Quick = { label: string; run: (plan: EditPlan) => EditPlan; says: string };
@@ -37,6 +37,7 @@ const QUICK: Quick[] = [
 export function AIPanel() {
   const { project, plan, messages, busy, status, commit, say, set, rightTab } = useEditor();
   const [text, setText] = useState("");
+  const [model, setModel] = useModelChoice();
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
     list.current?.scrollTo({ top: list.current.scrollHeight, behavior: "smooth" });
@@ -63,13 +64,13 @@ export function AIPanel() {
     say({ role: "user", text: request });
     set({ busy: true });
     const before = useEditor.getState().plan;
-    const r = await window.creatron.aiEdit(project.path, request, before);
+    const r = await window.creatron.aiEdit(project.path, request, before, model || undefined);
     set({ busy: false });
     if (!r.ok) {
       const text = /OPENROUTER_API_KEY/.test(r.error)
         ? "The AI isn't connected yet. Add your OpenRouter key to CREATRON/.env and restart the app. The quick actions above work without it."
         : /OpenRouter 402/.test(r.error)
-          ? "Your OpenRouter account has no credits yet. Once your payment lands, try again. The quick actions above work meanwhile."
+          ? "This model needs OpenRouter credits, and your balance is $0. Pick a free model from the menu above, or add credits and try again."
           : /OpenRouter 401/.test(r.error)
             ? "OpenRouter didn't accept the API key. Check the key in CREATRON/.env and restart the app."
             : /OpenRouter (429|503)/.test(r.error)
@@ -79,7 +80,8 @@ export function AIPanel() {
       return;
     }
     const cost = r.value.cost ? ` · $${r.value.cost.toFixed(4)}` : "";
-    apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}`);
+    const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
+    apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
   };
 
   return (
@@ -96,7 +98,7 @@ export function AIPanel() {
             Voice
           </button>
         </div>
-        {rightTab === "ai" && <div className="dim small">{DEFAULT_MODEL.split("/").pop()}</div>}
+        {rightTab === "ai" && <ModelPicker value={model} onChange={setModel} />}
       </div>
 
       {rightTab === "voice" ? <VoiceLab /> : rightTab === "captions" ? <CaptionList /> : <>
@@ -149,5 +151,63 @@ export function AIPanel() {
       </div>
       </>}
     </aside>
+  );
+}
+
+type Models = { models: ModelInfo[]; credits: number | null; recommended: string };
+let modelsOnce: Promise<Models | undefined> | undefined;
+const loadModels = () =>
+  (modelsOnce ??= window.creatron.models().then((r) => (r.ok ? r.value : ((modelsOnce = undefined), undefined))));
+
+/** The chosen model, remembered on this Mac; until you pick one, the best fit for your credits. */
+function useModelChoice(): [string, (id: string) => void] {
+  const read = () => {
+    try {
+      return localStorage.getItem("creatron.model") ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const [model, setModel] = useState(read);
+  useEffect(() => {
+    if (!model) loadModels().then((m) => m && setModel(m.recommended));
+  }, []);
+  const choose = (id: string) => {
+    setModel(id);
+    try {
+      localStorage.setItem("creatron.model", id);
+    } catch {}
+  };
+  return [model, choose];
+}
+
+function ModelPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [data, setData] = useState<Models>();
+  useEffect(() => void loadModels().then(setData), []);
+  const price = (m: ModelInfo) => (m.free ? "free" : `$${+m.inPerM.toFixed(2)} / $${+m.outPerM.toFixed(2)} per M`);
+  const current = data?.models.find((m) => m.id === value);
+  return (
+    <div className="model-picker">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={current ? `${current.name}: ${price(current)}` : value}
+      >
+        {!data && <option value={value}>{value.split("/").pop() || "Loading…"}</option>}
+        {data && (
+          <>
+            <optgroup label="Free (no credits needed)">
+              {data.models.filter((m) => m.free).map((m) => <option key={m.id} value={m.id}>{m.name.replace(" (free)", "")} · free</option>)}
+            </optgroup>
+            <optgroup label={data.credits !== null && data.credits <= 0 ? "Paid (needs OpenRouter credits)" : "Paid"}>
+              {data.models.filter((m) => !m.free).map((m) => <option key={m.id} value={m.id}>{m.name} · {price(m)}</option>)}
+            </optgroup>
+          </>
+        )}
+      </select>
+      {data?.credits !== null && data?.credits !== undefined && (
+        <span className={`credits ${data.credits <= 0 ? "empty" : ""}`} title="OpenRouter balance">${data.credits.toFixed(2)}</span>
+      )}
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { analyze } from "../src/analyze.ts";
+import { freeFallbacks, listModels } from "../src/models.ts";
 import { makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
@@ -78,13 +79,28 @@ ipcMain.handle(
 
 ipcMain.handle(
   "ai-edit",
-  safe(async (path: string, request: string, current: EditPlan) => {
+  safe(async (path: string, request: string, current: EditPlan, model?: string) => {
     const analysis = await analyze(path, () => {});
-    const result = await makePlan(analysis, request, undefined, (m) => status(m.replace(/^plan: /, "")), current);
+    const say = (m: string) => status(m.replace(/^plan: /, ""));
+    // Free models share capacity and are often busy: fall through to the next free one.
+    const tries = [model, ...(model?.endsWith(":free") ? freeFallbacks(model, (await listModels()).models).slice(0, 3) : [])];
+    let lastError: unknown;
+    for (const m of tries) {
+      try {
+        const result = await makePlan(analysis, request, m, say, current);
+        status("");
+        return { ...result, plan: snapEdges(result.plan, analysis) };
+      } catch (e) {
+        lastError = e;
+        if (!/OpenRouter (429|503)/.test(String(e))) break; // only "busy" is worth retrying elsewhere
+      }
+    }
     status("");
-    return { ...result, plan: snapEdges(result.plan, analysis) };
+    throw lastError;
   }),
 );
+
+ipcMain.handle("models", safe(async () => listModels()));
 
 ipcMain.handle(
   "export",

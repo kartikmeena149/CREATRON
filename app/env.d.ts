@@ -1,6 +1,7 @@
 import type { Analysis, EditPlan } from "../src/schema.ts";
 import type { Thumbs, Wave } from "./store.ts";
 
+export type ModelInfo = { id: string; name: string; free: boolean; inPerM: number; outPerM: number };
 export type VoiceInfo = { id: string; name: string; kind: "cloned" | "builtin"; file?: string; url?: string };
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -10,7 +11,8 @@ declare global {
     creatron: {
       pickVideo(): Promise<string | undefined>;
       importVideo(path: string): Promise<Result<{ analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave }>>;
-      aiEdit(path: string, request: string, current: EditPlan): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      aiEdit(path: string, request: string, current: EditPlan, model?: string): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;
       reveal(path: string): Promise<void>;
       voices(): Promise<Result<VoiceInfo[]>>;
