@@ -16,6 +16,7 @@ declare global {
       linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
       linkDownload(opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }): Promise<Result<{ file: string; length: number }>>;
       onLinkProgress(fn: (f: number) => void): () => void;
+      customCode(path: string): Promise<Result<{ version: string; code: Record<string, string>; errors: string[] }>>;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;
       reveal(path: string): Promise<void>;

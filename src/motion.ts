@@ -21,7 +21,16 @@ export type OverlayProps = {
     fontSize: number; // px at width x height
     cues: OverlayCue[];
   };
-  motion: { template: "title" | "lower-third"; text: string; subtext: string; at: number; duration: number; color: string }[];
+  motion: {
+    template: "title" | "lower-third" | "custom";
+    component?: string;
+    props?: Record<string, unknown>;
+    text: string;
+    subtext: string;
+    at: number;
+    duration: number;
+    color: string;
+  }[];
 };
 
 /** True when the edit needs the Remotion layer (animated captions or anything on M1). */
@@ -50,7 +59,9 @@ export function overlayProps(plan: EditPlan, words: Word[], size: { width: numbe
           cues: cueWords(plan, words),
         }
       : undefined,
-    motion: plan.motion.map((m) => ({ template: m.template, text: m.text, subtext: m.subtext, at: m.at, duration: m.duration, color: m.color })),
+    motion: plan.motion.map((m) => ({
+      template: m.template, component: m.component, props: m.props, text: m.text, subtext: m.subtext, at: m.at, duration: m.duration, color: m.color,
+    })),
   };
 }
 

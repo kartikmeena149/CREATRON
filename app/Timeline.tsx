@@ -407,7 +407,7 @@ function MotionBlock({ m }: { m: Motion }) {
       else if (mode === "start") {
         const dd = Math.max(-orig.at, Math.min(orig.duration - 0.5, d));
         up(m.id, { at: orig.at + dd, duration: orig.duration - dd }, false);
-      } else up(m.id, { duration: Math.max(0.5, Math.min(20, orig.duration + d)) }, false);
+      } else up(m.id, { duration: Math.max(0.5, Math.min(3600, orig.duration + d)) }, false);
     };
     const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
     window.addEventListener("pointermove", onMove);
@@ -418,9 +418,9 @@ function MotionBlock({ m }: { m: Motion }) {
       className={`motion-clip ${selectedMotion === m.id ? "selected" : ""}`}
       style={{ left: m.at * pxPerSec, width: Math.max(6, m.duration * pxPerSec - 1), borderLeftColor: m.color }}
       onPointerDown={drag("move")}
-      title={`${m.template === "title" ? "Title" : "Lower third"}: ${m.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
+      title={`${m.template === "custom" ? `Custom animation ${m.component}` : m.template === "title" ? "Title" : "Lower third"}: ${m.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
     >
-      <span>{m.template === "title" ? "T" : "▭"} {m.text}</span>
+      <span>{m.template === "custom" ? `✦ ${m.component}` : m.template === "title" ? "T" : "▭"} {m.text}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>

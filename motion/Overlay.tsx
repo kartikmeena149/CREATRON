@@ -1,9 +1,10 @@
 // The see-through Remotion layer drawn over the edited video: animated captions and the M1
-// Motion track (titles, lower thirds). The app shows it live with <Player>; the export renders
+// Motion track (titles, lower thirds, and custom animations the AI wrote, see custom.ts). The app shows it live with <Player>; the export renders
 // it with @remotion/renderer and lays it on top. Props come from overlayProps() in src/motion.ts.
 import type React from "react";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, interpolate, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import type { OverlayCue, OverlayProps } from "../src/motion.ts";
+import { customComponent } from "./custom.ts";
 
 const FONT = "Arial, Helvetica, sans-serif";
 // Outline drawn with shadows around the letters, the same look as the plain captions.
@@ -18,13 +19,29 @@ export const Overlay: React.FC<OverlayProps> = (props) => {
   const t = frame / fps;
   return (
     <AbsoluteFill style={{ fontFamily: FONT }}>
+      {props.motion.map((m, i) => (m.template === "custom" ? <Custom key={i} {...m} W={props.width} H={props.height} /> : null))}
       {props.motion.filter((m) => t >= m.at && t < m.at + m.duration).map((m, i) =>
-        m.template === "title" ? <Title key={i} {...m} W={props.width} H={props.height} /> : <LowerThird key={i} {...m} W={props.width} H={props.height} />,
+        m.template === "title" ? <Title key={i} {...m} W={props.width} H={props.height} /> : m.template === "lower-third" ? <LowerThird key={i} {...m} W={props.width} H={props.height} /> : null,
       )}
       {props.captions && <Captions {...props.captions} t={t} W={props.width} H={props.height} />}
     </AbsoluteFill>
   );
 };
+
+/** An AI-written animation: inside its Sequence, frame 0 is the moment it starts. Missing code draws nothing. */
+function Custom({ component, props, text, subtext, color, at, duration, W, H }: OverlayProps["motion"][number] & { W: number; H: number }) {
+  const { fps } = useVideoConfig();
+  const C = component ? customComponent(component) : undefined;
+  const frames = Math.max(1, Math.round(duration * fps));
+  if (!C) return null;
+  return (
+    <Sequence from={Math.round(at * fps)} durationInFrames={frames} layout="none">
+      <AbsoluteFill>
+        <C text={text} subtext={subtext} color={color} {...props} width={W} height={H} durationInFrames={frames} />
+      </AbsoluteFill>
+    </Sequence>
+  );
+}
 
 /** Seconds since `at`, and a 0→1 spring that starts there. */
 function useEntry(at: number, config = { damping: 13, stiffness: 180, mass: 0.6 }) {

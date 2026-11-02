@@ -25,13 +25,17 @@ export function MotionEditor() {
         Text
         <button className="link" onClick={() => deleteMotion(m.id)}>Delete</button>
       </h3>
-      <div className="segmented">
-        {(["title", "lower-third"] as const).map((t) => (
-          <button key={t} className={m.template === t ? "on" : ""} onClick={() => m.template !== t && updateMotion(m.id, { template: t })}>
-            {t === "title" ? "Title" : "Lower third"}
-          </button>
-        ))}
-      </div>
+      {m.template === "custom" ? (
+        <p className="hint">✦ {m.component}: an animation the AI wrote for this video. Ask the AI to change how it moves or looks.</p>
+      ) : (
+        <div className="segmented">
+          {(["title", "lower-third"] as const).map((t) => (
+            <button key={t} className={m.template === t ? "on" : ""} onClick={() => m.template !== t && updateMotion(m.id, { template: t })}>
+              {t === "title" ? "Title" : "Lower third"}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="field-label">Text</div>
       {field("text", "Main words")}
       <div className="field-label">Second line</div>

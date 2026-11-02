@@ -13,6 +13,7 @@ const api = {
   aiEdit: (path: string, request: string, current: unknown, model?: string, focus?: unknown) =>
     ipcRenderer.invoke("ai-edit", path, request, current, model, focus),
   models: () => ipcRenderer.invoke("models"),
+  customCode: (path: string) => ipcRenderer.invoke("custom-code", path),
   linkInfo: (url: string) => ipcRenderer.invoke("link-info", url),
   linkDownload: (opts: unknown) => ipcRenderer.invoke("link-download", opts),
   onLinkProgress: on("link-progress"),

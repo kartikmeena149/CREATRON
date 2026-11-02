@@ -3,26 +3,59 @@
 // are bundled once per run; Remotion fetches its own headless Chrome the first time (about
 // 140 MB), which Creatron keeps in ~/Library/Caches/Creatron (see chromeOutsideProtectedFolders).
 import { bundle } from "@remotion/bundler";
-import { ensureBrowser, renderFrames, selectComposition } from "@remotion/renderer";
+import { ensureBrowser, renderFrames, renderStill, selectComposition } from "@remotion/renderer";
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { cpus, homedir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { customFiles, customVersion, writeCustomEntry } from "./customcode.ts";
 import type { OverlayProps } from "./motion.ts";
 import { ROOT } from "./tools.ts";
 
-let served: Promise<string> | undefined;
+const served = new Map<string, Promise<string>>();
 
-/** Writes frames as dir/element-NNN.png (one per output frame) and returns the glob ffmpeg reads them with. */
-export async function renderOverlay(props: OverlayProps, dir: string, onProgress: (fraction: number) => void = () => {}): Promise<string> {
-  served ??= bundle({ entryPoint: join(ROOT, "motion", "index.ts") }).catch((e) => {
-    served = undefined; // try bundling again next time
-    throw e;
-  });
-  const serveUrl = await served;
+/**
+ * The bundled templates, plus this project's custom animations (custom/) when it has any.
+ * Rebundled only when the custom code changes.
+ */
+function serveUrlFor(custom?: string): Promise<string> {
+  const withCustom = custom && customFiles(custom).length > 0;
+  const key = withCustom ? `${custom}|${customVersion(custom)}` : "templates";
+  let url = served.get(key);
+  if (!url) {
+    const entryPoint = withCustom ? writeCustomEntry(custom) : join(ROOT, "motion", "index.ts");
+    url = bundle({ entryPoint }).catch((e) => {
+      served.delete(key); // try bundling again next time
+      throw e;
+    });
+    served.set(key, url);
+  }
+  return url;
+}
+
+async function browserAndComposition(props: OverlayProps, custom?: string) {
+  const serveUrl = await serveUrlFor(custom);
   const browser = await ensureBrowser();
   if (!("path" in browser)) throw new Error("Couldn't download the browser Remotion draws animations with. Check your internet connection and export again.");
   const browserExecutable = chromeOutsideProtectedFolders(browser.path);
   const composition = await selectComposition({ serveUrl, id: "Overlay", inputProps: props, browserExecutable });
+  return { serveUrl, browserExecutable, composition };
+}
+
+/** One frame of the layer as a see-through PNG (the AI's own check of what it made). */
+export async function renderOverlayStill(props: OverlayProps, frame: number, out: string, custom?: string): Promise<string> {
+  const { serveUrl, browserExecutable, composition } = await browserAndComposition(props, custom);
+  await renderStill({ composition, serveUrl, inputProps: props, frame, output: out, imageFormat: "png", browserExecutable, overwrite: true });
+  return out;
+}
+
+/** Writes frames as dir/element-NNN.png (one per output frame) and returns the glob ffmpeg reads them with. */
+export async function renderOverlay(
+  props: OverlayProps,
+  dir: string,
+  onProgress: (fraction: number) => void = () => {},
+  custom?: string,
+): Promise<string> {
+  const { serveUrl, browserExecutable, composition } = await browserAndComposition(props, custom);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   await renderFrames({

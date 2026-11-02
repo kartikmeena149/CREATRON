@@ -22,6 +22,7 @@
     "@remotion/bundler": "4.0.540",
     "@remotion/player": "4.0.540",
     "@remotion/renderer": "4.0.540",
+    "esbuild": "0.28.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "remotion": "4.0.540",

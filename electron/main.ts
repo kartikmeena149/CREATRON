@@ -2,7 +2,9 @@ import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { runAgent } from "../src/agent.ts";
 import { analyze } from "../src/analyze.ts";
+import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
 import { type Focus, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
@@ -90,12 +92,18 @@ ipcMain.handle(
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const result = await makePlan(
-          analysis, request, m, say, current,
-          stockAvailable() ? searchStock : undefined,
-          ytdlpAvailable() ? searchWeb : undefined,
-          focus?.clips.length || focus?.broll ? focus : undefined,
-        );
+        const picked = focus?.clips.length || focus?.broll ? focus : undefined;
+        // Claude through your subscription works as an agent (any change, its own Remotion code);
+        // other models fill in the edit plan through tools.
+        const result = m?.startsWith("claude-code/")
+          ? { ...(await runAgent(analysis, request, current, m, say, picked)), clips: new Map(), cost: 0 }
+          : await makePlan(
+              analysis, request, m, say, current,
+              stockAvailable() ? searchStock : undefined,
+              ytdlpAvailable() ? searchWeb : undefined,
+              picked,
+            );
+        if ("notes" in result && result.notes) result.plan.notes = result.notes;
         // Snapping moves cuts onto quiet spots. Only cuts the AI just made move: an edge that was
         // already on the timeline stays put (so "mute clip 2" changes the volume and nothing else).
         const starts = new Set(current.segments.map((s) => s.start));
@@ -120,6 +128,9 @@ ipcMain.handle(
 );
 
 ipcMain.handle("models", safe(async () => listModels()));
+
+// The project's AI-written animations, compiled for the live preview.
+ipcMain.handle("custom-code", safe(async (path: string) => compileCustom(customDir(path))));
 
 // ---- Video from links (yt-dlp) ----
 ipcMain.handle(

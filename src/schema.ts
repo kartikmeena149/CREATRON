@@ -75,13 +75,19 @@ export type Broll = z.infer<typeof Broll>;
 export const Motion = z.object({
   id: z.string().default(""),
   template: z
-    .enum(["title", "lower-third"])
-    .describe("title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom"),
-  text: z.string().min(1).max(80).describe("The main words, short (2-6 words)"),
+    .enum(["title", "lower-third", "custom"])
+    .describe("title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom; custom = an animation written for this project (component)"),
+  component: z
+    .string()
+    .regex(/^[A-Z][A-Za-z0-9]*$/)
+    .optional()
+    .describe("custom only: the component's name, its file is custom/<component>.tsx"),
+  props: z.record(z.string(), z.unknown()).default({}).describe("custom only: extra props for the component"),
+  text: z.string().max(200).default("").describe("The main words, short (2-6 words)"),
   subtext: z.string().max(80).default("").describe("Optional smaller second line"),
   atSource: z.number().min(0).optional().describe("Transcript second where it should appear (use this; the app converts it)"),
   at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
-  duration: z.number().min(0.5).max(20).default(3).describe("How long it shows, seconds (2-4 is typical)"),
+  duration: z.number().min(0.5).max(3600).default(3).describe("How long it shows, seconds (2-4 is typical for text; a progress bar can run the whole video)"),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Accent color"),
 });
 export type Motion = z.infer<typeof Motion>;

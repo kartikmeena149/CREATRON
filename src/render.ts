@@ -5,6 +5,7 @@ import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
 import { isIdentity, outputSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
+import { customDir } from "./customcode.ts";
 import { renderOverlay } from "./remotion.ts";
 import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
@@ -84,7 +85,7 @@ export async function render(
     const frames = await renderOverlay(overlayProps(plan, analysis.words, size, fps), join(dir, "motion"), (f) => {
       const pct = Math.floor(f * 20) * 5;
       if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
-    });
+    }, customDir(analysis.source));
     const input = args.filter((a) => a === "-i").length;
     args.push("-framerate", String(fps), "-pattern_type", "glob", "-i", frames);
     filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[motion]`);

@@ -3,7 +3,6 @@
 import { z } from "zod";
 import type { Analysis } from "./schema.ts";
 import { EditPlan, type Segment, checkPlan } from "./schema.ts";
-import { claudeChat } from "./claudecli.ts";
 import { round } from "./round.ts";
 import type { Orientation, StockClip } from "./stock.ts";
 import { outputDuration, toOutputTime } from "./timeline.ts";
@@ -79,9 +78,8 @@ export async function makePlan(
   searchWeb?: WebSearch,
   focus?: Focus,
 ): Promise<PlanResult> {
-  const viaClaude = model.startsWith("claude-code/"); // your Claude plan, through the claude CLI
   const key = process.env.OPENROUTER_API_KEY;
-  if (!key && !viaClaude) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
 
   const submit = {
     type: "function",
@@ -151,7 +149,7 @@ export async function makePlan(
     log(`plan: asking ${model}${invalid ? " (fixing the plan)" : searches ? ` (looked for B-roll ${searches}×)` : ""}`);
     const tools = mustSubmit ? [submit] : [...searchTools, submit];
     const toolChoice = mustSubmit ? { type: "function", function: { name: "submit_edit_plan" } } : "required";
-    const data = viaClaude ? await claudeChat(model, messages, tools as any, toolChoice) : await openRouter(key!, model, messages, tools, toolChoice);
+    const data = await openRouter(key, model, messages, tools, toolChoice);
     totals.inputTokens += data.usage?.prompt_tokens ?? 0;
     totals.outputTokens += data.usage?.completion_tokens ?? 0;
     totals.cost += data.usage?.cost ?? 0;
@@ -237,7 +235,7 @@ export async function makePlan(
 }
 
 /** The picked clips, as the model sees them. Clip numbers match the timeline ("Clip 2" = segments[1]). */
-function describeFocus(plan: EditPlan, focus: Focus): string {
+export function describeFocus(plan: EditPlan, focus: Focus): string {
   const lines = focus.clips
     .filter((i) => plan.segments[i])
     .map((i) => {
@@ -292,7 +290,7 @@ async function openRouter(key: string, model: string, messages: any[], tools: un
 }
 
 /** Turns each B-roll's and text item's transcript time (atSource) into a timeline position; drops ones over cut parts. */
-function placeBroll(plan: EditPlan, clips: Map<string, StockClip>): EditPlan {
+export function placeBroll(plan: EditPlan, clips: Map<string, StockClip>): EditPlan {
   plan = placeMotion(plan);
   const total = outputDuration(plan);
   const broll = plan.broll.flatMap((b, i) => {

@@ -259,7 +259,7 @@ export const useEditor = create<State>((set, get) => ({
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
     const at = Math.max(0, Math.min(time, total - 0.5));
     const item: Motion = {
-      id, template, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
+      id, template, props: {}, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
       text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
     };
     get().commit({ ...plan, motion: [...plan.motion, item] });
