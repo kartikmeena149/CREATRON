@@ -8,6 +8,7 @@ import { makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
+import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import {
   cloneVoice,
   deleteVoice,
@@ -87,9 +88,10 @@ ipcMain.handle(
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const result = await makePlan(analysis, request, m, say, current);
+        const result = await makePlan(analysis, request, m, say, current, stockAvailable() ? searchStock : undefined);
+        const plan = await fetchBroll(snapEdges(result.plan, analysis), result.clips, say);
         status("");
-        return { ...result, plan: snapEdges(result.plan, analysis) };
+        return { ...result, clips: undefined, plan };
       } catch (e) {
         lastError = e;
         if (!/OpenRouter (429|503)/.test(String(e))) break; // only "busy" is worth retrying elsewhere

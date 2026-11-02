@@ -52,7 +52,7 @@ button.link:hover { text-decoration: underline; background: none; }
 .error { color: var(--danger); }
 
 /* Layout */
-.app { display: grid; grid-template-rows: 44px 1fr 326px; grid-template-columns: minmax(0, 1fr); height: 100%; }
+.app { display: grid; grid-template-rows: 44px 1fr 384px; grid-template-columns: minmax(0, 1fr); height: 100%; }
 .workspace { display: grid; grid-template-columns: 272px 1fr 320px; min-height: 0; border-bottom: 1px solid var(--line); }
 .center { min-width: 0; min-height: 0; background: #0a0b0d; display: flex; }
 
@@ -358,3 +358,16 @@ button.wide { width: 100%; margin-top: 8px; }
 .model-picker select:hover, .model-picker select:focus { color: var(--text); border-color: var(--accent); }
 .credits { font-size: 11px; color: var(--voice); font-variant-numeric: tabular-nums; }
 .credits.empty { color: var(--faint); }
+
+/* V2 B-roll */
+.broll-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
+.track-label.broll b { background: #fb923c; }
+.track.broll { position: relative; }
+.broll-clip {
+  position: absolute; top: 5px; height: 48px; border-radius: 6px; overflow: hidden; cursor: grab;
+  background: #3b2a1c; box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.55);
+}
+.broll-clip.selected { box-shadow: inset 0 0 0 2px #fdba74; }
+.broll-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.75; pointer-events: none; }
+.broll-label { position: absolute; left: 6px; top: 4px; right: 8px; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; pointer-events: none; }
+.broll-clip:hover .handle, .broll-clip.selected .handle { background: rgba(251, 146, 60, 0.55); }

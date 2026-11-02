@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { roughCut } from "../src/autocut.ts";
 import { type Cue, buildCues, captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
-import type { Segment, Voiceover } from "../src/schema.ts";
-import { shortTime } from "./format.ts";
+import type { Broll, Segment, Voiceover } from "../src/schema.ts";
+import { mediaUrl, shortTime } from "./format.ts";
 import { type Thumbs, type Wave, useEditor } from "./store.ts";
 
 const LABEL_W = 132;
@@ -114,6 +114,7 @@ export function Timeline() {
       <div className="tl-body">
         <div className="tl-labels" style={{ width: LABEL_W }}>
           <div className="tl-ruler-spacer" />
+          <div className="track-label broll"><b>V2</b> B-roll</div>
           <div className="track-label video"><b>V1</b> Video</div>
           <div className="track-label captions"><b>T1</b> Captions{!plan.captions.enabled && <em> off</em>}</div>
           <div className="track-label voice"><b>A1</b> Voice</div>
@@ -123,6 +124,13 @@ export function Timeline() {
         <div className="tl-scroll" ref={scroller} onWheel={onWheel}>
           <div className="tl-content" style={{ width }}>
             <Ruler total={total} pxPerSec={pxPerSec} onPointerDown={scrub} />
+
+            <div className="track broll" onPointerDown={(e) => e.target === e.currentTarget && (useEditor.getState().selectBroll(null), scrub(e))}>
+              {plan.broll.map((b) => (
+                <BrollBlock key={b.id} b={b} />
+              ))}
+              {!plan.broll.length && <span className="track-empty">Ask the AI for B-roll, e.g. "add B-roll when I talk about plants"</span>}
+            </div>
 
             <div className="track video" onPointerDown={(e) => e.target === e.currentTarget && (select(null), scrub(e))}>
               {segs.map(({ s, x, w }, i) => (
@@ -356,6 +364,52 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
       title={`${vo.voice}: ${vo.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
     >
       <span className="vo-label">🎙 {vo.text}</span>
+      <div className="handle left" onPointerDown={drag("start")} />
+      <div className="handle right" onPointerDown={drag("end")} />
+    </div>
+  );
+}
+
+/** A B-roll clip on V2: drag to move, drag edges to trim, click to select, ⌫ to delete. */
+function BrollBlock({ b }: { b: Broll }) {
+  const { pxPerSec, selectedBroll, selectBroll } = useEditor();
+  const selected = selectedBroll === b.id;
+  const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    selectBroll(b.id);
+    const x0 = e.clientX;
+    const orig = { ...b };
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const d = (ev.clientX - x0) / pxPerSec;
+      if (!moved) {
+        if (Math.abs(ev.clientX - x0) < 3) return;
+        moved = true;
+        useEditor.getState().checkpoint();
+      }
+      const up = useEditor.getState().updateBroll;
+      if (mode === "move") up(b.id, { at: Math.max(0, orig.at + d) }, false);
+      else if (mode === "start") {
+        const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.5, d));
+        up(b.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
+      } else {
+        const max = (orig.length ?? Infinity) - orig.offset;
+        up(b.id, { duration: Math.max(0.5, Math.min(max, orig.duration + d)) }, false);
+      }
+    };
+    const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+  };
+  return (
+    <div
+      className={`broll-clip ${selected ? "selected" : ""}`}
+      style={{ left: b.at * pxPerSec, width: Math.max(6, b.duration * pxPerSec - 1) }}
+      onPointerDown={drag("move")}
+      title={`${b.query ?? b.source}${b.credit ? `\nVideo: ${b.credit}` : ""}\nDrag to move · drag edges to trim · ⌫ to delete`}
+    >
+      {b.file && <video className="broll-thumb" src={`${mediaUrl(b.file)}#t=${(b.offset + 0.5).toFixed(1)}`} muted preload="metadata" />}
+      <span className="broll-label">{b.query ?? b.source}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>

@@ -9,6 +9,7 @@ import { DEFAULT_MODEL, describe, makePlan } from "./plan.ts";
 import { render } from "./render.ts";
 import { EditPlan } from "./schema.ts";
 import { snapEdges } from "./snap.ts";
+import { fetchBroll, searchStock, stockAvailable } from "./stock.ts";
 import { ROOT } from "./tools.ts";
 
 const USAGE = `creatron - edit video by describing what you want
@@ -49,8 +50,8 @@ try {
     console.log(describe(await analyze(need(video, "video"))));
   } else if (command === "plan" || command === "edit") {
     const a = await analyze(need(video, "video"));
-    const result = await makePlan(a, need(third, "request"), values.model);
-    result.plan = snapEdges(result.plan, a);
+    const result = await makePlan(a, need(third, "request"), values.model, console.error, undefined, stockAvailable() ? searchStock : undefined);
+    result.plan = await fetchBroll(snapEdges(result.plan, a), result.clips, console.error);
     const planFile = resolve(`${basename(video, extname(video))}.plan.json`);
     writeFileSync(planFile, JSON.stringify(result.plan, null, 2) + "\n");
     const cost = result.cost ? `, $${result.cost.toFixed(4)}` : "";

@@ -117,6 +117,7 @@ export function wholeVideo(analysis: Analysis): EditPlan {
     captions: { ...DEFAULT_CAPTIONS },
     audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },
     voiceovers: [],
+    broll: [],
     notes: "",
   };
 }

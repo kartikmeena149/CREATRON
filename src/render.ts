@@ -1,5 +1,5 @@
 // Step 3: turn an edit plan into a finished video with ffmpeg, on the user's machine.
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
@@ -47,7 +47,19 @@ export async function render(
   filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat]${analysis.hasAudio ? "[acat]" : ""}`);
   filters.push(...frameFilters(plan, W, H, size, fps, total));
 
+  // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
   let videoOut = "[framed]";
+  plan.broll.filter((b) => b.file && existsSync(b.file)).forEach((b, k) => {
+    const input = args.filter((a) => a === "-i").length;
+    args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), "-i", b.file!);
+    filters.push(
+      `[${input}:v]scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height},` +
+        `setsar=1,fps=${fps},format=yuv420p,setpts=PTS-STARTPTS+${b.at.toFixed(3)}/TB[br${k}]`,
+      `${videoOut}[br${k}]overlay=eof_action=pass:enable='between(t,${b.at.toFixed(3)},${(b.at + b.duration).toFixed(3)})'[bo${k}]`,
+    );
+    videoOut = `[bo${k}]`;
+  });
+
   const dir = join(workDir(analysis.source), "render");
   if (plan.captions.enabled && analysis.words.length) {
     rmSync(dir, { recursive: true, force: true });
@@ -55,9 +67,11 @@ export async function render(
     const cues = buildCues(plan, analysis.words);
     log(`render: drawing ${cues.length} captions`);
     const list = drawCues(cues, plan, size.width, size.height, dir, total);
+    const input = args.filter((a) => a === "-i").length;
     args.push("-f", "concat", "-safe", "0", "-i", list);
-    filters.push(`[${n}:v]format=rgba,setpts=PTS-STARTPTS[caps]`);
-    filters.push(`[framed][caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
+    filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[caps]`);
+    // Captions go on top of everything, B-roll included.
+    filters.push(`${videoOut}[caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
     videoOut = "[final]";
   }
   if (analysis.hasAudio) {

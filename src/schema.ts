@@ -39,6 +39,29 @@ export const Voiceover = z.object({
 });
 export type Voiceover = z.infer<typeof Voiceover>;
 
+/**
+ * A stock clip shown over the main video on the V2 track (the original audio keeps playing).
+ * at/duration are output seconds; offset is seconds into the clip. The AI sets source (a clip id
+ * from search_broll), at and duration; the app downloads the clip and fills in file/length/credit.
+ */
+export const Broll = z.object({
+  id: z.string().default(""),
+  source: z.string().describe('Clip id from search_broll, e.g. "pexels:123456"'),
+  atSource: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Transcript second where the B-roll should start (use this; the app converts it to the timeline)"),
+  at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
+  duration: z.number().min(0.5).max(15).describe("How long it shows, seconds (2-5 is typical)"),
+  offset: z.number().min(0).default(0),
+  file: z.string().optional(),
+  length: z.number().positive().optional(),
+  query: z.string().optional(),
+  credit: z.string().optional(),
+});
+export type Broll = z.infer<typeof Broll>;
+
 export const DEFAULT_CAPTIONS = {
   enabled: false,
   style: "bold" as const,
@@ -96,6 +119,7 @@ export const EditPlan = z.object({
     .default({ denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 }),
   // Generated speech placed on the A2 track. Timed on the OUTPUT clock: it sits where you put it.
   voiceovers: z.array(Voiceover).default([]),
+  broll: z.array(Broll).default([]).describe("Stock clips over the main video. Only use ids returned by search_broll."),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

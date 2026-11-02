@@ -8,7 +8,7 @@ import { placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import { locate, useEditor } from "./store.ts";
 import { mediaUrl, timecode } from "./format.ts";
-import type { Voiceover } from "../src/schema.ts";
+import type { Broll, Voiceover } from "../src/schema.ts";
 
 export function Viewer() {
   const { project, plan, time, playing, seek, setPlaying } = useEditor();
@@ -159,6 +159,7 @@ export function Viewer() {
               style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
             />
           </div>
+          <BrollLayer broll={plan.broll} time={time} playing={playing} />
           {cue && frameSize.w > 0 && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
         </div>
       </div>
@@ -238,4 +239,47 @@ function useVoiceoverPlayback(voiceovers: Voiceover[], time: number, playing: bo
     }
   }, [voiceovers, time, playing]);
   useEffect(() => () => players.current.forEach((a) => a.pause()), []);
+}
+
+/** V2 B-roll in the preview: each clip covers the frame during its window, muted, in sync. */
+function BrollLayer({ broll, time, playing }: { broll: Broll[]; time: number; playing: boolean }) {
+  const refs = useRef(new Map<string, HTMLVideoElement>());
+  useEffect(() => {
+    for (const b of broll) {
+      const v = refs.current.get(b.id);
+      if (!v) continue;
+      const active = time >= b.at && time < b.at + b.duration;
+      const want = b.offset + (time - b.at);
+      if (!active) {
+        if (!v.paused) v.pause();
+      } else if (playing) {
+        if (v.paused) {
+          v.currentTime = want;
+          v.play().catch(() => {});
+        } else if (Math.abs(v.currentTime - want) > 0.25) v.currentTime = want;
+      } else {
+        if (!v.paused) v.pause();
+        if (Math.abs(v.currentTime - want) > 0.04) v.currentTime = want;
+      }
+    }
+  }, [broll, time, playing]);
+
+  return (
+    <>
+      {broll.filter((b) => b.file).map((b) => (
+        <video
+          key={b.id}
+          className="broll-layer"
+          ref={(el) => {
+            if (el) refs.current.set(b.id, el);
+            else refs.current.delete(b.id);
+          }}
+          src={mediaUrl(b.file!)}
+          muted
+          preload="auto"
+          style={{ visibility: time >= b.at && time < b.at + b.duration ? "visible" : "hidden" }}
+        />
+      ))}
+    </>
+  );
 }
