@@ -2,7 +2,7 @@
 // pauses, the user's request); the video itself never leaves the machine.
 import { z } from "zod";
 import type { Analysis } from "./schema.ts";
-import { EditPlan, checkPlan } from "./schema.ts";
+import { EditPlan, type Segment, checkPlan } from "./schema.ts";
 import { round } from "./round.ts";
 import type { Orientation, StockClip } from "./stock.ts";
 import { outputDuration, toOutputTime } from "./timeline.ts";
@@ -34,8 +34,16 @@ Editing rules:
   with query = what should be on screen. Set atSource to the transcript second where the matching words are
   said and duration 2-5 s. Keep the first 2 s on the speaker (the hook) unless asked. Never use a clip id you
   did not get from a search.
+- PICKED CLIPS: when the user has picked clips on the timeline, the request is about those clips only
+  ("make it short", "mute it", "voice down to 20%", "zoom in", "speed it up"). Change only those segments:
+  shorter = keep the best phrases inside that clip's own range (you may split it into several segments);
+  volume 0.2 = 20%, 0 = muted; zoom 1.2 = 20% closer. Every other segment must stay exactly as it is, in the
+  same order. If a B-roll clip is picked, change only that B-roll entry (move, trim, replace via a new search).
 - Never invent times outside 0..duration.
 - In notes, tell the user in one or two plain sentences what you did.`;
+
+/** What the user picked on the timeline: segment indexes, and maybe one B-roll id. */
+export type Focus = { clips: number[]; broll?: string };
 
 export type PlanResult = {
   plan: EditPlan;
@@ -60,6 +68,7 @@ export async function makePlan(
   current?: EditPlan,
   searchBroll?: BrollSearch,
   searchWeb?: WebSearch,
+  focus?: Focus,
 ): Promise<PlanResult> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -112,6 +121,7 @@ export async function makePlan(
         current
           ? `\nCURRENT EDIT PLAN (the user's timeline; keep everything the request doesn't ask to change):\n${JSON.stringify(current)}`
           : "",
+        current && focus ? describeFocus(current, focus) : "",
         searchTools.length ? "" : "\n(B-roll search is not available: no stock video key or yt-dlp is set up. Don't add broll.)",
         searchTools.length && !searchBroll ? "\n(Stock search is off: no stock video key. Use search_web_video for B-roll.)" : "",
         `\nREQUEST: ${request}`,
@@ -210,6 +220,7 @@ export async function makePlan(
         const known = (id: string) => clips.has(id) || Boolean(current?.broll.some((b) => b.source === id && b.file));
         problems = [
           ...checkPlan(plan, analysis),
+          ...(current && focus ? keepsUnpicked(current, plan, focus.clips).problems : []),
           ...plan.broll.filter((b) => !known(b.source)).map((b) => `broll ${b.source}: not a clip id returned by search_broll or search_web_video`),
         ];
         if (!problems.length) return { plan, model, ...totals, clips };
@@ -225,6 +236,48 @@ export async function makePlan(
     }
   }
   throw new Error("the model didn't finish the edit plan");
+}
+
+/** The picked clips, as the model sees them. Clip numbers match the timeline ("Clip 2" = segments[1]). */
+function describeFocus(plan: EditPlan, focus: Focus): string {
+  const lines = focus.clips
+    .filter((i) => plan.segments[i])
+    .map((i) => {
+      const s = plan.segments[i];
+      return `- Clip ${i + 1} = segments[${i}]: source ${s.start.toFixed(2)}-${s.end.toFixed(2)}s, speed ${s.speed}, zoom ${s.zoom}, volume ${s.volume ?? 1}`;
+    });
+  const b = focus.broll ? plan.broll.find((x) => x.id === focus.broll) : undefined;
+  if (b) lines.push(`- B-roll id "${b.id}" (${b.query ?? b.source}) at ${b.at.toFixed(2)}s for ${b.duration.toFixed(2)}s`);
+  if (!lines.length) return "";
+  return `\nPICKED ON THE TIMELINE (apply the request to these only; keep everything else exactly as it is):\n${lines.join("\n")}`;
+}
+
+/**
+ * Checks that an edit left every clip the user didn't pick exactly as it was, in order; picked clips
+ * may become any number of segments inside their own source range. kept = indexes in `after` that
+ * are untouched clips (so later steps, like snapping cuts, leave them alone).
+ */
+export function keepsUnpicked(before: EditPlan, after: EditPlan, picked: number[]): { problems: string[]; kept: Set<number> } {
+  const same = (a: Segment, b: Segment) =>
+    Math.abs(a.start - b.start) < 0.01 && Math.abs(a.end - b.end) < 0.01 && a.speed === b.speed && a.zoom === b.zoom && (a.volume ?? 1) === (b.volume ?? 1);
+  const kept = new Set<number>();
+  const problems: string[] = [];
+  let j = 0;
+  before.segments.forEach((orig, i) => {
+    if (picked.includes(i)) {
+      const next = before.segments.slice(i + 1).find((_, k) => !picked.includes(i + 1 + k));
+      while (j < after.segments.length) {
+        const s = after.segments[j];
+        if (next && same(s, next)) break;
+        if (s.start < orig.start - 0.05 || s.end > orig.end + 0.05) break;
+        j++;
+      }
+    } else if (j < after.segments.length && same(after.segments[j], orig)) kept.add(j++);
+    else problems.push(`segments: Clip ${i + 1} was not picked, so it must stay exactly {start: ${orig.start}, end: ${orig.end}, speed: ${orig.speed}, zoom: ${orig.zoom}, volume: ${orig.volume ?? 1}} at this place in the order`);
+  });
+  if (!problems.length && j < after.segments.length)
+    problems.push("segments: picked clips may only use parts of their own source range; remove the extra segments");
+  return { problems, kept };
 }
 
 /** Turns each B-roll's transcript time (atSource) into a timeline position; drops B-roll over cut parts. */

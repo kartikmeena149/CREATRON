@@ -35,7 +35,9 @@ const QUICK: Quick[] = [
 ];
 
 export function AIPanel() {
-  const { project, plan, messages, busy, status, commit, say, set, rightTab } = useEditor();
+  const { project, plan, messages, busy, status, commit, say, set, rightTab, picked, selectedBroll } = useEditor();
+  const pickedBroll = selectedBroll ? plan.broll.find((b) => b.id === selectedBroll) : undefined;
+  const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source);
   const [text, setText] = useState("");
   const [model, setModel] = useModelChoice();
   const list = useRef<HTMLDivElement>(null);
@@ -61,10 +63,11 @@ export function AIPanel() {
     const request = text.trim();
     if (!request || !project || busy) return;
     setText("");
-    say({ role: "user", text: request });
+    say({ role: "user", text: target ? `${target}: ${request}` : request });
     set({ busy: true });
     const before = useEditor.getState().plan;
-    const r = await window.creatron.aiEdit(project.path, request, before, model || undefined);
+    const focus = target ? { clips: picked, broll: pickedBroll?.id } : undefined;
+    const r = await window.creatron.aiEdit(project.path, request, before, model || undefined, focus);
     set({ busy: false });
     if (!r.ok) {
       const text = /OPENROUTER_API_KEY/.test(r.error)
@@ -73,6 +76,8 @@ export function AIPanel() {
           ? "This model needs OpenRouter credits, and your balance is $0. Pick a free model from the menu above, or add credits and try again."
           : /OpenRouter 401/.test(r.error)
             ? "OpenRouter didn't accept the API key. Check the key in CREATRON/.env and restart the app."
+            : /free-models-per-day/.test(r.error)
+              ? `You've used today's free AI requests (OpenRouter allows 50 a day on free models, and each edit uses a few). They come back at ${freeResetTime()}. Adding $10 of OpenRouter credits once raises the limit to 1000 a day, even on free models.`
             : /OpenRouter (429|503)/.test(r.error)
               ? "That AI model is busy right now (free models share capacity). Try again in a minute, or pick another model."
               : r.error;
@@ -82,6 +87,8 @@ export function AIPanel() {
     const cost = r.value.cost ? ` · $${r.value.cost.toFixed(4)}` : "";
     const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
     apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
+    // Clip numbers can change after an edit, so the pick is cleared.
+    if (focus) set({ picked: [], selected: null, selectedBroll: null });
   };
 
   return (
@@ -135,10 +142,16 @@ export function AIPanel() {
       </div>
 
       <div className="ai-input">
+        {target && (
+          <div className="ai-target">
+            <span>✎ {target}</span>
+            <button className="link" title="Edit the whole video instead" onClick={() => set({ picked: [], selected: null, selectedBroll: null })}>✕</button>
+          </div>
+        )}
         <textarea
           value={text}
           disabled={!project}
-          placeholder={project ? "Describe an edit…" : "Import a video first"}
+          placeholder={!project ? "Import a video first" : target ? `What should I do with ${target}?` : "Describe an edit… (pick clips on the timeline to edit just those)"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -152,6 +165,21 @@ export function AIPanel() {
       </>}
     </aside>
   );
+}
+
+/** When OpenRouter's daily free limit resets (midnight UTC), in this Mac's time, e.g. "5:30 AM". */
+function freeResetTime(): string {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+/** "Clip 2", "Clips 1, 3", "B-roll: watering plants" — what the next request will change. */
+function describePick(clips: number[], broll?: string): string {
+  const parts = [];
+  if (clips.length) parts.push(`${clips.length > 1 ? "Clips" : "Clip"} ${clips.map((i) => i + 1).join(", ")}`);
+  if (broll) parts.push(`B-roll: ${broll}`);
+  return parts.join(" + ");
 }
 
 type Models = { models: ModelInfo[]; credits: number | null; recommended: string };

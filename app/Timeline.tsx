@@ -10,7 +10,7 @@ import { type Thumbs, type Wave, useEditor } from "./store.ts";
 const LABEL_W = 132;
 
 export function Timeline() {
-  const { project, plan, time, pxPerSec, selected, past, future } = useEditor();
+  const { project, plan, time, pxPerSec, selected, picked, past, future } = useEditor();
   const { seek, select, selectCue, setZoom, split, deleteSelected, undo, redo, commit, say } = useEditor();
   const scroller = useRef<HTMLDivElement>(null);
   const total = outputDuration(plan);
@@ -134,7 +134,7 @@ export function Timeline() {
 
             <div className="track video" onPointerDown={(e) => e.target === e.currentTarget && (select(null), scrub(e))}>
               {segs.map(({ s, x, w }, i) => (
-                <Clip key={i} index={i} seg={s} x={x} w={w} selected={selected === i} thumbs={project.thumbs} />
+                <Clip key={i} index={i} seg={s} x={x} w={w} selected={picked.includes(i)} thumbs={project.thumbs} />
               ))}
             </div>
 
@@ -146,7 +146,7 @@ export function Timeline() {
 
             <div className="track voice" onPointerDown={scrub}>
               {segs.map(({ s, x, w }, i) => (
-                <WaveClip key={i} seg={s} x={x} w={w} wave={project.wave} selected={selected === i} />
+                <WaveClip key={i} seg={s} x={x} w={w} wave={project.wave} selected={picked.includes(i)} />
               ))}
             </div>
 
@@ -181,7 +181,7 @@ function Ruler({ total, pxPerSec, onPointerDown }: { total: number; pxPerSec: nu
 }
 
 function Clip({ index, seg, x, w, selected, thumbs }: { index: number; seg: Segment; x: number; w: number; selected: boolean; thumbs: Thumbs }) {
-  const { select, seek, checkpoint, updateSegment, project, pxPerSec } = useEditor();
+  const { select, togglePick, seek, checkpoint, updateSegment, project, pxPerSec } = useEditor();
   const duration = project!.analysis.duration;
 
   // Thumbnail tiles: each shows the source frame at its position in the clip.
@@ -224,12 +224,19 @@ function Clip({ index, seg, x, w, selected, thumbs }: { index: number; seg: Segm
     window.addEventListener("pointerup", up);
   };
 
-  const badges = [seg.speed !== 1 && `${seg.speed}×`, seg.zoom > 1 && `zoom ${Math.round(seg.zoom * 100)}%`].filter(Boolean);
+  const volume = seg.volume ?? 1;
+  const badges = [
+    seg.speed !== 1 && `${seg.speed}×`,
+    seg.zoom > 1 && `zoom ${Math.round(seg.zoom * 100)}%`,
+    volume !== 1 && (volume === 0 ? "muted" : `vol ${Math.round(volume * 100)}%`),
+  ].filter(Boolean);
   return (
     <div
       className={`clip ${selected ? "selected" : ""}`}
       style={{ left: x, width: Math.max(4, w - 1) }}
       onPointerDown={(e) => {
+        // ⇧/⌘-click picks several clips for one AI request.
+        if (e.shiftKey || e.metaKey) return togglePick(index);
         select(index);
         const rect = e.currentTarget.getBoundingClientRect();
         seek((x + e.clientX - rect.left) / pxPerSec);

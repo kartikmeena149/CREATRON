@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { analyze } from "../src/analyze.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
-import { makePlan } from "../src/plan.ts";
+import { type Focus, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
@@ -82,7 +82,7 @@ ipcMain.handle(
 
 ipcMain.handle(
   "ai-edit",
-  safe(async (path: string, request: string, current: EditPlan, model?: string) => {
+  safe(async (path: string, request: string, current: EditPlan, model?: string, focus?: Focus) => {
     const analysis = await analyze(path, () => {});
     const say = (m: string) => status(m.replace(/^plan: /, ""));
     // Free models share capacity and are often busy: fall through to the next free one.
@@ -94,13 +94,24 @@ ipcMain.handle(
           analysis, request, m, say, current,
           stockAvailable() ? searchStock : undefined,
           ytdlpAvailable() ? searchWeb : undefined,
+          focus?.clips.length || focus?.broll ? focus : undefined,
         );
-        const plan = await fetchBroll(snapEdges(result.plan, analysis), result.clips, say);
+        // Snapping moves cuts onto quiet spots. Only cuts the AI just made move: an edge that was
+        // already on the timeline stays put (so "mute clip 2" changes the volume and nothing else).
+        const starts = new Set(current.segments.map((s) => s.start));
+        const ends = new Set(current.segments.map((s) => s.end));
+        const snapped = snapEdges(result.plan, analysis);
+        snapped.segments = snapped.segments.map((s, i) => {
+          const orig = result.plan.segments[i];
+          return { ...s, start: starts.has(orig.start) ? orig.start : s.start, end: ends.has(orig.end) ? orig.end : s.end };
+        });
+        const plan = await fetchBroll(snapped, result.clips, say);
         status("");
         return { ...result, clips: undefined, plan };
       } catch (e) {
         lastError = e;
-        if (!/OpenRouter (429|503)/.test(String(e))) break; // only "busy" is worth retrying elsewhere
+        // Only "busy" is worth retrying elsewhere; the daily free cap covers every free model.
+        if (!/OpenRouter (429|503)/.test(String(e)) || /per-day/.test(String(e))) break;
       }
     }
     status("");

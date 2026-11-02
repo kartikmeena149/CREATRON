@@ -40,9 +40,11 @@ export function Inspector() {
               onStart={checkpoint} onChange={(v) => updateSegment(selected!, { speed: v }, false)} />
             <Slider label="Punch-in zoom" unit="%" min={1} max={2} step={0.01} value={seg.zoom} display={(v) => Math.round(v * 100)}
               onStart={checkpoint} onChange={(v) => updateSegment(selected!, { zoom: v }, false)} />
+            <Slider label="Volume" unit="%" min={0} max={2} step={0.01} value={seg.volume ?? 1} display={(v) => Math.round(v * 100)}
+              onStart={checkpoint} onChange={(v) => updateSegment(selected!, { volume: v }, false)} />
           </>
         ) : (
-          <p className="hint">Click a clip on the timeline to adjust its speed and zoom.</p>
+          <p className="hint">Click a clip on the timeline to adjust its speed, zoom and volume. ⇧-click more clips, then tell the AI what to do with them.</p>
         )}
       </section>
 

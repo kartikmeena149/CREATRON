@@ -111,7 +111,7 @@ export function roughCut(plan: EditPlan, analysis: Analysis): RoughCut {
 export function wholeVideo(analysis: Analysis): EditPlan {
   return {
     version: 1,
-    segments: [{ start: 0, end: analysis.duration, speed: 1, zoom: 1 }],
+    segments: [{ start: 0, end: analysis.duration, speed: 1, zoom: 1, volume: 1 }],
     aspect: "source",
     transform: { scale: 1, x: 0, y: 0, rotate: 0 },
     captions: { ...DEFAULT_CAPTIONS },

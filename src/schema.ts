@@ -9,6 +9,12 @@ export const Segment = z
     end: z.number().positive().describe("End of the kept part, seconds in the source"),
     speed: z.number().min(0.5).max(2).default(1).describe("Playback speed, 0.5 to 2"),
     zoom: z.number().min(1).max(2).default(1).describe("Punch-in zoom, 1 = none, 1.2 = 20% closer"),
+    volume: z
+      .number()
+      .min(0)
+      .max(2)
+      .default(1)
+      .describe("This clip's original sound: 1 = as recorded, 0.2 = 20%, 0 = muted, 1.5 = louder"),
   })
   .refine((s) => s.end > s.start, { message: "end must be after start" });
 

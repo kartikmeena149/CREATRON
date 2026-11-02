@@ -21,7 +21,8 @@ const DUCK_RAMP = 0.25; // seconds to fade the original down/up around a voiceov
 /** The per-segment audio chain: speed, 10 ms fades at every cut so joins don't click. */
 export function segmentAudio(s: Segment, i: number): string {
   const fadeOut = Math.max((s.end - s.start) / s.speed - 0.01, 0).toFixed(3);
-  return `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01,aresample=48000[a${i}]`;
+  const volume = (s.volume ?? 1) === 1 ? "" : `volume=${(s.volume ?? 1).toFixed(3)},`;
+  return `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},${volume}afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01,aresample=48000[a${i}]`;
 }
 
 /** Filter that takes the mix to the target level. */
@@ -82,14 +83,17 @@ export const voiceoverInputs = (plan: EditPlan) => activeVoiceovers(plan).flatMa
 
 /** What the renderer needs: the original's speech-match gain and the final level filter for [mix]. */
 export async function prepareAudio(plan: EditPlan, analysis: Analysis, log = console.error) {
+  // Level the voice as recorded; each clip's own volume then applies on top. Otherwise a clip turned
+  // down to 20% (or a muted one) would just make the leveling turn everything else up to compensate.
+  const asRecorded = { ...plan, segments: plan.segments.map((s) => ({ ...s, volume: 1 })) };
   let origGainDb = 0;
   if (activeVoiceovers(plan).length && plan.audio.normalize) {
     // Match the original voice to the voiceovers so neither sounds louder than the other.
-    const orig = await measure(plan, analysis, { withVoiceovers: false, origGainDb: 0, tail: "" });
+    const orig = await measure(asRecorded, analysis, { withVoiceovers: false, origGainDb: 0, tail: "" });
     if (Number.isFinite(orig.lufs)) origGainDb = SPEECH_LUFS - orig.lufs;
   }
   const level = plan.audio.normalize
-    ? levelFilter(await gainForTarget(plan, analysis, origGainDb, log))
+    ? levelFilter(await gainForTarget(asRecorded, analysis, origGainDb, log))
     : levelFilter(plan.audio.volumeDb);
   return { origGainDb, level };
 }

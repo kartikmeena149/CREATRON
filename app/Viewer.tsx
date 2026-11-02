@@ -87,7 +87,9 @@ export function Viewer() {
 
   // While a voiceover plays, dip the original like the export does.
   const underVoiceover = plan.voiceovers.some((v) => time >= v.at && time < v.at + v.duration);
-  useVoicePreview(video, plan.audio, underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1);
+  // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted).
+  const clipVolume = seg?.volume ?? 1;
+  useVoicePreview(video, plan.audio, (underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1) * clipVolume);
   useVoiceoverPlayback(plan.voiceovers, time, playing);
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);

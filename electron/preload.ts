@@ -10,7 +10,8 @@ const on = (channel: string) => (fn: (value: any) => void) => {
 const api = {
   pickVideo: (): Promise<string | undefined> => ipcRenderer.invoke("pick-video"),
   importVideo: (path: string) => ipcRenderer.invoke("import-video", path),
-  aiEdit: (path: string, request: string, current: unknown, model?: string) => ipcRenderer.invoke("ai-edit", path, request, current, model),
+  aiEdit: (path: string, request: string, current: unknown, model?: string, focus?: unknown) =>
+    ipcRenderer.invoke("ai-edit", path, request, current, model, focus),
   models: () => ipcRenderer.invoke("models"),
   linkInfo: (url: string) => ipcRenderer.invoke("link-info", url),
   linkDownload: (opts: unknown) => ipcRenderer.invoke("link-download", opts),
