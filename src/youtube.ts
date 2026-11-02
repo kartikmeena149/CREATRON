@@ -35,7 +35,11 @@ export async function linkInfo(url: string): Promise<LinkInfo> {
   const d = JSON.parse((await ytdlp(["-J", "--no-playlist", "--no-warnings", url.trim()])).stdout);
   if (d.is_live || d.live_status === "is_live" || d.live_status === "is_upcoming")
     throw new Error("That's a live stream. Only finished videos can be imported.");
-  if (!d.duration) throw new Error("That link has no video Creatron can download (it may be a photo or a page without video).");
+  const streams = ((d.formats ?? []) as any[]).filter((f) => f.url && f.vcodec !== "none");
+  if (!streams.length && !d.url) throw new Error("That link has no video Creatron can download (it may be a photo or a page without video).");
+  // Some sites (Instagram) don't say how long a video is: ask the video stream itself.
+  if (!d.duration) d.duration = await streamDuration([...streams.map((f) => f.url), d.url].filter(Boolean));
+  if (!d.duration) throw new Error("Couldn't tell how long that video is, so it can't be imported. Try the link again in a minute.");
   const auto = d.automatic_captions ?? {};
   const subs = d.subtitles ?? {};
   const track = [subs.en, subs["en-US"], auto["en-orig"], auto.en].find(Boolean) as { ext: string; url: string }[] | undefined;
@@ -52,6 +56,18 @@ export async function linkInfo(url: string): Promise<LinkInfo> {
     chapters: (d.chapters ?? []).map((c: any) => ({ start: c.start_time, end: c.end_time, title: c.title })),
     captions: track?.find((t) => t.ext === "json3")?.url,
   };
+}
+
+/** Length in seconds read from the first stream that answers, or 0. */
+async function streamDuration(urls: string[]): Promise<number> {
+  for (const url of urls.slice(0, 3)) {
+    try {
+      const { stdout } = await run("ffprobe", ["-v", "error", "-rw_timeout", "15000000", "-show_entries", "format=duration", "-of", "csv=p=0", url]);
+      const seconds = Number(stdout.trim());
+      if (seconds > 0) return round(seconds, 2);
+    } catch {}
+  }
+  return 0;
 }
 
 /** Downloads a link (or just start-end seconds of it) as an mp4 under work/, at most `height` p. */
