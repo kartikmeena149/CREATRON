@@ -72,7 +72,9 @@ export function AIPanel() {
           ? "Your OpenRouter account has no credits yet. Once your payment lands, try again. The quick actions above work meanwhile."
           : /OpenRouter 401/.test(r.error)
             ? "OpenRouter didn't accept the API key. Check the key in CREATRON/.env and restart the app."
-            : r.error;
+            : /OpenRouter (429|503)/.test(r.error)
+              ? "That AI model is busy right now (free models share capacity). Try again in a minute, or pick another model."
+              : r.error;
       say({ role: "error", text });
       return;
     }

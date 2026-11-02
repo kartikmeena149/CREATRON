@@ -77,13 +77,15 @@ export async function makePlan(
     });
     if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 500)}`);
     const data = (await res.json()) as any;
+    // OpenRouter can answer 200 with an error inside (e.g. the model's provider is overloaded).
+    if (data.error) throw new Error(`OpenRouter ${data.error.code ?? res.status}: ${data.error.message ?? "unknown error"}`);
     totals.inputTokens += data.usage?.prompt_tokens ?? 0;
     totals.outputTokens += data.usage?.completion_tokens ?? 0;
     totals.cost += data.usage?.cost ?? 0;
 
     const message = data.choices?.[0]?.message;
     const call = message?.tool_calls?.[0];
-    if (!call) throw new Error(`model did not return an edit plan: ${JSON.stringify(message).slice(0, 300)}`);
+    if (!call) throw new Error(`model did not return an edit plan: ${String(JSON.stringify(message ?? data)).slice(0, 300)}`);
 
     let problems: string[];
     try {
