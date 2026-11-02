@@ -19,8 +19,12 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.1.0",
+    "@remotion/bundler": "4.0.540",
+    "@remotion/player": "4.0.540",
+    "@remotion/renderer": "4.0.540",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "remotion": "4.0.540",
     "zod": "^4.6.7",
     "zustand": "^5.0.16"
   },

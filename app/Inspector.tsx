@@ -3,6 +3,7 @@
 import type { EditPlan } from "../src/schema.ts";
 import { timecode } from "./format.ts";
 import { CaptionStyle } from "./CaptionStyle.tsx";
+import { MotionEditor } from "./MotionEditor.tsx";
 import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
@@ -27,6 +28,8 @@ export function Inspector() {
           <span>{a.words.length} words</span>
         </div>
       </section>
+
+      <MotionEditor />
 
       <section>
         <h3>Clip {seg ? selected! + 1 : ""}</h3>

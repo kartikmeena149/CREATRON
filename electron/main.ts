@@ -147,10 +147,14 @@ ipcMain.handle(
 ipcMain.handle(
   "export",
   safe(async (path: string, plan: EditPlan) => {
-    const r = await dialog.showSaveDialog(win, {
-      defaultPath: `${basename(path, extname(path))}-creatron.mp4`,
-      filters: [{ name: "MP4 video", extensions: ["mp4"] }],
-    });
+    // Automated tests (--creatron-debug) can't click the save dialog, so they name the file instead.
+    const testPath = process.argv.includes("--creatron-debug") ? process.env.CREATRON_EXPORT_PATH : undefined;
+    const r = testPath
+      ? { canceled: false, filePath: testPath }
+      : await dialog.showSaveDialog(win, {
+          defaultPath: `${basename(path, extname(path))}-creatron.mp4`,
+          filters: [{ name: "MP4 video", extensions: ["mp4"] }],
+        });
     if (r.canceled || !r.filePath) return undefined;
     const analysis = await analyze(path, () => {});
     const out = await render(plan, analysis, r.filePath, (m) => status(m.replace(/^(render|loudness): /, "")), (f) =>

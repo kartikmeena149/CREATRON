@@ -21,6 +21,7 @@
   },
   "include": [
     "src",
+    "motion",
     "app",
     "electron",
     "electron.vite.config.ts"

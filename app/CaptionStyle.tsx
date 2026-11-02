@@ -32,6 +32,26 @@ export function CaptionStyle() {
             ))}
           </div>
 
+          <div className="field-label">Animation</div>
+          <div className="segmented">
+            {([["none", "None"], ["pop", "Pop"], ["highlight", "Highlight"], ["word", "1 word"]] as const).map(([a, label]) => (
+              <button key={a} className={caps.animation === a ? "on" : ""} onClick={() => caps.animation !== a && setCaptionStyle({ animation: a })}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {(caps.animation === "highlight" || caps.animation === "word") && (
+            <>
+              <div className="field-label">Spoken word colour</div>
+              <div className="swatches">
+                {SWATCHES.map((c) => (
+                  <button key={c} className={`swatch ${caps.highlight.toLowerCase() === c ? "on" : ""}`} style={{ background: c }}
+                    title={c} onClick={() => setCaptionStyle({ highlight: c })} />
+                ))}
+              </div>
+            </>
+          )}
+
           <div className="field-label">Size</div>
           <div className="field-row">
             <input type="range" className="grow" min={40} max={300} step={1} value={Math.round(caps.size * 100)}

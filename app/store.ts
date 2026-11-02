@@ -3,7 +3,7 @@
 // Every change goes through history so anything (including an AI edit) can be undone.
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
-import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Segment, type Voiceover } from "../src/schema.ts";
+import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
 import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
@@ -72,6 +72,13 @@ type State = {
   /** Puts a downloaded clip on V2 at `at` (default: the playhead), up to 5 s or what's left of the video. */
   addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number }): void;
   deleteBroll(id: string): void;
+  /** Selected title / lower third on M1 (by id). */
+  selectedMotion: string | null;
+  selectMotion(id: string | null): void;
+  /** New text item at the playhead, 3 s long. */
+  addMotion(template: Motion["template"]): void;
+  updateMotion(id: string, patch: Partial<Motion>, record?: boolean): void;
+  deleteMotion(id: string): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
   selectVo(id: string | null): void;
@@ -93,6 +100,7 @@ const placeholder: EditPlan = {
   audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },
   voiceovers: [],
   broll: [],
+  motion: [],
   notes: "",
 };
 
@@ -130,20 +138,20 @@ export const useEditor = create<State>((set, get) => ({
     set((s) => {
       const prev = s.past.at(-1);
       if (!prev) return s;
-      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null };
+      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
   redo: () =>
     set((s) => {
       const next = s.future[0];
       if (!next) return s;
-      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null };
+      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
   select: (selected) =>
-    set(selected === null ? { selected, picked: [] } : { selected, picked: [selected], selectedCue: null, selectedVo: null, selectedBroll: null }),
+    set(selected === null ? { selected, picked: [] } : { selected, picked: [selected], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
   togglePick: (i) =>
     set((s) => {
       const picked = s.picked.includes(i) ? s.picked.filter((n) => n !== i) : [...s.picked, i].sort((a, b) => a - b);
-      return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null };
+      return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
   seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, outputDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
@@ -178,7 +186,7 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedCue: null,
   rightTab: "ai",
-  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], selectedVo: null, selectedBroll: null }),
+  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
 
   setCaptionStyle: (patch, record = true) => {
     const { plan } = get();
@@ -221,7 +229,7 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedBroll: null,
   selectBroll: (selectedBroll) =>
-    set(selectedBroll === null ? { selectedBroll } : { selectedBroll, selected: null, picked: [], selectedCue: null, selectedVo: null }),
+    set(selectedBroll === null ? { selectedBroll } : { selectedBroll, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedMotion: null }),
   updateBroll: (id, patch, record = true) => {
     const { plan } = get();
     const broll = plan.broll.map((b) => (b.id === id ? { ...b, ...patch } : b));
@@ -242,8 +250,34 @@ export const useEditor = create<State>((set, get) => ({
     set({ selectedBroll: null });
   },
 
+  selectedMotion: null,
+  selectMotion: (selectedMotion) =>
+    set(selectedMotion === null ? { selectedMotion } : { selectedMotion, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
+  addMotion: (template) => {
+    const { plan, time } = get();
+    const total = outputDuration(plan);
+    const id = `m${Math.random().toString(36).slice(2, 10)}`;
+    const at = Math.max(0, Math.min(time, total - 0.5));
+    const item: Motion = {
+      id, template, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
+      text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
+    };
+    get().commit({ ...plan, motion: [...plan.motion, item] });
+    set({ selectedMotion: id, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null });
+  },
+  updateMotion: (id, patch, record = true) => {
+    const { plan } = get();
+    const motion = plan.motion.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    (record ? get().commit : get().live)({ ...plan, motion });
+  },
+  deleteMotion: (id) => {
+    const { plan } = get();
+    get().commit({ ...plan, motion: plan.motion.filter((m) => m.id !== id) });
+    set({ selectedMotion: null });
+  },
+
   selectedVo: null,
-  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo } : { selectedVo, selected: null, picked: [], selectedCue: null, selectedBroll: null }),
+  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo } : { selectedVo, selected: null, picked: [], selectedCue: null, selectedBroll: null, selectedMotion: null }),
 
   addVoiceover: (v) => {
     const { plan, time } = get();

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionOverlay } from "./CaptionOverlay.tsx";
 import { placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
+import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
 import { mediaUrl, timecode } from "./format.ts";
 import type { Broll, Voiceover } from "../src/schema.ts";
@@ -162,7 +163,9 @@ export function Viewer() {
             />
           </div>
           <BrollLayer broll={plan.broll} time={time} playing={playing} />
-          {cue && frameSize.w > 0 && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
+          {/* Animated captions are drawn by the Remotion layer instead of the editable plain caption. */}
+          {cue && frameSize.w > 0 && plan.captions.animation === "none" && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
+          <MotionPreview />
         </div>
       </div>
       <div className="transport">

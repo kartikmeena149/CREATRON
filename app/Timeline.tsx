@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { roughCut } from "../src/autocut.ts";
 import { type Cue, buildCues, captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
-import type { Broll, Segment, Voiceover } from "../src/schema.ts";
+import type { Broll, Motion, Segment, Voiceover } from "../src/schema.ts";
 import { mediaUrl, shortTime } from "./format.ts";
 import { type Thumbs, type Wave, useEditor } from "./store.ts";
 
@@ -93,6 +93,7 @@ export function Timeline() {
         <button title="Delete clip (⌫)" disabled={selected === null || plan.segments.length < 2} onClick={deleteSelected}>
           ⌫ Delete
         </button>
+        <button title="Add an animated title at the playhead" onClick={() => useEditor.getState().addMotion("title")}>＋ Text</button>
         <button className="rough-cut" title="Keep only what you say: cuts dead air, pauses, retakes and outtakes (instant, undoable)" onClick={doRoughCut}>
           ⚡ Rough Cut
         </button>
@@ -114,6 +115,7 @@ export function Timeline() {
       <div className="tl-body">
         <div className="tl-labels" style={{ width: LABEL_W }}>
           <div className="tl-ruler-spacer" />
+          <div className="track-label motion"><b>M1</b> Text</div>
           <div className="track-label broll"><b>V2</b> B-roll</div>
           <div className="track-label video"><b>V1</b> Video</div>
           <div className="track-label captions"><b>T1</b> Captions{!plan.captions.enabled && <em> off</em>}</div>
@@ -124,6 +126,13 @@ export function Timeline() {
         <div className="tl-scroll" ref={scroller} onWheel={onWheel}>
           <div className="tl-content" style={{ width }}>
             <Ruler total={total} pxPerSec={pxPerSec} onPointerDown={scrub} />
+
+            <div className="track motion" onPointerDown={(e) => e.target === e.currentTarget && (useEditor.getState().selectMotion(null), scrub(e))}>
+              {plan.motion.map((m) => (
+                <MotionBlock key={m.id} m={m} />
+              ))}
+              {!plan.motion.length && <span className="track-empty">Animated titles: ＋ Text above, or ask the AI "add a title at the start"</span>}
+            </div>
 
             <div className="track broll" onPointerDown={(e) => e.target === e.currentTarget && (useEditor.getState().selectBroll(null), scrub(e))}>
               {plan.broll.map((b) => (
@@ -371,6 +380,47 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
       title={`${vo.voice}: ${vo.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
     >
       <span className="vo-label">🎙 {vo.text}</span>
+      <div className="handle left" onPointerDown={drag("start")} />
+      <div className="handle right" onPointerDown={drag("end")} />
+    </div>
+  );
+}
+
+/** A title or lower third on M1: drag to move, drag edges to trim, click to edit it in the inspector. */
+function MotionBlock({ m }: { m: Motion }) {
+  const { pxPerSec, selectedMotion, selectMotion } = useEditor();
+  const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    selectMotion(m.id);
+    const x0 = e.clientX;
+    const orig = { ...m };
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const d = (ev.clientX - x0) / pxPerSec;
+      if (!moved) {
+        if (Math.abs(ev.clientX - x0) < 3) return;
+        moved = true;
+        useEditor.getState().checkpoint();
+      }
+      const up = useEditor.getState().updateMotion;
+      if (mode === "move") up(m.id, { at: Math.max(0, orig.at + d) }, false);
+      else if (mode === "start") {
+        const dd = Math.max(-orig.at, Math.min(orig.duration - 0.5, d));
+        up(m.id, { at: orig.at + dd, duration: orig.duration - dd }, false);
+      } else up(m.id, { duration: Math.max(0.5, Math.min(20, orig.duration + d)) }, false);
+    };
+    const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+  };
+  return (
+    <div
+      className={`motion-clip ${selectedMotion === m.id ? "selected" : ""}`}
+      style={{ left: m.at * pxPerSec, width: Math.max(6, m.duration * pxPerSec - 1), borderLeftColor: m.color }}
+      onPointerDown={drag("move")}
+      title={`${m.template === "title" ? "Title" : "Lower third"}: ${m.text}\nDrag to move · drag edges to trim · ⌫ to delete`}
+    >
+      <span>{m.template === "title" ? "T" : "▭"} {m.text}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>

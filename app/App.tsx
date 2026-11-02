@@ -113,7 +113,7 @@ function useShortcuts() {
       if (e.code === "Space") (e.preventDefault(), s.setPlaying(!s.playing));
       else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") (e.preventDefault(), e.shiftKey ? s.redo() : s.undo());
       else if (e.key === "s" || e.key === "S") s.split();
-      else if (e.key === "Backspace" || e.key === "Delete") s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
+      else if (e.key === "Backspace" || e.key === "Delete") s.selectedMotion !== null ? s.deleteMotion(s.selectedMotion) : s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));
       else if (e.key === "ArrowRight") s.seek(s.time + (e.shiftKey ? 1 : frame));
       else if (e.key === "Home") s.seek(0);

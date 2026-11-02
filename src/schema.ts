@@ -68,6 +68,26 @@ export const Broll = z.object({
 });
 export type Broll = z.infer<typeof Broll>;
 
+/**
+ * Animated text on the M1 Motion track, drawn by Remotion over everything else.
+ * at/duration are output seconds (the AI sets atSource and the app converts it).
+ */
+export const Motion = z.object({
+  id: z.string().default(""),
+  template: z
+    .enum(["title", "lower-third"])
+    .describe("title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom"),
+  text: z.string().min(1).max(80).describe("The main words, short (2-6 words)"),
+  subtext: z.string().max(80).default("").describe("Optional smaller second line"),
+  atSource: z.number().min(0).optional().describe("Transcript second where it should appear (use this; the app converts it)"),
+  at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
+  duration: z.number().min(0.5).max(20).default(3).describe("How long it shows, seconds (2-4 is typical)"),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Accent color"),
+});
+export type Motion = z.infer<typeof Motion>;
+
+export const CAPTION_ANIMATIONS = ["none", "pop", "highlight", "word"] as const;
+
 export const DEFAULT_CAPTIONS = {
   enabled: false,
   style: "bold" as const,
@@ -77,6 +97,8 @@ export const DEFAULT_CAPTIONS = {
   size: 1,
   color: "#ffffff",
   uppercase: true,
+  animation: "none" as const,
+  highlight: "#facc15",
 };
 
 export const EditPlan = z.object({
@@ -110,6 +132,11 @@ export const EditPlan = z.object({
       size: z.number().min(0.4).max(3).default(1).describe("Text size multiplier"),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#ffffff"),
       uppercase: z.boolean().default(true),
+      animation: z
+        .enum(CAPTION_ANIMATIONS)
+        .default("none")
+        .describe("none = plain; pop = each caption pops in; highlight = the word being said lights up; word = one big word at a time"),
+      highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Color of the word being said (highlight / word)"),
       // Absent = captions follow the transcript automatically. Present = the user's (or AI's) own captions.
       cues: z.array(Caption).optional().describe("Explicit captions in SOURCE seconds; set to fix wording or timing"),
     })
@@ -126,6 +153,7 @@ export const EditPlan = z.object({
   // Generated speech placed on the A2 track. Timed on the OUTPUT clock: it sits where you put it.
   voiceovers: z.array(Voiceover).default([]),
   broll: z.array(Broll).default([]).describe("Clips over the main video. Only ids returned by search_broll or search_web_video."),
+  motion: z.array(Motion).default([]).describe("Animated titles and lower thirds on the M1 track"),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

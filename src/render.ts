@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
 import { isIdentity, outputSize, placement } from "./frame.ts";
+import { hasOverlay, overlayProps } from "./motion.ts";
+import { renderOverlay } from "./remotion.ts";
 import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
@@ -61,9 +63,10 @@ export async function render(
   });
 
   const dir = join(workDir(analysis.source), "render");
-  if (plan.captions.enabled && analysis.words.length) {
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(dir, { recursive: true });
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  // Animated captions are drawn by the Remotion layer below; plain ones as pictures here.
+  if (plan.captions.enabled && plan.captions.animation === "none" && analysis.words.length) {
     const cues = buildCues(plan, analysis.words);
     log(`render: drawing ${cues.length} captions`);
     const list = drawCues(cues, plan, size.width, size.height, dir, total);
@@ -73,6 +76,20 @@ export async function render(
     // Captions go on top of everything, B-roll included.
     filters.push(`${videoOut}[caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
     videoOut = "[final]";
+  }
+  if (hasOverlay(plan, analysis.words)) {
+    // The Remotion layer (animated captions, titles, lower thirds) goes on top of everything.
+    log("render: animating text (Remotion)");
+    let shown = -1;
+    const frames = await renderOverlay(overlayProps(plan, analysis.words, size, fps), join(dir, "motion"), (f) => {
+      const pct = Math.floor(f * 20) * 5;
+      if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
+    });
+    const input = args.filter((a) => a === "-i").length;
+    args.push("-framerate", String(fps), "-pattern_type", "glob", "-i", frames);
+    filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[motion]`);
+    filters.push(`${videoOut}[motion]overlay=format=auto:shortest=0:eof_action=pass,format=yuv420p[moved]`);
+    videoOut = "[moved]";
   }
   if (analysis.hasAudio) {
     // Voiceover files come after the segment (and caption) inputs.

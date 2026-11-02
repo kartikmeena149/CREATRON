@@ -34,6 +34,14 @@ Editing rules:
   with query = what should be on screen. Set atSource to the transcript second where the matching words are
   said and duration 2-5 s. Keep the first 2 s on the speaker (the hook) unless asked. Never use a clip id you
   did not get from a search.
+- Animated captions: when the user asks for animated / word-by-word / highlighted / TikTok-style captions,
+  set captions.enabled true and captions.animation to "pop" (each caption pops in), "highlight" (the word
+  being said lights up in captions.highlight) or "word" (one big word at a time). "none" = plain.
+- Animated text (motion): a "title" is big centered text that pops in (hooks, section headings: "3 PLANT
+  MISTAKES"); a "lower-third" is a name/label bar near the bottom (who is speaking, a place, a product).
+  Add motion entries only when asked or when the request clearly wants on-screen text. Keep text to 2-6
+  words, set atSource to the transcript second where it should appear and duration 2-4 s. Keep the user's
+  existing motion entries unless the request is about them.
 - PICKED CLIPS: when the user has picked clips on the timeline, the request is about those clips only
   ("make it short", "mute it", "voice down to 20%", "zoom in", "speed it up"). Change only those segments:
   shorter = keep the best phrases inside that clip's own range (you may split it into several segments);
@@ -280,8 +288,9 @@ export function keepsUnpicked(before: EditPlan, after: EditPlan, picked: number[
   return { problems, kept };
 }
 
-/** Turns each B-roll's transcript time (atSource) into a timeline position; drops B-roll over cut parts. */
+/** Turns each B-roll's and text item's transcript time (atSource) into a timeline position; drops ones over cut parts. */
 function placeBroll(plan: EditPlan, clips: Map<string, StockClip>): EditPlan {
+  plan = placeMotion(plan);
   const total = outputDuration(plan);
   const broll = plan.broll.flatMap((b, i) => {
     const at = b.atSource !== undefined ? toOutputTime(plan, b.atSource) : b.at;
@@ -291,6 +300,16 @@ function placeBroll(plan: EditPlan, clips: Map<string, StockClip>): EditPlan {
     return [{ ...b, id: b.id || `b${Date.now().toString(36)}${i}`, at: round(at, 3), duration: round(duration, 3), atSource: undefined }];
   });
   return { ...plan, broll };
+}
+
+function placeMotion(plan: EditPlan): EditPlan {
+  const total = outputDuration(plan);
+  const motion = plan.motion.flatMap((m, i) => {
+    const at = m.atSource !== undefined ? toOutputTime(plan, m.atSource) : m.at;
+    if (at === undefined || at >= total - 0.3) return [];
+    return [{ ...m, id: m.id || `m${Date.now().toString(36)}${i}`, at: round(at, 3), duration: round(Math.min(m.duration, total - at), 3), atSource: undefined }];
+  });
+  return { ...plan, motion };
 }
 
 /** The text the model sees: video info, phrases with times, and pauses. */
