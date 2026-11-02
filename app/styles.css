@@ -371,3 +371,4 @@ button.wide { width: 100%; margin-top: 8px; }
 .broll-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.75; pointer-events: none; }
 .broll-label { position: absolute; left: 6px; top: 4px; right: 8px; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; pointer-events: none; }
 .broll-clip:hover .handle, .broll-clip.selected .handle { background: rgba(251, 146, 60, 0.55); }
+.broll-source { position: absolute; left: 6px; bottom: 3px; font-size: 9px; color: #fed7aa; opacity: 0.9; text-shadow: 0 1px 2px #000; pointer-events: none; }

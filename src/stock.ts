@@ -1,7 +1,7 @@
 // Licensed stock B-roll: search Pexels (or Pixabay) by tag and download the chosen clip.
 // Both libraries allow free use in commercial videos, unlike clips taken from YouTube or
 // social media. Needs PEXELS_API_KEY (or PIXABAY_API_KEY) in .env; free at pexels.com/api.
-import { createWriteStream, existsSync, mkdirSync, renameSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -25,9 +25,29 @@ export const stockAvailable = () => Boolean(process.env.PEXELS_API_KEY || proces
 
 /** Searches the library for clips matching a few words. Best matches first. */
 export async function searchStock(query: string, orientation: Orientation, minDuration = 3): Promise<StockClip[]> {
-  if (process.env.PEXELS_API_KEY) return searchPexels(query, orientation, minDuration);
-  if (process.env.PIXABAY_API_KEY) return searchPixabay(query, orientation, minDuration);
-  throw new Error("B-roll needs a free stock video key: add PEXELS_API_KEY to CREATRON/.env (get one at pexels.com/api).");
+  const provider = process.env.PEXELS_API_KEY ? "pexels" : process.env.PIXABAY_API_KEY ? "pixabay" : undefined;
+  if (!provider) throw new Error("B-roll needs a free stock video key: add PIXABAY_API_KEY to CREATRON/.env (pixabay.com/api/docs).");
+  // Both libraries ask apps to cache results for 24 hours instead of repeating the same search.
+  const key = `${provider}|${query.trim().toLowerCase()}|${orientation}|${minDuration}`;
+  const cache = readCache();
+  const hit = cache[key];
+  if (hit && Date.now() - hit.at < DAY) return hit.clips;
+  const clips = provider === "pexels" ? await searchPexels(query, orientation, minDuration) : await searchPixabay(query, orientation, minDuration);
+  for (const [k, v] of Object.entries(cache)) if (Date.now() - v.at >= DAY) delete cache[k];
+  cache[key] = { at: Date.now(), clips };
+  writeFileSync(CACHE, JSON.stringify(cache));
+  return clips;
+}
+
+const DAY = 24 * 3600_000;
+const CACHE = join(ROOT, "work", "stock-search-cache.json");
+function readCache(): Record<string, { at: number; clips: StockClip[] }> {
+  try {
+    return JSON.parse(readFileSync(CACHE, "utf8"));
+  } catch {
+    mkdirSync(join(ROOT, "work"), { recursive: true });
+    return {};
+  }
 }
 
 async function searchPexels(query: string, orientation: Orientation, minDuration: number): Promise<StockClip[]> {

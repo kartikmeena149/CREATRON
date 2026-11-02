@@ -84,7 +84,7 @@ export async function render(
   }
 
   args.push("-filter_complex", filters.join(";"), "-map", videoOut);
-  if (analysis.hasAudio) args.push("-map", "[aout]", "-c:a", "aac", "-b:a", "192k");
+  if (analysis.hasAudio) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
   args.push(
     "-t", total.toFixed(3),
     "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", String(fps),
@@ -119,4 +119,15 @@ function frameFilters(
     `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[bg]`,
     `[bg][placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[framed]`,
   ];
+}
+
+let aac: Promise<string> | undefined;
+/**
+ * Apple's AAC encoder (macOS) where available: ffmpeg's built-in one overshoots peaks by up to
+ * ~2.5 dB on heavily levelled speech, which clips; Apple's stays within 0.1 dB of the input.
+ */
+function aacEncoder(): Promise<string> {
+  return (aac ??= run("ffmpeg", ["-hide_banner", "-encoders"])
+    .then(({ stdout }) => (/\baac_at\b/.test(stdout) ? "aac_at" : "aac"))
+    .catch(() => "aac"));
 }

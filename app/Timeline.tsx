@@ -410,6 +410,8 @@ function BrollBlock({ b }: { b: Broll }) {
     >
       {b.file && <video className="broll-thumb" src={`${mediaUrl(b.file)}#t=${(b.offset + 0.5).toFixed(1)}`} muted preload="metadata" />}
       <span className="broll-label">{b.query ?? b.source}</span>
+      {/* Stock libraries ask apps to show where their videos come from. */}
+      <span className="broll-source">{b.source.startsWith("pexels:") ? "Pexels" : b.source.startsWith("pixabay:") ? "Pixabay" : ""}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>
