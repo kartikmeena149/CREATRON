@@ -6,6 +6,7 @@ import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
 import { CaptionList } from "./CaptionList.tsx";
 import { VoiceLab } from "./VoiceLab.tsx";
+import { markerContext } from "./markers.ts";
 import type { ModelInfo } from "./env.d.ts";
 import { useEditor } from "./store.ts";
 
@@ -35,7 +36,7 @@ const QUICK: Quick[] = [
 ];
 
 export function AIPanel() {
-  const { project, plan, messages, busy, status, commit, say, set, rightTab, picked, selectedBroll } = useEditor();
+  const { project, plan, messages, busy, status, commit, say, set, rightTab, picked, selectedBroll, markers, removeMarker } = useEditor();
   const pickedBroll = selectedBroll ? plan.broll.find((b) => b.id === selectedBroll) : undefined;
   const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source);
   const [text, setText] = useState("");
@@ -63,10 +64,13 @@ export function AIPanel() {
     const request = text.trim();
     if (!request || !project || busy) return;
     setText("");
-    say({ role: "user", text: target ? `${target}: ${request}` : request });
+    const pins = markers.map((m) => `📍${m.n}`).join(" ");
+    say({ role: "user", text: [target && `${target}:`, pins, request].filter(Boolean).join(" ") });
     set({ busy: true });
     const before = useEditor.getState().plan;
-    const focus = target ? { clips: picked, broll: pickedBroll?.id } : undefined;
+    const words = project.analysis.words;
+    const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
+    const focus = target || sent.length ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent } : undefined;
     const r = await window.creatron.aiEdit(project.path, request, before, model || undefined, focus);
     set({ busy: false });
     if (!r.ok) {
@@ -89,8 +93,8 @@ export function AIPanel() {
     const cost = r.value.cost ? ` · $${r.value.cost.toFixed(4)}` : "";
     const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
     apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
-    // Clip numbers can change after an edit, so the pick is cleared.
-    if (focus) set({ picked: [], selected: null, selectedBroll: null });
+    // Clip numbers can change after an edit, so the pick is cleared; markers were used up.
+    if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
   };
 
   return (
@@ -144,6 +148,16 @@ export function AIPanel() {
       </div>
 
       <div className="ai-input">
+        {markers.length > 0 && (
+          <div className="ai-markers">
+            {markers.map((m) => (
+              <span key={m.n} className="ai-marker" title="Sent with your next message, so the AI knows what you mean">
+                📍{m.n} at {m.time.toFixed(1)}s
+                <button className="link" onClick={() => removeMarker(m.n)}>✕</button>
+              </span>
+            ))}
+          </div>
+        )}
         {target && (
           <div className="ai-target">
             <span>✎ {target}</span>

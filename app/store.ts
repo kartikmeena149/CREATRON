@@ -72,6 +72,12 @@ type State = {
   /** Puts a downloaded clip on V2 at `at` (default: the playhead), up to 5 s or what's left of the video. */
   addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number }): void;
   deleteBroll(id: string): void;
+  /** Spots pointed at on the video, sent with the next AI request. */
+  markers: { n: number; time: number; x: number; y: number }[];
+  /** Point mode: a click on the video drops a marker instead of moving the video. */
+  pointing: boolean;
+  addMarker(m: { time: number; x: number; y: number }): void;
+  removeMarker(n: number): void;
   /** Selected title / lower third on M1 (by id). */
   selectedMotion: string | null;
   selectMotion(id: string | null): void;
@@ -130,7 +136,7 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set({ project, plan: wholeVideo(project.analysis), past: [], future: [], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false }),
+    set({ project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false }),
   commit: (plan) => set((s) => ({ plan, past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
   live: (plan) => set({ plan }),
@@ -249,6 +255,11 @@ export const useEditor = create<State>((set, get) => ({
     get().commit({ ...plan, broll: plan.broll.filter((b) => b.id !== id) });
     set({ selectedBroll: null });
   },
+
+  markers: [],
+  pointing: false,
+  addMarker: (m) => set((s) => ({ markers: [...s.markers, { ...m, n: Math.max(0, ...s.markers.map((x) => x.n)) + 1 }] })),
+  removeMarker: (n) => set((s) => ({ markers: s.markers.filter((m) => m.n !== n) })),
 
   selectedMotion: null,
   selectMotion: (selectedMotion) =>

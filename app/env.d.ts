@@ -12,7 +12,7 @@ declare global {
     creatron: {
       pickVideo(): Promise<string | undefined>;
       importVideo(path: string): Promise<Result<{ analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave }>>;
-      aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string; markers?: { n: number; time: number; x: number; y: number; context: string }[] }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
       linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
       linkDownload(opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }): Promise<Result<{ file: string; length: number }>>;
       onLinkProgress(fn: (f: number) => void): () => void;

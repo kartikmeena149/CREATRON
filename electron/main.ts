@@ -92,7 +92,7 @@ ipcMain.handle(
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const picked = focus?.clips.length || focus?.broll ? focus : undefined;
+        const picked = focus?.clips.length || focus?.broll || focus?.markers?.length ? focus : undefined;
         // Claude through your subscription works as an agent (any change, its own Remotion code);
         // other models fill in the edit plan through tools.
         const result = m?.startsWith("claude-code/")

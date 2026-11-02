@@ -10,7 +10,7 @@ import { type Thumbs, type Wave, useEditor } from "./store.ts";
 const LABEL_W = 132;
 
 export function Timeline() {
-  const { project, plan, time, pxPerSec, selected, picked, past, future } = useEditor();
+  const { project, plan, time, pxPerSec, selected, picked, past, future, markers } = useEditor();
   const { seek, select, selectCue, setZoom, split, deleteSelected, undo, redo, commit, say } = useEditor();
   const scroller = useRef<HTMLDivElement>(null);
   const total = outputDuration(plan);
@@ -126,6 +126,17 @@ export function Timeline() {
         <div className="tl-scroll" ref={scroller} onWheel={onWheel}>
           <div className="tl-content" style={{ width }}>
             <Ruler total={total} pxPerSec={pxPerSec} onPointerDown={scrub} />
+            {markers.map((m) => (
+              <div
+                key={m.n}
+                className="ruler-marker"
+                style={{ left: m.time * pxPerSec }}
+                title={`Marker ${m.n}: click to go there`}
+                onPointerDown={(e) => (e.stopPropagation(), useEditor.getState().seek(m.time))}
+              >
+                {m.n}
+              </div>
+            ))}
 
             <div className="track motion" onPointerDown={(e) => e.target === e.currentTarget && (useEditor.getState().selectMotion(null), scrub(e))}>
               {plan.motion.map((m) => (

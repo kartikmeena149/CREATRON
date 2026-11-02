@@ -406,3 +406,16 @@ button.wide { width: 100%; margin-top: 8px; }
 .motion-clip.selected { box-shadow: inset 0 0 0 2px #c4b5fd; }
 .motion-clip span { position: absolute; left: 7px; right: 8px; top: 7px; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .motion-clip:hover .handle, .motion-clip.selected .handle { background: rgba(167, 139, 250, 0.55); }
+
+/* Markers: point at a spot on the video for the AI */
+.point-btn { font-size: 12px; padding: 4px 10px; }
+.point-btn.on { background: rgba(239, 68, 68, 0.18); border-color: #ef4444; color: #fecaca; }
+.point-catcher { position: absolute; inset: 0; z-index: 20; cursor: crosshair; }
+.marker-pin {
+  position: absolute; z-index: 21; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
+  background: #ef4444; color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35), 0 2px 6px rgba(0, 0, 0, 0.6); pointer-events: none;
+}
+.ruler-marker { position: absolute; top: 0; z-index: 2; transform: translateX(-50%); font-size: 9px; font-weight: 700; color: #fff; background: #ef4444; border-radius: 3px; padding: 0 3px; cursor: pointer; }
+.ai-markers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ai-marker { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; font-size: 11px; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca; }

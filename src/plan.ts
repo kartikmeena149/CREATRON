@@ -51,7 +51,13 @@ Editing rules:
 - In notes, tell the user in one or two plain sentences what you did.`;
 
 /** What the user picked on the timeline: segment indexes, and maybe one B-roll id. */
-export type Focus = { clips: number[]; broll?: string };
+export type Focus = { clips: number[]; broll?: string; markers?: Marker[] };
+
+/**
+ * A spot the user pointed at on the video: time on the edited timeline, place in the frame
+ * (0..1 from the left / top), and what's on screen there, in words, for the model.
+ */
+export type Marker = { n: number; time: number; x: number; y: number; context: string };
 
 export type PlanResult = {
   plan: EditPlan;
@@ -216,7 +222,7 @@ export async function makePlan(
         const known = (id: string) => clips.has(id) || Boolean(current?.broll.some((b) => b.source === id && b.file));
         problems = [
           ...checkPlan(plan, analysis),
-          ...(current && focus ? keepsUnpicked(current, plan, focus.clips).problems : []),
+          ...(current && focus?.clips.length ? keepsUnpicked(current, plan, focus.clips).problems : []),
           ...plan.broll.filter((b) => !known(b.source)).map((b) => `broll ${b.source}: not a clip id returned by search_broll or search_web_video`),
         ];
         if (!problems.length) return { plan, model, ...totals, clips };
@@ -244,8 +250,22 @@ export function describeFocus(plan: EditPlan, focus: Focus): string {
     });
   const b = focus.broll ? plan.broll.find((x) => x.id === focus.broll) : undefined;
   if (b) lines.push(`- B-roll id "${b.id}" (${b.query ?? b.source}) at ${b.at.toFixed(2)}s for ${b.duration.toFixed(2)}s`);
-  if (!lines.length) return "";
-  return `\nPICKED ON THE TIMELINE (apply the request to these only; keep everything else exactly as it is):\n${lines.join("\n")}`;
+  const parts = [];
+  if (lines.length) parts.push(`\nPICKED ON THE TIMELINE (apply the request to these only; keep everything else exactly as it is):\n${lines.join("\n")}`);
+  if (focus.markers?.length)
+    parts.push(
+      `\nMARKERS the user put on the video ("this", "here", "it", "#1" in the request mean these spots):\n${focus.markers
+        .map((m) => `- #${m.n} at ${m.time.toFixed(2)}s on the edited timeline, ${Math.round(m.x * 100)}% from the left and ${Math.round(m.y * 100)}% from the top of the frame (${area(m.x, m.y)}). On screen then: ${m.context}`)
+        .join("\n")}`,
+    );
+  return parts.join("\n");
+}
+
+/** "upper left", "center", "lower right"... */
+function area(x: number, y: number): string {
+  const v = y < 0.34 ? "upper" : y > 0.66 ? "lower" : "middle";
+  const h = x < 0.34 ? "left" : x > 0.66 ? "right" : "center";
+  return v === "middle" && h === "center" ? "center" : `${v} ${h}`;
 }
 
 /**

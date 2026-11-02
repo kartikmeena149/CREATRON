@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { agentDir, compileCustom, customDir, customFiles } from "./customcode.ts";
 import { outputSize } from "./frame.ts";
-import { overlayProps } from "./motion.ts";
-import { type Focus, describe, describeFocus, keepsUnpicked, placeBroll } from "./plan.ts";
+import { hasOverlay, overlayProps } from "./motion.ts";
+import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll } from "./plan.ts";
 import { renderOverlayStill } from "./remotion.ts";
 import { type Analysis, EditPlan, checkPlan } from "./schema.ts";
 import { outputDuration, toSourceTime } from "./timeline.ts";
@@ -32,10 +32,12 @@ export async function runAgent(
   prepare(dir, analysis, current);
   const claudeModel = model.replace(/^claude-code\//, "");
 
+  const pictures = focus?.markers?.length ? await markerFrames(dir, analysis, current, focus.markers) : [];
   log(`Claude (${claudeModel}) is editing`);
   let turn = await claude(dir, claudeModel, [
     `REQUEST: ${request}`,
     focus ? describeFocus(current, focus) : "",
+    pictures.length ? `\nWhat the user is pointing at (Read each image; the red box is the spot they clicked):\n${pictures.join("\n")}` : "",
     "",
     "Read CREATRON.md first, then video.md and plan.json, and make the change.",
   ].join("\n"));
@@ -104,7 +106,7 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
   if (!parsed.success) return { problems: [`plan.json doesn't match plan.schema.json:\n${z.prettifyError(parsed.error)}`] };
   const plan = placeBroll(parsed.data, new Map());
   const problems = [...checkPlan(plan, analysis)];
-  if (focus) problems.push(...keepsUnpicked(current, plan, focus.clips).problems);
+  if (focus?.clips.length) problems.push(...keepsUnpicked(current, plan, focus.clips).problems);
   const known = new Set(current.broll.map((b) => b.source));
   for (const b of plan.broll) if (!known.has(b.source)) problems.push(`broll ${b.source}: new B-roll can't be added in this mode yet; remove it`);
   const custom = plan.motion.filter((m) => m.template === "custom");
@@ -118,6 +120,36 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
     }
   }
   return { plan, problems };
+}
+
+/** The edited frame at each marker (video, plus animations when there are any) with a red box where the user clicked. */
+async function markerFrames(dir: string, analysis: Analysis, plan: EditPlan, markers: Marker[]): Promise<string[]> {
+  const size = outputSize(plan, analysis);
+  const fps = analysis.fps;
+  const props = overlayProps(plan, analysis.words, size, fps);
+  const overlay = hasOverlay(plan, analysis.words);
+  rmSync(join(dir, "markers"), { recursive: true, force: true });
+  mkdirSync(join(dir, "markers"), { recursive: true });
+  const out: string[] = [];
+  for (const m of markers) {
+    const t = Math.min(m.time, outputDuration(plan) - 0.05);
+    const file = join("markers", `marker-${m.n}.png`);
+    const layer = join(dir, "markers", `layer-${m.n}.png`);
+    if (overlay) await renderOverlayStill(props, Math.round(t * fps), layer, customDir(analysis.source));
+    const box = Math.round(Math.min(size.width, size.height) * 0.14);
+    const bx = Math.round(m.x * size.width - box / 2);
+    const by = Math.round(m.y * size.height - box / 2);
+    const base = `[0:v]scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height}`;
+    await run("ffmpeg", [
+      "-y", "-v", "error", "-ss", toSourceTime(plan, t).toFixed(3), "-i", analysis.source, ...(overlay ? ["-i", layer] : []),
+      "-filter_complex",
+      `${base}[v];${overlay ? "[v][1:v]overlay[v2];[v2]" : "[v]"}drawbox=x=${bx}:y=${by}:w=${box}:h=${box}:color=red@0.95:t=${Math.max(4, Math.round(box / 18))},scale=-2:'min(960,ih)'`,
+      "-frames:v", "1", join(dir, file),
+    ]);
+    rmSync(layer, { force: true });
+    out.push(`- #${m.n}: ${file}`);
+  }
+  return out;
 }
 
 /** Two frames of each custom animation (up to 3), drawn over the real video frame, saved in checks/. */

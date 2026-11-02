@@ -12,7 +12,7 @@ import { mediaUrl, timecode } from "./format.ts";
 import type { Broll, Voiceover } from "../src/schema.ts";
 
 export function Viewer() {
-  const { project, plan, time, playing, seek, setPlaying } = useEditor();
+  const { project, plan, time, playing, seek, setPlaying, markers, pointing } = useEditor();
   const video = useRef<HTMLVideoElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
@@ -166,10 +166,37 @@ export function Viewer() {
           {/* Animated captions are drawn by the Remotion layer instead of the editable plain caption. */}
           {cue && frameSize.w > 0 && plan.captions.animation === "none" && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
           <MotionPreview />
+          {/* Markers near the playhead (all of them while pointing), numbered like in the AI box. */}
+          {markers
+            .filter((m) => pointing || Math.abs(m.time - time) < 0.4)
+            .map((m) => (
+              <div key={m.n} className="marker-pin" style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%` }} title={`Marker ${m.n} at ${timecode(m.time)}`}>
+                {m.n}
+              </div>
+            ))}
+          {pointing && (
+            <div
+              className="point-catcher"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                const r = e.currentTarget.getBoundingClientRect();
+                const s = useEditor.getState();
+                s.setPlaying(false);
+                s.addMarker({ time: s.time, x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+              }}
+            />
+          )}
         </div>
       </div>
       <div className="transport">
         <span className="tc">{timecode(time)}</span>
+        <button
+          className={`point-btn ${pointing ? "on" : ""}`}
+          title="Point at a problem: click on the video to drop a marker (at this moment and spot) for the AI"
+          onClick={() => useEditor.getState().set({ pointing: !pointing })}
+        >
+          📍 {pointing ? "Click the video… (done)" : "Point"}
+        </button>
         <div className="transport-buttons">
           <button className="icon" title="Back to start" onClick={() => seek(0)}>⏮</button>
           <button className="icon play" title="Play / pause (Space)" onClick={() => setPlaying(!playing)}>
