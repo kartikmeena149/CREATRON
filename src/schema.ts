@@ -47,6 +47,9 @@ export const Voiceover = z.object({
   duration: z.number().positive(),
   length: z.number().positive().optional().describe("Full length of the file, so trims can't run past it"),
   volumeDb: z.number().min(-24).max(12).default(0),
+  muted: z.boolean().optional().describe("Switched off by the user; keep as it is"),
+  fadeIn: z.number().min(0).max(10).optional().describe("Seconds the sound fades in at its start"),
+  fadeOut: z.number().min(0).max(10).optional().describe("Seconds the sound fades out at its end"),
 });
 export type Voiceover = z.infer<typeof Voiceover>;
 
@@ -71,6 +74,8 @@ export const Broll = z.object({
   length: z.number().positive().optional(),
   query: z.string().optional().describe("What should be on screen, a few words"),
   credit: z.string().optional(),
+  hidden: z.boolean().optional().describe("Switched off by the user; keep as it is"),
+  muted: z.boolean().optional().describe("Whether its own sound is off. Leave unset: stock B-roll is silent, the user's own videos play their sound"),
 });
 export type Broll = z.infer<typeof Broll>;
 
@@ -96,6 +101,7 @@ export const Motion = z.object({
   at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
   duration: z.number().min(0.5).max(3600).default(3).describe("How long it shows, seconds (2-4 is typical for text; a progress bar can run the whole video)"),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Accent color"),
+  hidden: z.boolean().optional().describe("Switched off by the user; keep as it is"),
 });
 export type Motion = z.infer<typeof Motion>;
 
@@ -118,8 +124,7 @@ export const EditPlan = z.object({
   version: z.literal(1),
   segments: z
     .array(Segment)
-    .min(1)
-    .describe("Parts of the source to keep, in playback order. Everything else is cut."),
+    .describe("Parts of the source to keep, in playback order. Everything else is cut. Empty only when the user cleared the timeline."),
   aspect: z
     .enum(["source", "9:16", "1:1", "16:9"])
     .default("source")
@@ -167,14 +172,13 @@ export const EditPlan = z.object({
   voiceovers: z.array(Voiceover).default([]),
   broll: z.array(Broll).default([]).describe("Clips over the main video. Only ids returned by search_broll or search_web_video."),
   motion: z.array(Motion).default([]).describe("Animated titles and lower thirds on the Text tracks"),
-  // How the timeline's tracks are set up: how many of each kind, and each track's name / mute / hide.
-  // Keys: "video:1" (the main video), "video:2"…, "text:1"…, "voice:1"…, "music:1"…, "sfx:1"…, "captions".
+  // Each track's name / mute / hide, set by the user in the timeline. Tracks themselves exist while
+  // clips sit on them. Keys: "video:1" (the main video), "video:2"…, "text:1"…, "voice:1"…, "music:1"…, "sfx:1"….
   tracks: z
     .object({
-      count: z.object({ video: z.number().int().min(1), text: z.number().int().min(1), voice: z.number().int().min(1), music: z.number().int().min(1), sfx: z.number().int().min(1) }).partial().default({}),
       settings: z.record(z.string(), z.object({ name: z.string().optional(), muted: z.boolean().optional(), hidden: z.boolean().optional() })).default({}),
     })
-    .default({ count: {}, settings: {} })
+    .default({ settings: {} })
     .describe("Track layout set by the user in the timeline. Keep it as it is."),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
@@ -199,6 +203,7 @@ export type Analysis = {
 /** Checks a plan against the source it will be rendered from. Returns problems, empty when fine. */
 export function checkPlan(plan: EditPlan, analysis: Analysis): string[] {
   const problems: string[] = [];
+  if (!plan.segments.length) problems.push("the timeline is empty: put the main video back on Track 1 first");
   plan.segments.forEach((s, i) => {
     if (s.end > analysis.duration + 0.05)
       problems.push(`segment ${i}: end ${s.end}s is past the video's end (${analysis.duration.toFixed(2)}s)`);

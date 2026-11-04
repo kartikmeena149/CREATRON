@@ -63,7 +63,7 @@ export function AIPanel() {
 
   const send = async () => {
     const request = text.trim();
-    if (!request || !project || busy) return;
+    if (!request || !project || !plan.segments.length || busy) return;
     setText("");
     const pins = markers.map((m) => `📍${m.n}`).join(" ");
     say({ role: "user", text: [target && `${target}:`, pins, request].filter(Boolean).join(" ") });
@@ -147,7 +147,7 @@ export function AIPanel() {
 
       <div className="ai-quick">
         {QUICK.map((q) => (
-          <button key={q.label} disabled={!project} onClick={() => runQuick(q)}>{q.label}</button>
+          <button key={q.label} disabled={!project || !plan.segments.length} onClick={() => runQuick(q)}>{q.label}</button>
         ))}
       </div>
 
@@ -172,7 +172,7 @@ export function AIPanel() {
         <textarea
           value={text}
           disabled={!project}
-          placeholder={!project ? "Import a video first" : target ? `What should I do with ${target}?` : "Describe the edit…"}
+          placeholder={!project ? "Import a video first" : !plan.segments.length ? "The timeline is empty: drop your video back on it" : target ? `What should I do with ${target}?` : "Describe the edit…"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

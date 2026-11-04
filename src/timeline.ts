@@ -24,7 +24,7 @@ export function toSourceTime(plan: EditPlan, t: number): number {
     if (t <= offset + len) return s.start + Math.max(0, t - offset) * s.speed;
     offset += len;
   }
-  return plan.segments.at(-1)!.end;
+  return plan.segments.at(-1)?.end ?? 0;
 }
 
 export function outputDuration(plan: EditPlan): number {

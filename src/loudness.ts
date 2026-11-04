@@ -71,11 +71,19 @@ export function mixFilters(plan: EditPlan, src: string, firstVo: number, origGai
     const delay = Math.round(v.at * 1000);
     filters.push(
       `[${firstVo + k}:a]atrim=start=${v.offset.toFixed(3)}:duration=${v.duration.toFixed(3)},asetpts=PTS-STARTPTS,` +
-        `aresample=48000,aformat=channel_layouts=stereo,volume=${v.volumeDb}dB,adelay=${delay}:all=1[vo${k}]`,
+        `aresample=48000,aformat=channel_layouts=stereo,volume=${v.volumeDb}dB${fades(v)},adelay=${delay}:all=1[vo${k}]`,
     );
   });
   filters.push(`[orig]${vos.map((_, k) => `[vo${k}]`).join("")}amix=inputs=${vos.length + 1}:normalize=0:duration=first[mix]`);
   return filters;
+}
+
+/** The clip's fade in / fade out, as filters (fades never overlap past the clip's middle). */
+function fades(v: EditPlan["voiceovers"][number]): string {
+  const half = v.duration / 2;
+  const fin = Math.min(v.fadeIn ?? 0, half);
+  const fout = Math.min(v.fadeOut ?? 0, half);
+  return (fin > 0 ? `,afade=t=in:d=${fin.toFixed(3)}` : "") + (fout > 0 ? `,afade=t=out:st=${(v.duration - fout).toFixed(3)}:d=${fout.toFixed(3)}` : "");
 }
 
 /** Inputs for the voiceover files, in the order mixFilters expects them. */

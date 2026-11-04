@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
 import { isAudio, mediaUrl, shortTime, timecode } from "./format.ts";
 import { Icon } from "./icons.tsx";
+import * as act from "./clipActions.ts";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
 import { PositionSize } from "./PositionSize.tsx";
@@ -18,6 +19,12 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
   useEffect(() => void (selected !== null && set({ leftView: "clip" })), [selected]);
   useEffect(() => void (selectedCue !== null && set({ leftView: "captions" })), [selectedCue]);
   useEffect(() => void (selectedMotion !== null && set({ leftView: "text" })), [selectedMotion]);
+  const selectedVo = useEditor((s) => s.selectedVo);
+  useEffect(() => void (selectedVo !== null && set({ leftView: "audio" })), [selectedVo]);
+
+  // More than one clip selected: one panel for all of them.
+  const group = useEditor((s) => s.picked.length + s.pickedIds.length);
+  if (group > 1) return <aside className="panel inspector"><GroupPanel /></aside>;
 
   if (!view) return null;
   const head = (
@@ -86,9 +93,11 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
 
       {view === "captions" && <CaptionStyle />}
 
+      {view === "audio" && <AudioClip />}
+
       {view === "audio" && (
       <section>
-        <h3>Voice</h3>
+        <h3>Main track sound</h3>
         <Row label="Clean up noise" hint="removes hiss and hum">
           <Toggle value={plan.audio.denoise} onChange={(denoise) => commit({ ...plan, audio: { ...plan.audio, denoise } })} />
         </Row>
@@ -130,8 +139,68 @@ function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () 
       <div className="media-grid">
         {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
       </div>
-      {library.length > 0 && <p className="hint pad">Drag videos, music or sound effects onto any track. Double-click a video to edit it as the main video.</p>}
+      {library.length > 0 && <p className="hint pad">Drag videos, music or sound effects onto any track. Double-click one to make it the main track (a voice recording makes a faceless video).</p>}
     </>
+  );
+}
+
+/** Several clips selected (box-select or ⇧-click): changes apply to all of them. */
+function GroupPanel() {
+  useEditor((s) => s.plan); // follow changes
+  const { checkpoint, setSelection, deleteSelection } = useEditor();
+  const refs = act.groupRefs();
+  const withLevel = refs.filter((r) => r.kind === "segment" || r.kind === "audio");
+  const sound = refs.filter(act.canMute);
+  const allMuted = sound.length > 0 && sound.every(act.isMuted);
+  const first = withLevel[0];
+  const plan = useEditor.getState().plan;
+  const level = !first ? 100 : first.kind === "segment" ? (plan.segments[first.index]?.volume ?? 1) * 100
+    : Math.round(10 ** ((plan.voiceovers.find((v) => v.id === first.id)?.volumeDb ?? 0) / 20) * 100);
+  return (
+    <>
+      <header className="side-head">
+        <h2>{refs.length} clips</h2>
+        <button className="icon-btn" title="Clear the selection" onClick={() => setSelection([], [])}><Icon name="close" /></button>
+      </header>
+      <section>
+        <p className="hint" style={{ marginTop: 0 }}>Multiple selection</p>
+        {withLevel.length > 0 && (
+          <Slider label="Volume" unit="%" min={0} max={200} step={1} value={level} display={(x) => Math.round(x)}
+            onStart={checkpoint} onChange={(x) => act.setGroupVolume(x, refs)} />
+        )}
+        {sound.length > 0 && (
+          <Row label="Mute">
+            <Toggle value={allMuted} onChange={() => act.toggleMuteGroup(refs)} />
+          </Row>
+        )}
+        <button className="wide-btn danger-btn" onClick={deleteSelection}><Icon name="trash" size={13} /> Delete {refs.length} clips</button>
+        <p className="hint">Changes apply to all {refs.length} selected clips. Drag any selected B-roll, text or audio clip to move them together. ⇧-click adds or removes a clip.</p>
+      </section>
+    </>
+  );
+}
+
+/** The selected music, sound effect or voiceover clip: level and fades. */
+function AudioClip() {
+  const { plan, selectedVo, checkpoint, updateVoiceover } = useEditor();
+  const v = plan.voiceovers.find((x) => x.id === selectedVo);
+  if (!v) return null;
+  const kind = { voice: "Voiceover", music: "Music", sfx: "Sound effect" }[v.kind ?? "voice"];
+  const max = Math.min(5, Math.floor(v.duration * 5) / 10);
+  return (
+    <section>
+      <h3>{kind}<span className="dim small">{v.duration.toFixed(1)}s</span></h3>
+      <div className="file-name" title={v.file}>{v.text || v.file.split("/").pop()}</div>
+      <Row label="Mute">
+        <Toggle value={Boolean(v.muted)} onChange={(muted) => updateVoiceover(v.id, { muted })} />
+      </Row>
+      <Slider label="Volume" unit=" dB" min={-24} max={12} step={0.5} value={v.volumeDb}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { volumeDb: x }, false)} />
+      <Slider label="Fade in" min={0} max={max} step={0.1} value={Math.min(v.fadeIn ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeIn: x }, false)} />
+      <Slider label="Fade out" min={0} max={max} step={0.1} value={Math.min(v.fadeOut ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeOut: x }, false)} />
+    </section>
   );
 }
 
@@ -149,7 +218,7 @@ function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: stri
         e.dataTransfer.setData(MEDIA_DRAG, JSON.stringify({ path, length, audio }));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      onDoubleClick={() => !main && !audio && onOpenMain(path)}
+      onDoubleClick={() => !main && onOpenMain(path)}
     >
       <div className="media-thumb">
         {audio ? (

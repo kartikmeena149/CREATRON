@@ -39,6 +39,12 @@ const PATHS = {
   download: "M12 4v12M6 10l6 6 6-6M4 20h16",
   check: "M5 12l5 5 9-10",
   expand: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+  copy: "M9 9h11v11H9zM5 15H4V4h11v1",
+  paste: "M9 4h6v3H9zM8 5H5v16h14V5h-3M9 13h6M9 17h4",
+  duplicate: "M8 8h12v12H8zM4 16V4h12M14 11v6M11 14h6",
+  volume: "M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12",
+  mute: "M4 9h4l5-4v14l-5-4H4zM16 9l5 6M21 9l-5 6",
+  wave: "M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2M21 12h0",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -137,17 +137,18 @@ button.link:hover { text-decoration: underline; background: none; }
 .lib-add { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; background: var(--raised); border: none; border-radius: 9px; color: var(--text); font-weight: 500; }
 .lib-add.icon { width: 36px; padding: 0; }
 .lib-add:hover:not(:disabled) { background: var(--hover); border: none; }
-.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; padding: 0 18px 8px; }
+/* Cards keep one small size: a wider panel fits more of them instead of making them bigger. */
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 112px)); justify-content: start; gap: 8px; padding: 0 16px 8px; }
 .media-card { background: var(--panel-2); border-radius: 10px; overflow: hidden; border: 1px solid var(--line); cursor: grab; }
 .media-card:hover { border-color: #3a3a3a; }
 .media-card.main { border-color: #4a4a4a; }
 .media-card:active { cursor: grabbing; }
 .media-thumb { position: relative; aspect-ratio: 1; background: #000; }
 .media-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.pill { position: absolute; bottom: 6px; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; }
+.pill { position: absolute; bottom: 5px; font-size: 10px; padding: 0 5px; border-radius: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; }
 .pill.left { left: 6px; }
 .pill.right { right: 6px; color: #ddd; }
-.media-name { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-weight: 500; font-size: 12px; }
+.media-name { display: flex; align-items: center; gap: 5px; padding: 6px 8px; font-weight: 500; font-size: 11px; }
 .media-name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .media-card .meta { padding: 2px 10px 8px; margin: 0; }
 .file-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
@@ -580,17 +581,8 @@ body.resizing-x video, body.resizing-y video, body.resizing-x iframe { pointer-e
 .track-btn { width: 22px; height: 22px; padding: 0; display: grid; place-items: center; background: none; border: none; border-radius: 5px; color: var(--faint); font-size: 11px; font-weight: 600; }
 .track-btn:hover:not(:disabled) { color: var(--text); background: var(--raised); border: none; }
 .track-btn.m.on { color: #111; background: #f2b84b; }
-.track-btn.del { visibility: hidden; }
-.track-label:hover .track-btn.del { visibility: visible; }
 .track.off { opacity: 0.4; }
 .track { border-bottom: 1px solid #1b1b1b; }
-.add-track { position: relative; }
-.add-track-btn { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; background: transparent; border: 1px dashed #3a3a3a; border-radius: 6px; color: var(--dim); font-size: 11px; }
-.add-track-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); background: transparent; }
-.menu-catcher { position: fixed; inset: 0; z-index: 60; }
-.menu { position: absolute; top: 26px; left: 0; z-index: 61; min-width: 170px; padding: 4px; display: grid; background: var(--raised); border: 1px solid #383838; border-radius: 10px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); }
-.menu button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: none; border: none; border-radius: 6px; text-align: left; color: var(--text); }
-.menu button:hover:not(:disabled) { background: var(--hover); border: none; }
 
 /* Clips inside the shorter audio / captions lanes */
 .track.captions .cue { top: 3px; height: 40px; line-height: 40px; }
@@ -605,3 +597,36 @@ body.resizing-x video, body.resizing-y video, body.resizing-x iframe { pointer-e
 /* Audio files in the library */
 .audio-tile { position: absolute; inset: 0; display: grid; place-items: center; color: #93c5fd; background: linear-gradient(135deg, #1e293b, #172033); }
 .media-card audio { display: none; }
+
+/* Space under the tracks: drop here for a new track */
+.track.below { height: 64px; border-bottom: none; }
+.tl-empty-hint { position: absolute; left: 16px; top: 22px; color: var(--dim); font-weight: 500; pointer-events: none; white-space: nowrap; }
+
+/* Track 1 holding a voice recording (faceless video): no picture, so the clip looks like audio */
+.clip.voice { background: rgba(45, 212, 191, 0.14); box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.4); }
+.clip.voice.selected { box-shadow: inset 0 0 0 2px #5eead4; }
+
+/* Clip menu (right-click or double-click a clip) */
+.menu-catcher { position: fixed; inset: 0; z-index: 60; }
+.clip-menu {
+  position: fixed; z-index: 61; min-width: 240px; padding: 5px; display: grid; gap: 1px;
+  background: #222; border: 1px solid #353535; border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.clip-menu button { display: flex; align-items: center; gap: 10px; padding: 7px 8px; background: none; border: none; border-radius: 7px; text-align: left; color: var(--text); }
+.clip-menu button:hover:not(:disabled) { background: var(--hover); border: none; }
+.clip-menu button .ico { color: var(--dim); }
+.clip-menu button span { flex: 1; }
+.clip-menu button.danger, .clip-menu button.danger .ico { color: #ff7b7b; }
+.clip-menu kbd { font: 500 11px -apple-system, system-ui, sans-serif; color: var(--dim); background: #2c2c2c; border-radius: 5px; padding: 1px 6px; }
+.menu-sep { height: 1px; background: #333; margin: 4px 2px; }
+
+/* Clips switched off from the menu */
+.broll-clip.hidden, .motion-clip.hidden, .vo-clip.muted { opacity: 0.4; }
+.broll-clip.muted::after { content: "muted"; position: absolute; right: 6px; top: 4px; font-size: 10px; font-weight: 600; color: #fecaca; background: rgba(0, 0, 0, 0.6); padding: 0 4px; border-radius: 3px; pointer-events: none; }
+.clip-menu button > .ico:nth-of-type(2) { color: var(--accent-2); }
+
+/* Box selection on the timeline */
+.marquee { position: absolute; z-index: 8; border: 1px solid rgba(154, 140, 255, 0.9); background: rgba(109, 92, 246, 0.14); border-radius: 3px; pointer-events: none; }
+.marquee span { position: absolute; left: 0; top: -22px; white-space: nowrap; font-size: 11px; font-weight: 500; color: #fff; background: rgba(20, 20, 20, 0.9); padding: 2px 7px; border-radius: 6px; }
+.wide-btn.danger-btn { display: flex; align-items: center; justify-content: center; gap: 6px; color: #ff9b9b; border-color: rgba(255, 107, 107, 0.35); }
+.wide-btn.danger-btn:hover:not(:disabled) { color: #fff; border-color: var(--danger); background: rgba(255, 107, 107, 0.12); }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, outputDuration } from "./timeline.ts";
-import { isIdentity, outputSize, placement } from "./frame.ts";
+import { isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { customDir } from "./customcode.ts";
 import { renderOverlay } from "./remotion.ts";
@@ -24,11 +24,15 @@ export async function render(
 ): Promise<string> {
   // Hidden and muted tracks stay out of the video; higher video tracks go on top.
   plan = effectivePlan(plan);
+  // B-roll that plays its own sound joins the mix like a sound effect (it doesn't dip the voice).
+  plan = { ...plan, voiceovers: [...plan.voiceovers, ...(await brollAudio(plan))] };
   const problems = checkPlan(plan, analysis);
   if (problems.length) throw new Error(`edit plan does not fit this video:\n- ${problems.join("\n- ")}`);
 
-  const W = even(analysis.width);
-  const H = even(analysis.height);
+  // A voice recording as the main track has no picture: it plays over black.
+  const picture = analysis.width > 0;
+  const W = even(pictureSize(analysis).width);
+  const H = even(pictureSize(analysis).height);
   const fps = analysis.fps;
   const size = outputSize(plan, analysis);
   const total = outputDuration(plan);
@@ -42,15 +46,18 @@ export async function render(
   plan.segments.forEach((s, i) => {
     const zoom =
       s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "";
-    filters.push(`[${i}:v]scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}${zoom},fps=${fps},setsar=1[v${i}]`);
-    pads.push(`[v${i}]`);
+    if (picture) {
+      filters.push(`[${i}:v]scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}${zoom},fps=${fps},setsar=1[v${i}]`);
+      pads.push(`[v${i}]`);
+    }
     if (analysis.hasAudio) {
       filters.push(segmentAudio(s, i));
       pads.push(`[a${i}]`);
     }
   });
   const n = plan.segments.length;
-  filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat]${analysis.hasAudio ? "[acat]" : ""}`);
+  if (picture) filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat]${analysis.hasAudio ? "[acat]" : ""}`);
+  else filters.push(`${pads.join("")}concat=n=${n}:v=0:a=1[acat]`, `color=c=black:s=${W}x${H}:r=${fps}:d=${total.toFixed(3)},format=yuv420p[cat]`);
   filters.push(...frameFilters(plan, W, H, size, fps, total));
 
   // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
@@ -140,6 +147,18 @@ function frameFilters(
     `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[bg]`,
     `[bg][placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[framed]`,
   ];
+}
+
+/** Audio clips for the B-roll clips that play their sound (files without an audio track are skipped). */
+async function brollAudio(plan: EditPlan): Promise<EditPlan["voiceovers"]> {
+  const out: EditPlan["voiceovers"] = [];
+  for (const b of plan.broll) {
+    if (b.muted || !b.file || !existsSync(b.file)) continue;
+    const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", b.file]);
+    if (!stdout.trim()) continue;
+    out.push({ id: `broll-${b.id}`, kind: "sfx", track: 1, file: b.file, text: "", voice: "", at: b.at, offset: b.offset, duration: b.duration, volumeDb: 0 });
+  }
+  return out;
 }
 
 let aac: Promise<string> | undefined;

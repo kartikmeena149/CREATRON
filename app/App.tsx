@@ -8,6 +8,8 @@ import { Viewer } from "./Viewer.tsx";
 import { Icon, type IconName } from "./icons.tsx";
 import { type LeftView, useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
+import { ClipMenu } from "./ClipMenu.tsx";
+import * as act from "./clipActions.ts";
 import { isAudio } from "./format.ts";
 import { Splitter, defaultSize, useLayoutSizes } from "./Splitter.tsx";
 
@@ -19,18 +21,23 @@ export function App() {
   const [autoOpen, setAutoOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [sizes, setSizes] = useLayoutSizes();
-  const leftOpen = useEditor((s) => s.leftView !== null);
+  // A multi-selection shows its own panel even when the left panel was hidden.
+  const leftOpen = useEditor((s) => s.leftView !== null || s.picked.length + s.pickedIds.length > 1);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
   useEffect(() => window.creatron.onOpenPath((p: string) => open(p)), []);
 
-  /** Adds videos, music or sound effects to the library. An empty tab takes the first video as its main video. */
-  const addMedia = async (path?: string) => {
-    const paths = path ? [path] : await window.creatron.pickLibrary();
+  /**
+   * Adds videos, music or sound effects to the library. An empty tab takes the first video as its
+   * main track, or with no video the first recording (a faceless video made over your voice).
+   */
+  // All files of one drop or pick go in together: added one by one, each would race to become the main video.
+  const addMedia = async (given?: string[]) => {
+    const paths = given ?? (await window.creatron.pickLibrary());
     const s = useEditor.getState();
-    const main = s.project ? undefined : paths.find((p) => !isAudio(p));
+    const main = s.project ? undefined : (paths.find((p) => !isAudio(p)) ?? paths[0]);
     for (const p of paths) if (p !== main) s.addToLibrary(p);
     if (paths.length) s.set({ leftView: "media" });
     if (main) await open(main);
@@ -56,7 +63,8 @@ export function App() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
-        for (const file of e.dataTransfer.files) addMedia(window.creatron.pathForFile(file));
+        const paths = [...e.dataTransfer.files].map((f) => window.creatron.pathForFile(f));
+        if (paths.length) addMedia(paths);
       }}
     >
       <TopBar onLink={() => setLinkOpen(true)} onAuto={() => setAutoOpen(true)}
@@ -88,6 +96,7 @@ export function App() {
           <AutoEdit initialVideo={project?.path} onClose={() => setAutoOpen(false)} />
         </Catch>
       )}
+      <ClipMenu />
       {linkOpen && <LinkImport onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
       {importing && (
         <div className="overlay">
@@ -106,7 +115,7 @@ function TopBar(p: { onLink: () => void; onAuto: () => void; aiOpen: boolean; on
   const { project, plan, exporting, exported, set, commit } = useEditor();
   const doExport = async () => {
     const s = useEditor.getState();
-    if (!s.project || s.exporting !== null) return;
+    if (!s.project || !s.plan.segments.length || s.exporting !== null) return;
     set({ exporting: 0, exported: undefined });
     const r = await window.creatron.exportVideo(s.project.path, s.plan);
     set({ exporting: null, exported: r.ok ? r.value : undefined });
@@ -144,7 +153,8 @@ function TopBar(p: { onLink: () => void; onAuto: () => void; aiOpen: boolean; on
       {exported && (
         <button className="icon-btn" title="Show export in Finder" onClick={() => window.creatron.reveal(exported)}><Icon name="download" /></button>
       )}
-      <button className="export-btn" disabled={!project || exporting !== null} onClick={doExport}>
+      <button className="export-btn" disabled={!project || !plan.segments.length || exporting !== null} onClick={doExport}
+        title={project && !plan.segments.length ? "The timeline is empty" : undefined}>
         {exporting !== null ? `Exporting ${Math.round(exporting * 100)}%` : <>Export <kbd>⌘E</kbd></>}
         {exporting !== null && <i className="progress" style={{ width: `${exporting * 100}%` }} />}
       </button>
@@ -232,7 +242,24 @@ function useShortcuts() {
       const frame = 1 / s.project.analysis.fps;
       if (e.code === "Space") (e.preventDefault(), s.setPlaying(!s.playing));
       else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") (e.preventDefault(), e.shiftKey ? s.redo() : s.undo());
-      else if (e.key === "s" || e.key === "S") s.split();
+      else if ((e.metaKey || e.ctrlKey) && ["c", "v", "d"].includes(e.key.toLowerCase())) {
+        const clip = act.selectedClip();
+        const k = e.key.toLowerCase();
+        if (k === "v") (e.preventDefault(), act.paste());
+        else if (clip) (e.preventDefault(), k === "c" ? act.copy(clip) : act.duplicate(clip));
+      } else if (e.metaKey || e.ctrlKey) return;
+      else if (e.key === "S" && e.shiftKey) {
+        const clip = act.selectedClip();
+        if (clip) act.removeSilences(clip);
+      } else if (e.key === "s") {
+        const clip = act.selectedClip();
+        if (clip && clip.kind !== "segment") act.split(clip);
+        else s.split();
+      } else if (e.key === "m" || e.key === "M") {
+        const clip = act.selectedClip();
+        if (act.groupRefs().length) act.toggleMuteGroup();
+        else if (clip && act.canMute(clip)) act.toggleMute(clip);
+      } else if ((e.key === "Backspace" || e.key === "Delete") && act.groupRefs().length) s.deleteSelection();
       else if (e.key === "Backspace" || e.key === "Delete") s.selectedMotion !== null ? s.deleteMotion(s.selectedMotion) : s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));
       else if (e.key === "ArrowRight") s.seek(s.time + (e.shiftKey ? 1 : frame));

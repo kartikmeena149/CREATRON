@@ -85,9 +85,9 @@ ipcMain.handle(
   "import-video",
   safe(async (path: string) => {
     const analysis = await analyze(path, (m) => status(m.replace(/^analyze: /, "")));
-    if (!analysis.width) throw new Error("This file has sound but no picture. Use Auto Edit to make a video from it.");
     status("building timeline");
-    const thumbs = await thumbnails(analysis);
+    // A voice recording (faceless video) has no picture to make thumbnails from.
+    const thumbs = analysis.width ? await thumbnails(analysis) : { url: "", cols: 1, frameW: 0, frameH: 0, interval: 1, count: 0 };
     status("");
     return { analysis, videoUrl: mediaUrl(analysis.source), thumbs, wave: waveform(analysis) };
   }),

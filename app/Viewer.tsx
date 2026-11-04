@@ -4,7 +4,7 @@
 // and voice tweaks run through Web Audio.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionOverlay } from "./CaptionOverlay.tsx";
-import { placement } from "../src/frame.ts";
+import { pictureSize, placement } from "../src/frame.ts";
 import { buildCues, outputDuration } from "../src/timeline.ts";
 import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
@@ -22,7 +22,7 @@ export function Viewer() {
 
   const ratio = useMemo(() => {
     if (!a) return 16 / 9;
-    if (plan.aspect === "source") return a.width / a.height;
+    if (plan.aspect === "source") return pictureSize(a).width / pictureSize(a).height;
     const [w, h] = plan.aspect.split(":").map(Number);
     return w / h;
   }, [a, plan.aspect]);
@@ -48,6 +48,7 @@ export function Viewer() {
   useEffect(() => {
     const v = video.current;
     if (!v || !playing) return;
+    if (!plan.segments.length) return setPlaying(false);
     let raf = 0;
     let i = locate(plan, useEditor.getState().time).index;
     const start = () => {
@@ -98,7 +99,7 @@ export function Viewer() {
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
-  const place = placement(plan, a?.width ?? 16, a?.height ?? 9, frameSize.w, frameSize.h);
+  const place = placement(plan, a ? pictureSize(a).width : 16, a ? pictureSize(a).height : 9, frameSize.w, frameSize.h);
 
   // Drag the picture to move it, like in a phone editor. One undo step per drag.
   const [dragging, setDragging] = useState(false);
@@ -248,7 +249,13 @@ function useVoiceoverPlayback(voiceovers: Voiceover[], time: number, playing: bo
         a.preload = "auto";
         map.set(v.id, a);
       }
-      a.volume = Math.min(1, 10 ** (v.volumeDb / 20));
+      // Fades ramp the level like the export's afade.
+      const into = time - v.at;
+      const half = v.duration / 2;
+      const fin = Math.min(v.fadeIn ?? 0, half);
+      const fout = Math.min(v.fadeOut ?? 0, half);
+      const ramp = Math.max(0, Math.min(1, fin > 0 ? into / fin : 1, fout > 0 ? (v.duration - into) / fout : 1));
+      a.volume = Math.min(1, 10 ** (v.volumeDb / 20)) * ramp;
       const inside = playing && time >= v.at && time < v.at + v.duration;
       const want = v.offset + (time - v.at);
       if (!inside) {
@@ -269,6 +276,8 @@ function BrollLayer({ broll, time, playing }: { broll: Broll[]; time: number; pl
     for (const b of broll) {
       const v = refs.current.get(b.id);
       if (!v) continue;
+      // Its own sound plays unless muted (the plan given here already says which, track mute included).
+      v.muted = b.muted !== false;
       const active = time >= b.at && time < b.at + b.duration;
       const want = b.offset + (time - b.at);
       if (!active) {

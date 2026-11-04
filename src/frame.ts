@@ -30,11 +30,19 @@ export function placement(plan: EditPlan, srcW: number, srcH: number, outW: numb
 
 export const isIdentity = (t: EditPlan["transform"]) => t.scale === 1 && t.x === 0 && t.y === 0 && t.rotate === 0;
 
+/**
+ * The main source's picture size. A voice recording has none (faceless videos): it plays over
+ * a black 1080x1920 picture that B-roll, text and captions go on.
+ */
+export const pictureSize = (a: Pick<Analysis, "width" | "height">) =>
+  a.width && a.height ? { width: a.width, height: a.height } : { width: 1080, height: 1920 };
+
 /** Output frame size for an aspect, capped so the long side is at most 1920. */
-export function outputSize(plan: EditPlan, a: Pick<Analysis, "width" | "height">): { width: number; height: number } {
+export function outputSize(plan: EditPlan, source: Pick<Analysis, "width" | "height">): { width: number; height: number } {
   if (plan.aspect === "9:16") return { width: 1080, height: 1920 };
   if (plan.aspect === "1:1") return { width: 1080, height: 1080 };
   if (plan.aspect === "16:9") return { width: 1920, height: 1080 };
+  const a = pictureSize(source);
   const scale = Math.min(1, 1920 / Math.max(a.width, a.height));
   return { width: even(a.width * scale), height: even(a.height * scale) };
 }
