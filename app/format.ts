@@ -12,5 +12,8 @@ export function shortTime(t: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Music and sound-effect files (everything else in the library is video). */
+export const isAudio = (path: string) => /\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
+
 /** URL the app's media:// handler serves a local file at (same as electron/media.ts). */
 export const mediaUrl = (path: string) => `media://local/?p=${encodeURIComponent(path)}`;

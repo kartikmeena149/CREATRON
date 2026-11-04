@@ -1,5 +1,10 @@
 import type { Analysis, EditPlan } from "../src/schema.ts";
+import type { AutoEditEvent, AutoEditResult as Result_ } from "../src/autoedit.ts";
 import type { LinkInfo } from "../src/webvideo.ts";
+
+export type AutoEditResult = Result_ & { url: string };
+/** The Auto Edit job the app is running or last ran (kept by the main process). */
+export type AutoJob = { running: boolean; fixing: boolean; video: string; model: string; log: AutoEditEvent[]; progress?: AutoEditEvent; result?: AutoEditResult; error?: string };
 import type { Thumbs, Wave } from "./store.ts";
 
 export type ModelInfo = { id: string; name: string; free: boolean; inPerM: number; outPerM: number };
@@ -11,6 +16,7 @@ declare global {
   interface Window {
     creatron: {
       pickVideo(): Promise<string | undefined>;
+      pickLibrary(): Promise<string[]>;
       importVideo(path: string): Promise<Result<{ analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave }>>;
       aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string; markers?: { n: number; time: number; x: number; y: number; context: string }[] }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
       linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
@@ -20,6 +26,13 @@ declare global {
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;
       reveal(path: string): Promise<void>;
+      pickMedia(kind: "video" | "any"): Promise<string | undefined>;
+      autoEditStart(opts: { video: string; brief: string; reference?: string; model: string }): Promise<Result<void>>;
+      autoEditFix(opts: { video: string; session: string; model: string; message: string; markers: { n: number; time: number; x: number; y: number }[] }): Promise<Result<void>>;
+      autoEditState(): Promise<AutoJob | undefined>;
+      onAutoEditState(fn: (job: AutoJob) => void): () => void;
+      autoEditCancel(): Promise<void>;
+      onAutoEdit(fn: (e: AutoEditEvent) => void): () => void;
       voices(): Promise<Result<VoiceInfo[]>>;
       pickAudio(): Promise<string | undefined>;
       cloneVoice(opts: { source: string; start: number; duration: number; name: string; consent: boolean }): Promise<Result<VoiceInfo>>;

@@ -7,6 +7,7 @@ import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPla
 import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
+export type LeftView = "media" | "clip" | "text" | "captions" | "audio";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
 
@@ -54,6 +55,11 @@ type State = {
   /** Selected caption (index into captionsOf), and which right-panel tab shows. */
   selectedCue: number | null;
   rightTab: "ai" | "captions" | "voice";
+  /** Videos in this project's library (the main video and any added for B-roll), by path. */
+  library: string[];
+  addToLibrary(path: string): void;
+  /** Which page the left panel shows (null: panel hidden). */
+  leftView: LeftView | null;
   selectCue(i: number | null): void;
   /** Change caption style/position (not the captions themselves). */
   setCaptionStyle(patch: Partial<EditPlan["captions"]>, record?: boolean): void;
@@ -70,7 +76,7 @@ type State = {
   selectBroll(id: string | null): void;
   updateBroll(id: string, patch: Partial<Broll>, record?: boolean): void;
   /** Puts a downloaded clip on V2 at `at` (default: the playhead), up to 5 s or what's left of the video. */
-  addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number }): void;
+  addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number; track?: number }): void;
   deleteBroll(id: string): void;
   /** Spots pointed at on the video, sent with the next AI request. */
   markers: { n: number; time: number; x: number; y: number }[];
@@ -82,14 +88,15 @@ type State = {
   selectedMotion: string | null;
   selectMotion(id: string | null): void;
   /** New text item at the playhead, 3 s long. */
-  addMotion(template: Motion["template"]): void;
+  addMotion(template: Motion["template"], track?: number): void;
   updateMotion(id: string, patch: Partial<Motion>, record?: boolean): void;
   deleteMotion(id: string): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
   selectVo(id: string | null): void;
   /** Drops a generated voiceover onto A2 at the playhead. */
-  addVoiceover(v: { file: string; duration: number; text: string; voice: string }): void;
+  /** An audio clip: a generated voiceover, or music / a sound effect from the library. */
+  addVoiceover(v: { file: string; duration: number; text: string; voice: string; kind?: Voiceover["kind"]; track?: number; at?: number; volumeDb?: number }): void;
   updateVoiceover(id: string, patch: Partial<Voiceover>, record?: boolean): void;
   deleteVoiceover(id: string): void;
 
@@ -108,6 +115,7 @@ const placeholder: EditPlan = {
   broll: [],
   motion: [],
   notes: "",
+  tracks: { count: {}, settings: {} },
 };
 
 /** Which segment the output time t falls in, and how far into the output that segment starts. */
@@ -136,7 +144,7 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set({ project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false }),
+    set((s) => ({ library: s.library.includes(project.path) ? s.library : [project.path, ...s.library], project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false })),
   commit: (plan) => set((s) => ({ plan, past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
   live: (plan) => set({ plan }),
@@ -192,6 +200,9 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedCue: null,
   rightTab: "ai",
+  leftView: "media",
+  library: [],
+  addToLibrary: (path) => set((s) => (s.library.includes(path) ? s : { library: [...s.library, path] })),
   selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
 
   setCaptionStyle: (patch, record = true) => {
@@ -244,9 +255,11 @@ export const useEditor = create<State>((set, get) => ({
   addBroll: (b) => {
     const { plan, time } = get();
     const at = Math.max(0, Math.min(b.at ?? time, outputDuration(plan) - 0.5));
-    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, 15, outputDuration(plan) - at));
+    // AI picks are kept short; a video dragged in from the library keeps its full length.
+    const cap = b.source.startsWith("library:") ? Infinity : 15;
+    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, cap, outputDuration(plan) - at));
     const id = `b${Math.random().toString(36).slice(2, 10)}`;
-    const clip: Broll = { id, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
+    const clip: Broll = { id, track: b.track ?? 2, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
     get().commit({ ...plan, broll: [...plan.broll, clip] });
     set({ selectedBroll: id, selected: null, picked: [], selectedCue: null, selectedVo: null });
   },
@@ -264,13 +277,13 @@ export const useEditor = create<State>((set, get) => ({
   selectedMotion: null,
   selectMotion: (selectedMotion) =>
     set(selectedMotion === null ? { selectedMotion } : { selectedMotion, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
-  addMotion: (template) => {
+  addMotion: (template, track = 1) => {
     const { plan, time } = get();
     const total = outputDuration(plan);
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
     const at = Math.max(0, Math.min(time, total - 0.5));
     const item: Motion = {
-      id, template, props: {}, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
+      id, track, template, props: {}, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
       text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
     };
     get().commit({ ...plan, motion: [...plan.motion, item] });
@@ -293,7 +306,13 @@ export const useEditor = create<State>((set, get) => ({
   addVoiceover: (v) => {
     const { plan, time } = get();
     const id = Math.random().toString(36).slice(2, 10);
-    const vo: Voiceover = { id, file: v.file, text: v.text, voice: v.voice, at: Math.max(0, time), offset: 0, duration: v.duration, length: v.duration, volumeDb: 0 };
+    const at = Math.max(0, v.at ?? time);
+    // Music and sound effects stop at the end of the video; voiceovers keep their full length.
+    const duration = v.kind && v.kind !== "voice" ? Math.max(0.2, Math.min(v.duration, outputDuration(plan) - at)) : v.duration;
+    const vo: Voiceover = {
+      id, kind: v.kind ?? "voice", track: v.track ?? 1, file: v.file, text: v.text, voice: v.voice,
+      at, offset: 0, duration, length: v.duration, volumeDb: v.volumeDb ?? 0,
+    };
     get().commit({ ...plan, voiceovers: [...plan.voiceovers, vo] });
     set({ selectedVo: id, selected: null, picked: [], selectedCue: null });
   },

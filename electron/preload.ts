@@ -9,6 +9,7 @@ const on = (channel: string) => (fn: (value: any) => void) => {
 
 const api = {
   pickVideo: (): Promise<string | undefined> => ipcRenderer.invoke("pick-video"),
+  pickLibrary: (): Promise<string[]> => ipcRenderer.invoke("pick-library"),
   importVideo: (path: string) => ipcRenderer.invoke("import-video", path),
   aiEdit: (path: string, request: string, current: unknown, model?: string, focus?: unknown) =>
     ipcRenderer.invoke("ai-edit", path, request, current, model, focus),
@@ -18,6 +19,13 @@ const api = {
   linkDownload: (opts: unknown) => ipcRenderer.invoke("link-download", opts),
   onLinkProgress: on("link-progress"),
   exportVideo: (path: string, plan: unknown) => ipcRenderer.invoke("export", path, plan),
+  pickMedia: (kind: "video" | "any"): Promise<string | undefined> => ipcRenderer.invoke("pick-media", kind),
+  autoEditStart: (opts: { video: string; brief: string; reference?: string; model: string }) => ipcRenderer.invoke("autoedit-start", opts),
+  autoEditFix: (opts: { video: string; session: string; model: string; message: string; markers: unknown[] }) => ipcRenderer.invoke("autoedit-fix", opts),
+  autoEditCancel: () => ipcRenderer.invoke("autoedit-cancel"),
+  onAutoEdit: on("autoedit-event"),
+  autoEditState: () => ipcRenderer.invoke("autoedit-state"),
+  onAutoEditState: on("autoedit-state"),
   reveal: (path: string) => ipcRenderer.invoke("reveal", path),
   voices: () => ipcRenderer.invoke("voices"),
   pickAudio: (): Promise<string | undefined> => ipcRenderer.invoke("pick-audio"),

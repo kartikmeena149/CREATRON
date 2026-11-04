@@ -1,36 +1,57 @@
 // Left panel: hands-on controls for the selected clip, the frame, captions and the voice.
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
+import { useEffect, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
-import { timecode } from "./format.ts";
+import { isAudio, mediaUrl, shortTime, timecode } from "./format.ts";
+import { Icon } from "./icons.tsx";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
 import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
-export function Inspector() {
-  const { project, plan, selected, commit, checkpoint, live, updateSegment } = useEditor();
-  if (!project) return <aside className="panel inspector" />;
-  const a = project.analysis;
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text" };
+
+export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+  const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
+
+  // Selecting something on the timeline opens the page that edits it.
+  useEffect(() => void (selected !== null && set({ leftView: "clip" })), [selected]);
+  useEffect(() => void (selectedCue !== null && set({ leftView: "captions" })), [selectedCue]);
+  useEffect(() => void (selectedMotion !== null && set({ leftView: "text" })), [selectedMotion]);
+
+  if (!view) return null;
+  const head = (
+    <header className="side-head">
+      <h2>{TITLES[view]}</h2>
+      <button className="icon-btn" title="Hide panel" onClick={() => set({ leftView: null })}><Icon name="panel" /></button>
+    </header>
+  );
+  if (view === "media") return (
+    <aside className="panel inspector">
+      {head}
+      <Library onAdd={onOpen} onLink={onLink} onOpenMain={onOpenMain} />
+    </aside>
+  );
+  if (!project) return <aside className="panel inspector">{head}<p className="hint pad">Import a video first.</p></aside>;
+
   const seg = selected !== null ? plan.segments[selected] : undefined;
   const setPlan = (patch: Partial<EditPlan>) => commit({ ...plan, ...patch });
   const liveAudio = (patch: Partial<EditPlan["audio"]>) => live({ ...plan, audio: { ...plan.audio, ...patch } });
 
-
   return (
     <aside className="panel inspector">
-      <section>
-        <h3>Media</h3>
-        <div className="file-name" title={a.source}>{a.source.split("/").pop()}</div>
-        <div className="meta">
-          <span>{a.width}×{a.height}</span>
-          <span>{a.fps} fps</span>
-          <span>{timecode(a.duration)}</span>
-          <span>{a.words.length} words</span>
-        </div>
-      </section>
+      {head}
+      {view === "text" && <>
+        <MotionEditor />
+        {!plan.motion.find((m) => m.id === selectedMotion) && (
+          <section>
+            <p className="hint">Animated titles sit on the Text track. Add one at the playhead, or ask the AI for "a title at the start".</p>
+            <button className="wide-btn" onClick={() => useEditor.getState().addMotion("title")}>＋ Add title</button>
+          </section>
+        )}
+      </>}
 
-      <MotionEditor />
-
+      {view === "clip" && <>
       <section>
         <h3>Clip {seg ? selected! + 1 : ""}</h3>
         {seg ? (
@@ -61,9 +82,11 @@ export function Inspector() {
       </section>
 
       <PositionSize />
+      </>}
 
-      <CaptionStyle />
+      {view === "captions" && <CaptionStyle />}
 
+      {view === "audio" && (
       <section>
         <h3>Voice</h3>
         <Row label="Clean up noise" hint="removes hiss and hum">
@@ -80,9 +103,72 @@ export function Inspector() {
         )}
         {plan.audio.denoise && <p className="hint">Noise cleanup is applied in full on export.</p>}
       </section>
+      )}
     </aside>
   );
 }
+
+/** MIME type for a library video being dragged onto the timeline. */
+export const MEDIA_DRAG = "application/x-creatron-media";
+
+function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+  const library = useEditor((s) => s.library);
+  const [query, setQuery] = useState("");
+  const shown = library.filter((p) => baseName(p).toLowerCase().includes(query.trim().toLowerCase()));
+  return (
+    <>
+      <div className="lib-actions">
+        <label className="lib-search">
+          <Icon name="search" size={14} />
+          <input value={query} placeholder="Search project media…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        </label>
+        <button className="lib-add" onClick={onAdd}><Icon name="plus" size={14} /> Add</button>
+        <button className="lib-add icon" onClick={onLink} title="Import from link"><Icon name="link" size={14} /></button>
+      </div>
+      {!library.length && <p className="hint pad">Add a video, or drop one anywhere in the window.</p>}
+      {library.length > 0 && !shown.length && <p className="hint pad">No media matches “{query}”.</p>}
+      <div className="media-grid">
+        {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
+      </div>
+      {library.length > 0 && <p className="hint pad">Drag videos, music or sound effects onto any track. Double-click a video to edit it as the main video.</p>}
+    </>
+  );
+}
+
+function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: string) => void }) {
+  const main = useEditor((s) => s.project?.path === path);
+  const mainUrl = useEditor((s) => s.project?.videoUrl);
+  const [length, setLength] = useState<number>();
+  const audio = isAudio(path);
+  return (
+    <div
+      className={`media-card ${main ? "main" : ""} ${audio ? "audio" : ""}`}
+      title={path}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(MEDIA_DRAG, JSON.stringify({ path, length, audio }));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      onDoubleClick={() => !main && !audio && onOpenMain(path)}
+    >
+      <div className="media-thumb">
+        {audio ? (
+          <>
+            <div className="audio-tile"><Icon name="music" size={28} /></div>
+            <audio src={mediaUrl(path)} preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
+          </>
+        ) : (
+          <video src={`${main ? mainUrl : mediaUrl(path)}#t=1`} muted preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
+        )}
+        {length !== undefined && <span className="pill left">{shortTime(length)}</span>}
+        {main && <span className="pill right">Main</span>}
+      </div>
+      <div className="media-name"><Icon name="play" size={10} fill /> <span>{baseName(path)}</span></div>
+    </div>
+  );
+}
+
+const baseName = (p: string) => p.split("/").pop() ?? p;
 
 function Slider(p: {
   label: string; min: number; max: number; step: number; value: number; unit?: string;

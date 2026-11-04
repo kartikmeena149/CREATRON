@@ -11,6 +11,7 @@ import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudn
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
+import { effectivePlan } from "./tracks.ts";
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
@@ -21,6 +22,8 @@ export async function render(
   log = console.error,
   onProgress?: (fraction: number) => void,
 ): Promise<string> {
+  // Hidden and muted tracks stay out of the video; higher video tracks go on top.
+  plan = effectivePlan(plan);
   const problems = checkPlan(plan, analysis);
   if (problems.length) throw new Error(`edit plan does not fit this video:\n- ${problems.join("\n- ")}`);
 

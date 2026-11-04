@@ -10,9 +10,10 @@ import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
 import { mediaUrl, timecode } from "./format.ts";
 import type { Broll, Voiceover } from "../src/schema.ts";
+import { effectivePlan, trackSetting } from "../src/tracks.ts";
 
 export function Viewer() {
-  const { project, plan, time, playing, seek, setPlaying, markers, pointing } = useEditor();
+  const { project, plan, time, playing, seek, setPlaying, markers, pointing, busy, status } = useEditor();
   const video = useRef<HTMLVideoElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
@@ -86,12 +87,14 @@ export function Viewer() {
     // Restart the loop when the edit changes mid-play so it follows the new cuts.
   }, [playing, plan]);
 
-  // While a voiceover plays, dip the original like the export does.
-  const underVoiceover = plan.voiceovers.some((v) => time >= v.at && time < v.at + v.duration);
-  // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted).
-  const clipVolume = seg?.volume ?? 1;
+  // What plays: hidden and muted tracks left out, like the export.
+  const shown = useMemo(() => effectivePlan(plan), [plan]);
+  // While a voiceover plays, dip the original like the export does (music and SFX don't).
+  const underVoiceover = shown.voiceovers.some((v) => (v.kind ?? "voice") === "voice" && time >= v.at && time < v.at + v.duration);
+  // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted), and Track 1 can be muted.
+  const clipVolume = trackSetting(plan, "video:1").muted ? 0 : (seg?.volume ?? 1);
   useVoicePreview(video, plan.audio, (underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1) * clipVolume);
-  useVoiceoverPlayback(plan.voiceovers, time, playing);
+  useVoiceoverPlayback(shown.voiceovers, time, playing);
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
@@ -162,7 +165,7 @@ export function Viewer() {
               style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
             />
           </div>
-          <BrollLayer broll={plan.broll} time={time} playing={playing} />
+          <BrollLayer broll={shown.broll} time={time} playing={playing} />
           {/* Animated captions are drawn by the Remotion layer instead of the editable plain caption. */}
           {cue && frameSize.w > 0 && plan.captions.animation === "none" && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
           <MotionPreview />
@@ -174,6 +177,10 @@ export function Viewer() {
                 {m.n}
               </div>
             ))}
+          {busy && (
+            <div className="stage-status"><span className="mini-spin" /> {status || "Thinking"}</div>
+          )}
+          {pointing && <div className="stage-status point">Click the video to drop a marker for the AI</div>}
           {pointing && (
             <div
               className="point-catcher"
@@ -187,24 +194,6 @@ export function Viewer() {
             />
           )}
         </div>
-      </div>
-      <div className="transport">
-        <span className="tc">{timecode(time)}</span>
-        <button
-          className={`point-btn ${pointing ? "on" : ""}`}
-          title="Point at a problem: click on the video to drop a marker (at this moment and spot) for the AI"
-          onClick={() => useEditor.getState().set({ pointing: !pointing })}
-        >
-          📍 {pointing ? "Click the video… (done)" : "Point"}
-        </button>
-        <div className="transport-buttons">
-          <button className="icon" title="Back to start" onClick={() => seek(0)}>⏮</button>
-          <button className="icon play" title="Play / pause (Space)" onClick={() => setPlaying(!playing)}>
-            {playing ? "❚❚" : "▶"}
-          </button>
-          <button className="icon" title="Go to end" onClick={() => seek(total)}>⏭</button>
-        </div>
-        <span className="tc dim">{timecode(total)}</span>
       </div>
     </div>
   );

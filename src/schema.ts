@@ -31,9 +31,14 @@ export const Caption = z.object({
 });
 export type Caption = z.infer<typeof Caption>;
 
-/** A generated voiceover clip on the A2 track. at/duration are output seconds; offset is seconds into the file. */
+/**
+ * An audio clip on an audio track: a generated voiceover, music or a sound effect.
+ * at/duration are output seconds; offset is seconds into the file.
+ */
 export const Voiceover = z.object({
   id: z.string(),
+  kind: z.enum(["voice", "music", "sfx"]).default("voice").describe("voice dips the original audio while it plays; music and sfx don't"),
+  track: z.number().int().min(1).default(1).describe("Which Voiceover / Music / SFX track (1, 2, 3…) it sits on"),
   file: z.string(),
   text: z.string().default(""),
   voice: z.string().default(""),
@@ -52,6 +57,7 @@ export type Voiceover = z.infer<typeof Voiceover>;
  */
 export const Broll = z.object({
   id: z.string().default(""),
+  track: z.number().int().min(2).default(2).describe("Video track it sits on: 2, 3… (1 is the main video). Higher tracks show on top"),
   source: z.string().describe('Clip id from search_broll or search_web_video, e.g. "pixabay:123456" or "web:youtube:abc123"'),
   atSource: z
     .number()
@@ -59,7 +65,7 @@ export const Broll = z.object({
     .optional()
     .describe("Transcript second where the B-roll should start (use this; the app converts it to the timeline)"),
   at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
-  duration: z.number().min(0.5).max(15).describe("How long it shows, seconds (2-5 is typical)"),
+  duration: z.number().min(0.5).max(3600).describe("How long it shows, seconds (2-5 is typical for B-roll)"),
   offset: z.number().min(0).default(0),
   file: z.string().optional(),
   length: z.number().positive().optional(),
@@ -74,6 +80,7 @@ export type Broll = z.infer<typeof Broll>;
  */
 export const Motion = z.object({
   id: z.string().default(""),
+  track: z.number().int().min(1).default(1).describe("Text track it sits on: 1, 2… Higher tracks draw on top"),
   template: z
     .enum(["title", "lower-third", "custom"])
     .describe("title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom; custom = an animation written for this project (component)"),
@@ -159,7 +166,16 @@ export const EditPlan = z.object({
   // Generated speech placed on the A2 track. Timed on the OUTPUT clock: it sits where you put it.
   voiceovers: z.array(Voiceover).default([]),
   broll: z.array(Broll).default([]).describe("Clips over the main video. Only ids returned by search_broll or search_web_video."),
-  motion: z.array(Motion).default([]).describe("Animated titles and lower thirds on the M1 track"),
+  motion: z.array(Motion).default([]).describe("Animated titles and lower thirds on the Text tracks"),
+  // How the timeline's tracks are set up: how many of each kind, and each track's name / mute / hide.
+  // Keys: "video:1" (the main video), "video:2"…, "text:1"…, "voice:1"…, "music:1"…, "sfx:1"…, "captions".
+  tracks: z
+    .object({
+      count: z.object({ video: z.number().int().min(1), text: z.number().int().min(1), voice: z.number().int().min(1), music: z.number().int().min(1), sfx: z.number().int().min(1) }).partial().default({}),
+      settings: z.record(z.string(), z.object({ name: z.string().optional(), muted: z.boolean().optional(), hidden: z.boolean().optional() })).default({}),
+    })
+    .default({ count: {}, settings: {} })
+    .describe("Track layout set by the user in the timeline. Keep it as it is."),
   notes: z.string().default("").describe("One or two sentences telling the user what you did and why"),
 });
 

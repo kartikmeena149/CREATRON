@@ -43,9 +43,9 @@ export function voiceFilter(plan: EditPlan): string {
 /** Voiceovers that will actually play (their file still exists). */
 export const activeVoiceovers = (plan: EditPlan) => plan.voiceovers.filter((v) => existsSync(v.file));
 
-/** ffmpeg volume expression that dips to duckDb while any voiceover plays, with short ramps. */
+/** ffmpeg volume expression that dips to duckDb while any voiceover plays (not music or SFX), with short ramps. */
 function duckExpression(plan: EditPlan): string {
-  const vos = activeVoiceovers(plan);
+  const vos = activeVoiceovers(plan).filter((v) => (v.kind ?? "voice") === "voice");
   if (!vos.length || plan.audio.duckDb >= 0) return "";
   const r = DUCK_RAMP;
   const windows = vos.map(

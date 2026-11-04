@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { runAgent } from "../src/agent.ts";
 import { analyze } from "../src/analyze.ts";
+import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
 import { type Focus, makePlan } from "../src/plan.ts";
@@ -71,10 +72,20 @@ ipcMain.handle("pick-video", async () => {
   return r.canceled ? undefined : r.filePaths[0];
 });
 
+// Library: videos, music and sound effects, several at once.
+ipcMain.handle("pick-library", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "m4v", "mkv", "webm", "mp3", "wav", "m4a", "aac", "flac", "ogg"] }],
+  });
+  return r.canceled ? [] : r.filePaths;
+});
+
 ipcMain.handle(
   "import-video",
   safe(async (path: string) => {
     const analysis = await analyze(path, (m) => status(m.replace(/^analyze: /, "")));
+    if (!analysis.width) throw new Error("This file has sound but no picture. Use Auto Edit to make a video from it.");
     status("building timeline");
     const thumbs = await thumbnails(analysis);
     status("");
@@ -175,6 +186,55 @@ ipcMain.handle(
     return out;
   }),
 );
+
+// ---- Auto Edit: Claude Code makes the whole video (src/autoedit.ts) ----
+// The job lives here, not in the window: the view can close or reload and pick it up again.
+type AutoJob = { running: boolean; fixing: boolean; video: string; model: string; log: AutoEditEvent[]; progress?: AutoEditEvent; result?: unknown; error?: string };
+let autoJob: AutoJob | undefined;
+const autoEvent = (e: AutoEditEvent) => {
+  if (autoJob) e.type === "progress" ? (autoJob.progress = e) : (autoJob.log = [...autoJob.log.slice(-300), e]);
+  win.webContents.send("autoedit-event", e);
+};
+const withUrl = <T extends { final: string }>(r: T) => ({ ...r, url: `${mediaUrl(r.final)}&v=${Date.now()}` });
+async function runAutoJob(job: Omit<AutoJob, "running" | "log">, work: () => Promise<{ final: string }>) {
+  if (autoJob?.running) throw new Error("An Auto Edit is already running.");
+  autoJob = { ...job, result: job.fixing ? autoJob?.result : undefined, running: true, log: [], error: undefined };
+  win.webContents.send("autoedit-state", autoJob);
+  try {
+    autoJob.result = withUrl(await work());
+  } catch (e) {
+    autoJob.error = e instanceof Error ? e.message : String(e);
+  }
+  autoJob.running = false;
+  autoJob.progress = undefined;
+  win.webContents.send("autoedit-state", autoJob);
+}
+
+ipcMain.handle("autoedit-state", () => autoJob);
+ipcMain.handle(
+  "autoedit-start",
+  safe(async (opts: { video: string; brief: string; reference?: string; model: string }) => {
+    void runAutoJob({ fixing: false, video: opts.video, model: opts.model }, () => autoEdit(opts, autoEvent));
+  }),
+);
+ipcMain.handle(
+  "autoedit-fix",
+  safe(async (opts: { video: string; session: string; model: string; message: string; markers: AutoEditMarker[] }) => {
+    void runAutoJob({ fixing: true, video: opts.video, model: opts.model }, () =>
+      autoEditFix(opts.video, opts.session, opts.model, opts.message, opts.markers, autoEvent),
+    );
+  }),
+);
+ipcMain.handle("autoedit-cancel", () => cancelAutoEdit());
+ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
+  // Automated tests can't click the open dialog either.
+  if (process.argv.includes("--creatron-debug") && process.env.CREATRON_PICK_PATH) return process.env.CREATRON_PICK_PATH;
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile"],
+    filters: [{ name: kind === "video" ? "Video" : "Video or audio", extensions: ["mp4", "mov", "m4v", "mkv", "webm", ...(kind === "any" ? ["wav", "mp3", "m4a", "aac", "flac"] : [])] }],
+  });
+  return r.canceled ? undefined : r.filePaths[0];
+});
 
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
 

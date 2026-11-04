@@ -8,6 +8,7 @@ import { CaptionList } from "./CaptionList.tsx";
 import { VoiceLab } from "./VoiceLab.tsx";
 import { markerContext } from "./markers.ts";
 import type { ModelInfo } from "./env.d.ts";
+import { Icon } from "./icons.tsx";
 import { useEditor } from "./store.ts";
 
 type Quick = { label: string; run: (plan: EditPlan) => EditPlan; says: string };
@@ -102,7 +103,7 @@ export function AIPanel() {
       <div className="ai-head">
         <div className="tabs">
           <button className={rightTab === "ai" ? "on" : ""} onClick={() => set({ rightTab: "ai" })}>
-            <span className="spark">✦</span> Creatron AI
+            {messages.length ? "Video edit" : "Creatron AI"}
           </button>
           <button className={rightTab === "captions" ? "on" : ""} onClick={() => set({ rightTab: "captions" })}>
             Captions
@@ -111,13 +112,16 @@ export function AIPanel() {
             Voice
           </button>
         </div>
-        {rightTab === "ai" && <ModelPicker value={model} onChange={setModel} />}
+        <button className="icon-btn" title="Clear the chat (your edits stay)" disabled={!messages.length || busy} onClick={() => set({ messages: [] })}>
+          <Icon name="plus" />
+        </button>
       </div>
 
       {rightTab === "voice" ? <VoiceLab /> : rightTab === "captions" ? <CaptionList /> : <>
       <div className="ai-messages" ref={list}>
         {!messages.length && (
           <div className="ai-empty">
+            <div className="ai-empty-icon"><Icon name="sparkle" size={22} /></div>
             <p>Tell me how to edit this video.</p>
             <p className="dim">"Cut the boring parts and keep it under 45 seconds"</p>
             <p className="dim">"Make a reel, zoom in when I make a point"</p>
@@ -138,7 +142,7 @@ export function AIPanel() {
             )}
           </div>
         ))}
-        {busy && <div className="msg assistant"><div className="bubble thinking">{status || "Thinking"}…</div></div>}
+        {busy && <div className="msg assistant"><div className="bubble thinking"><span className="mini-spin" /> {status || "Thinking"}…</div></div>}
       </div>
 
       <div className="ai-quick">
@@ -148,6 +152,7 @@ export function AIPanel() {
       </div>
 
       <div className="ai-input">
+        <div className="ai-box">
         {markers.length > 0 && (
           <div className="ai-markers">
             {markers.map((m) => (
@@ -167,7 +172,7 @@ export function AIPanel() {
         <textarea
           value={text}
           disabled={!project}
-          placeholder={!project ? "Import a video first" : target ? `What should I do with ${target}?` : "Describe an edit… (pick clips on the timeline to edit just those)"}
+          placeholder={!project ? "Import a video first" : target ? `What should I do with ${target}?` : "Describe the edit…"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -176,7 +181,14 @@ export function AIPanel() {
             }
           }}
         />
-        <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">↑</button>
+        <div className="ai-box-foot">
+          <ModelPicker value={model} onChange={setModel} />
+          {busy && <span className="mini-spin" />}
+          <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">
+            <Icon name="arrowUp" size={16} />
+          </button>
+        </div>
+        </div>
       </div>
       </>}
     </aside>
