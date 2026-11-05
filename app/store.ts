@@ -3,10 +3,13 @@
 // Every change goes through history so anything (including an AI edit) can be undone.
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
-import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
-import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
+import { type Analysis, type Broll, type Caption, type CaptionLook, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
+import { captionLook, captionsOf, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
+import { compactTracks, freeTrack, userClip } from "../src/tracks.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
+export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number };
+export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
 
@@ -23,6 +26,14 @@ type State = {
   selected: number | null;
   /** Clips picked for the AI (⇧/⌘-click adds more); the request then changes only these. */
   picked: number[];
+  /** B-roll, text and audio clips in a multi-selection (box-select or ⇧-click), by id. */
+  pickedIds: string[];
+  /** Selects exactly these clips (main-track indices and clip ids); one clip is a normal selection. */
+  setSelection(segments: number[], ids: string[]): void;
+  /** ⇧-click: adds a clip to the selection or takes it out. */
+  toggleInSelection(ref: { segment: number } | { id: string }): void;
+  /** Deletes everything selected, one undo step. */
+  deleteSelection(): void;
   time: number; // playhead, seconds on the OUTPUT timeline
   playing: boolean;
   pxPerSec: number;
@@ -53,13 +64,31 @@ type State = {
 
   /** Selected caption (index into captionsOf), and which right-panel tab shows. */
   selectedCue: number | null;
-  rightTab: "ai" | "captions" | "voice";
+  /** Videos in this project's library (the main video and any added for B-roll), by path. */
+  library: string[];
+  addToLibrary(path: string): void;
+  /** Voiceovers made in the Voice page for this project, newest first. */
+  voiceTakes: VoiceTake[];
+  /** What's typed in the Voice page, kept while you switch pages or tabs. */
+  voiceDraft: { text: string; speed: number; voiceId: string };
+  /** Which page the left panel shows (null: panel hidden). */
+  leftView: LeftView | null;
   selectCue(i: number | null): void;
   /** Change caption style/position (not the captions themselves). */
   setCaptionStyle(patch: Partial<EditPlan["captions"]>, record?: boolean): void;
   /** Change one caption. The first edit turns auto captions into the user's own list. */
   editCaption(i: number, patch: Partial<Caption>, record?: boolean): void;
   deleteCaption(i: number): void;
+  /** Changes how one caption looks (font, size, colour, B/I/U/S, outline, behind the person). */
+  setCaptionLook(i: number, patch: CaptionLook, record?: boolean): void;
+  /** Gives every caption the look of caption i. */
+  applyLookToAll(i: number): void;
+  /** The person cut out of the main video (see-through), for "behind me" captions in the preview. */
+  cutoutUrl: string | null;
+  /** What's happening while the cutout is made ("finding you in the video"), or "" when idle. */
+  cutoutStatus: string;
+  /** Makes the cutout for the main video if it doesn't exist yet. */
+  prepareCutout(): Promise<void>;
   /** New caption at the playhead, 2 s long (cut short if the clip ends sooner). */
   addCaption(): void;
   /** Throw away caption edits and follow the transcript again. */
@@ -70,7 +99,7 @@ type State = {
   selectBroll(id: string | null): void;
   updateBroll(id: string, patch: Partial<Broll>, record?: boolean): void;
   /** Puts a downloaded clip on V2 at `at` (default: the playhead), up to 5 s or what's left of the video. */
-  addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number }): void;
+  addBroll(b: { file: string; length: number; source: string; query?: string; credit?: string; at?: number; duration?: number; track?: number }): void;
   deleteBroll(id: string): void;
   /** Spots pointed at on the video, sent with the next AI request. */
   markers: { n: number; time: number; x: number; y: number }[];
@@ -82,14 +111,15 @@ type State = {
   selectedMotion: string | null;
   selectMotion(id: string | null): void;
   /** New text item at the playhead, 3 s long. */
-  addMotion(template: Motion["template"]): void;
+  addMotion(template: Motion["template"], track?: number): void;
   updateMotion(id: string, patch: Partial<Motion>, record?: boolean): void;
   deleteMotion(id: string): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
   selectVo(id: string | null): void;
   /** Drops a generated voiceover onto A2 at the playhead. */
-  addVoiceover(v: { file: string; duration: number; text: string; voice: string }): void;
+  /** An audio clip: a generated voiceover, or music / a sound effect from the library. */
+  addVoiceover(v: { file: string; duration: number; text: string; voice: string; kind?: Voiceover["kind"]; track?: number; at?: number; volumeDb?: number }): void;
   updateVoiceover(id: string, patch: Partial<Voiceover>, record?: boolean): void;
   deleteVoiceover(id: string): void;
 
@@ -108,9 +138,17 @@ const placeholder: EditPlan = {
   broll: [],
   motion: [],
   notes: "",
+  tracks: { settings: {} },
 };
 
 /** Which segment the output time t falls in, and how far into the output that segment starts. */
+/** Everything selected now: main-track clip indices and B-roll / text / audio clip ids. */
+export function selectionOf(s: Pick<State, "picked" | "selected" | "pickedIds" | "selectedBroll" | "selectedMotion" | "selectedVo">) {
+  const segments = s.picked.length ? s.picked : s.selected !== null ? [s.selected] : [];
+  const single = [s.selectedBroll, s.selectedMotion, s.selectedVo].filter((x): x is string => Boolean(x));
+  return { segments, ids: s.pickedIds.length ? s.pickedIds : single };
+}
+
 export function locate(plan: EditPlan, t: number): { index: number; offset: number } {
   let offset = 0;
   for (let i = 0; i < plan.segments.length; i++) {
@@ -127,6 +165,39 @@ export const useEditor = create<State>((set, get) => ({
   future: [],
   selected: null,
   picked: [],
+  pickedIds: [],
+  setSelection: (segments, ids) => {
+    const s = get();
+    if (segments.length + ids.length === 0) return set({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, selectedCue: null });
+    if (segments.length + ids.length === 1) {
+      set({ pickedIds: [] });
+      if (segments.length) return s.select(segments[0]);
+      const id = ids[0];
+      if (s.plan.broll.some((b) => b.id === id)) return s.selectBroll(id);
+      if (s.plan.motion.some((m) => m.id === id)) return s.selectMotion(id);
+      return s.selectVo(id);
+    }
+    set({ picked: [...segments].sort((a, b) => a - b), pickedIds: ids, selected: null, selectedBroll: null, selectedMotion: null, selectedVo: null, selectedCue: null });
+  },
+  toggleInSelection: (ref) => {
+    const { segments, ids } = selectionOf(get());
+    if ("segment" in ref) get().setSelection(segments.includes(ref.segment) ? segments.filter((i) => i !== ref.segment) : [...segments, ref.segment], ids);
+    else get().setSelection(segments, ids.includes(ref.id) ? ids.filter((i) => i !== ref.id) : [...ids, ref.id]);
+  },
+  deleteSelection: () => {
+    const s = get();
+    const { segments, ids } = selectionOf(s);
+    if (!segments.length && !ids.length) return;
+    const gone = new Set(ids);
+    s.commit({
+      ...s.plan,
+      segments: s.plan.segments.filter((_, i) => !segments.includes(i)),
+      broll: s.plan.broll.filter((b) => !gone.has(b.id)),
+      motion: s.plan.motion.filter((m) => !gone.has(m.id)),
+      voiceovers: s.plan.voiceovers.filter((v) => !gone.has(v.id)),
+    });
+    set((st) => ({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, time: Math.min(st.time, editDuration(st.plan)) }));
+  },
   time: 0,
   playing: false,
   pxPerSec: 20,
@@ -136,30 +207,31 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set({ project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false }),
-  commit: (plan) => set((s) => ({ plan, past: [...s.past, s.plan].slice(-200), future: [] })),
+    set((s) => ({ library: s.library.includes(project.path) ? s.library : [project.path, ...s.library], project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], pickedIds: [], cutoutUrl: null, selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false })),
+  // Every change closes the gaps left by tracks that emptied, so tracks exist only while they hold clips.
+  commit: (plan) => set((s) => ({ plan: compactTracks(plan), past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
-  live: (plan) => set({ plan }),
+  live: (plan) => set({ plan: compactTracks(plan) }),
   undo: () =>
     set((s) => {
       const prev = s.past.at(-1);
       if (!prev) return s;
-      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
+      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
   redo: () =>
     set((s) => {
       const next = s.future[0];
       if (!next) return s;
-      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
+      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
   select: (selected) =>
-    set(selected === null ? { selected, picked: [] } : { selected, picked: [selected], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
+    set(selected === null ? { selected, picked: [], pickedIds: [] } : { selected, picked: [selected], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
   togglePick: (i) =>
     set((s) => {
       const picked = s.picked.includes(i) ? s.picked.filter((n) => n !== i) : [...s.picked, i].sort((a, b) => a - b);
       return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
-  seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, outputDuration(s.plan))) })),
+  seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, editDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(2, Math.min(400, pxPerSec)) }),
 
@@ -174,6 +246,7 @@ export const useEditor = create<State>((set, get) => ({
     const { plan, time } = get();
     const { index, offset } = locate(plan, time);
     const s = plan.segments[index];
+    if (!s) return;
     const at = s.start + (time - offset) * s.speed;
     if (at - s.start < 0.1 || s.end - at < 0.1) return;
     const segments = [...plan.segments];
@@ -182,17 +255,23 @@ export const useEditor = create<State>((set, get) => ({
     set({ selected: index + 1, picked: [index + 1] });
   },
 
-  // Remove the selected clip; everything after it slides left (ripple delete).
+  // Remove the selected clips (all ⇧-picked ones); everything after slides left (ripple delete).
+  // Removing the last one leaves an empty timeline.
   deleteSelected: () => {
-    const { plan, selected } = get();
-    if (selected === null || plan.segments.length <= 1) return;
-    get().commit({ ...plan, segments: plan.segments.filter((_, i) => i !== selected) });
-    set((s) => ({ selected: null, picked: [], time: Math.min(s.time, outputDuration(s.plan)) }));
+    const { plan, selected, picked } = get();
+    if (selected === null) return;
+    const gone = new Set([selected, ...picked]);
+    get().commit({ ...plan, segments: plan.segments.filter((_, i) => !gone.has(i)) });
+    set((s) => ({ selected: null, picked: [], time: Math.min(s.time, editDuration(s.plan)) }));
   },
 
   selectedCue: null,
-  rightTab: "ai",
-  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
+  leftView: "media",
+  voiceTakes: [],
+  voiceDraft: { text: "", speed: 1.067, voiceId: "kartik" },
+  library: [],
+  addToLibrary: (path) => set((s) => (s.library.includes(path) ? s : { library: [...s.library, path] })),
+  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], pickedIds: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
 
   setCaptionStyle: (patch, record = true) => {
     const { plan } = get();
@@ -206,6 +285,34 @@ export const useEditor = create<State>((set, get) => ({
     get().setCaptionStyle({ cues }, record);
   },
 
+  cutoutUrl: null,
+  cutoutStatus: "",
+  prepareCutout: async () => {
+    const { project, cutoutUrl, cutoutStatus } = get();
+    if (!project || cutoutUrl || cutoutStatus || !project.analysis.width) return;
+    set({ cutoutStatus: "Finding you in the video…" });
+    const r = await window.creatron.personCutout(project.path);
+    // Only if the same video is still open (the tab may have changed meanwhile).
+    if (get().project?.path !== project.path) return set({ cutoutStatus: "" });
+    if (r.ok) set({ cutoutUrl: r.value.cutoutUrl, cutoutStatus: "" });
+    else set({ cutoutStatus: "", messages: [...get().messages, { role: "error", text: r.error }] });
+  },
+  setCaptionLook: (i, patch, record = true) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const own = captionsOf(plan, project.analysis.words)[i]?.look ?? {};
+    get().editCaption(i, { look: { ...own, ...patch } }, record);
+  },
+  applyLookToAll: (i) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const cues = captionsOf(plan, project.analysis.words);
+    const { highlight, background, ...look } = captionLook(plan, cues[i]?.look);
+    // Spoken-word and background colours have no captions-wide setting, so every caption carries them.
+    const extra = { ...(highlight !== null ? { highlight } : {}), ...(background ? { background } : {}) };
+    const keep = Object.keys(extra).length > 0;
+    get().setCaptionStyle({ ...look, cues: cues.map(({ look: _, ...c }) => (keep ? { ...c, look: extra } : c)) });
+  },
   deleteCaption: (i) => {
     const { plan, project } = get();
     if (!project) return;
@@ -218,12 +325,13 @@ export const useEditor = create<State>((set, get) => ({
     const { plan, project, time } = get();
     if (!project) return;
     const seg = plan.segments[locate(plan, time).index];
+    if (!seg) return;
     const start = toSourceTime(plan, time);
     const end = Math.min(seg.end, start + 2 * seg.speed);
     if (end - start < 0.2) return;
     const cues = [...captionsOf(plan, project.analysis.words), { start, end, text: "New caption" }].sort((a, b) => a.start - b.start);
     get().setCaptionStyle({ cues, enabled: true });
-    set({ selectedCue: cues.findIndex((c) => c.start === start && c.text === "New caption"), rightTab: "captions" });
+    set({ selectedCue: cues.findIndex((c) => c.start === start && c.text === "New caption"), leftView: "captions" });
   },
 
   resetCaptions: () => {
@@ -235,7 +343,7 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedBroll: null,
   selectBroll: (selectedBroll) =>
-    set(selectedBroll === null ? { selectedBroll } : { selectedBroll, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedMotion: null }),
+    set(selectedBroll === null ? { selectedBroll, pickedIds: [] } : { selectedBroll, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedMotion: null }),
   updateBroll: (id, patch, record = true) => {
     const { plan } = get();
     const broll = plan.broll.map((b) => (b.id === id ? { ...b, ...patch } : b));
@@ -243,10 +351,13 @@ export const useEditor = create<State>((set, get) => ({
   },
   addBroll: (b) => {
     const { plan, time } = get();
-    const at = Math.max(0, Math.min(b.at ?? time, outputDuration(plan) - 0.5));
-    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, 15, outputDuration(plan) - at));
+    // Your own videos (library, pasted link) keep their full length, even past the end of the main
+    // track (the edit gets longer). AI picks are kept short and inside the main track.
+    const own = userClip(b);
+    const at = Math.max(0, own ? (b.at ?? time) : Math.min(b.at ?? time, outputDuration(plan) - 0.5));
+    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, own ? Infinity : Math.min(15, outputDuration(plan) - at)));
     const id = `b${Math.random().toString(36).slice(2, 10)}`;
-    const clip: Broll = { id, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
+    const clip: Broll = { id, track: b.track ?? 2, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
     get().commit({ ...plan, broll: [...plan.broll, clip] });
     set({ selectedBroll: id, selected: null, picked: [], selectedCue: null, selectedVo: null });
   },
@@ -263,14 +374,13 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedMotion: null,
   selectMotion: (selectedMotion) =>
-    set(selectedMotion === null ? { selectedMotion } : { selectedMotion, selected: null, picked: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
-  addMotion: (template) => {
+    set(selectedMotion === null ? { selectedMotion, pickedIds: [] } : { selectedMotion, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
+  addMotion: (template, track) => {
     const { plan, time } = get();
-    const total = outputDuration(plan);
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
-    const at = Math.max(0, Math.min(time, total - 0.5));
+    const at = Math.max(0, time);
     const item: Motion = {
-      id, template, props: {}, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
+      id, track: track ?? freeTrack(plan, "text", at, 3), template, props: {}, at, duration: 3, color: "#facc15",
       text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
     };
     get().commit({ ...plan, motion: [...plan.motion, item] });
@@ -288,12 +398,20 @@ export const useEditor = create<State>((set, get) => ({
   },
 
   selectedVo: null,
-  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo } : { selectedVo, selected: null, picked: [], selectedCue: null, selectedBroll: null, selectedMotion: null }),
+  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo, pickedIds: [] } : { selectedVo, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedBroll: null, selectedMotion: null }),
 
   addVoiceover: (v) => {
     const { plan, time } = get();
     const id = Math.random().toString(36).slice(2, 10);
-    const vo: Voiceover = { id, file: v.file, text: v.text, voice: v.voice, at: Math.max(0, time), offset: 0, duration: v.duration, length: v.duration, volumeDb: 0 };
+    const at = Math.max(0, v.at ?? time);
+    // Music stops where the edit ends (a long song shouldn't make the video longer); voiceovers and
+    // sound effects keep their full length, even past the end.
+    const end = editDuration(plan);
+    const duration = v.kind === "music" && end - at > 1 ? Math.min(v.duration, end - at) : v.duration;
+    const vo: Voiceover = {
+      id, kind: v.kind ?? "voice", track: v.track ?? 1, file: v.file, text: v.text, voice: v.voice,
+      at, offset: 0, duration, length: v.duration, volumeDb: v.volumeDb ?? 0,
+    };
     get().commit({ ...plan, voiceovers: [...plan.voiceovers, vo] });
     set({ selectedVo: id, selected: null, picked: [], selectedCue: null });
   },

@@ -77,7 +77,7 @@ export async function renderOverlay(
  * processes may not read their own files there and crash ("icudtl.dat not found", "Target closed").
  * So Creatron runs a copy of Remotion's Chrome from ~/Library/Caches/Creatron, made once.
  */
-function chromeOutsideProtectedFolders(exe: string): string {
+export function chromeOutsideProtectedFolders(exe: string): string {
   const cache = join(homedir(), "Library", "Caches", "Creatron");
   if (process.platform !== "darwin" || !relative(cache, exe).startsWith("..")) return exe;
   const folder = dirname(exe);

@@ -2,8 +2,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
-import { buildCues, outputDuration } from "./timeline.ts";
-import { isIdentity, outputSize, placement } from "./frame.ts";
+import { buildCues, editDuration, outputDuration } from "./timeline.ts";
+import { isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { customDir } from "./customcode.ts";
 import { renderOverlay } from "./remotion.ts";
@@ -11,6 +11,8 @@ import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudn
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
+import { effectivePlan } from "./tracks.ts";
+import { personCutout } from "./person.ts";
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
@@ -21,14 +23,23 @@ export async function render(
   log = console.error,
   onProgress?: (fraction: number) => void,
 ): Promise<string> {
+  // Hidden and muted tracks stay out of the video; higher video tracks go on top.
+  plan = effectivePlan(plan);
+  // B-roll that plays its own sound joins the mix like a sound effect (it doesn't dip the voice).
+  plan = { ...plan, voiceovers: [...plan.voiceovers, ...(await brollAudio(plan))] };
   const problems = checkPlan(plan, analysis);
   if (problems.length) throw new Error(`edit plan does not fit this video:\n- ${problems.join("\n- ")}`);
 
-  const W = even(analysis.width);
-  const H = even(analysis.height);
+  // A voice recording as the main track has no picture: it plays over black.
+  const picture = analysis.width > 0;
+  const W = even(pictureSize(analysis).width);
+  const H = even(pictureSize(analysis).height);
   const fps = analysis.fps;
   const size = outputSize(plan, analysis);
-  const total = outputDuration(plan);
+  // The edit runs to the end of its last clip: past the main track the picture is black and its
+  // sound silent, under whatever B-roll, text or audio is still going.
+  const total = editDuration(plan);
+  const tail = Math.max(0, total - outputDuration(plan));
 
   // One input per kept segment: seeking each one is much faster than trimming a long file.
   const args: string[] = ["-y", "-v", "error", "-stats"];
@@ -36,22 +47,51 @@ export async function render(
 
   const filters: string[] = [];
   const pads: string[] = [];
+  // Each clip's picture: sized, sped up or slowed, punched in. The person mask goes through the same steps.
+  const segVideo = (s: EditPlan["segments"][number]) =>
+    `scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}` +
+    (s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "") +
+    `,fps=${fps},setsar=1`;
   plan.segments.forEach((s, i) => {
-    const zoom =
-      s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "";
-    filters.push(`[${i}:v]scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}${zoom},fps=${fps},setsar=1[v${i}]`);
-    pads.push(`[v${i}]`);
+    if (picture) {
+      filters.push(`[${i}:v]${segVideo(s)}[v${i}]`);
+      pads.push(`[v${i}]`);
+    }
     if (analysis.hasAudio) {
       filters.push(segmentAudio(s, i));
       pads.push(`[a${i}]`);
     }
   });
   const n = plan.segments.length;
-  filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat]${analysis.hasAudio ? "[acat]" : ""}`);
+  if (picture) {
+    filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat0]${analysis.hasAudio ? "[acat0]" : ""}`);
+    filters.push(tail > 0.01 ? `[cat0]tpad=stop_mode=add:stop_duration=${tail.toFixed(3)}:color=black[cat]` : "[cat0]null[cat]");
+  } else filters.push(`${pads.join("")}concat=n=${n}:v=0:a=1[acat0]`, `color=c=black:s=${W}x${H}:r=${fps}:d=${total.toFixed(3)},format=yuv420p[cat]`);
+  if (analysis.hasAudio) filters.push(tail > 0.01 ? `[acat0]apad=pad_dur=${tail.toFixed(3)}[acat]` : "[acat0]anull[acat]");
   filters.push(...frameFilters(plan, W, H, size, fps, total));
 
-  // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
+  // "Behind me" captions: the person is cut out of the framed main video (Apple Vision mask, sent
+  // through the same cuts, speed, zoom and framing) and laid back over the captions while they show.
+  const behind = picture && plan.captions.enabled ? buildCues(plan, analysis.words).filter((c) => c.look.behind) : [];
   let videoOut = "[framed]";
+  if (behind.length) {
+    log("render: cutting you out for the captions behind you");
+    const { mask } = await personCutout(analysis.source, log);
+    filters.push("[framed]split[framedmain][framedperson]");
+    videoOut = "[framedmain]";
+    const mpads = plan.segments.map((s, i) => {
+      const input = args.filter((a) => a === "-i").length;
+      args.push("-ss", String(s.start), "-to", String(s.end), "-i", mask);
+      filters.push(`[${input}:v]${segVideo(s)},format=gray[mk${i}]`);
+      return `[mk${i}]`;
+    });
+    filters.push(`${mpads.join("")}concat=n=${n}:v=1:a=0[mcat0]`);
+    filters.push(tail > 0.01 ? `[mcat0]tpad=stop_mode=add:stop_duration=${tail.toFixed(3)}:color=black[mcat]` : "[mcat0]null[mcat]");
+    filters.push(...frameFilters(plan, W, H, size, fps, total, "m"));
+    filters.push("[mframed]format=gray[mgray]", "[framedperson][mgray]alphamerge,format=yuva420p[person]");
+  }
+
+  // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
   plan.broll.filter((b) => b.file && existsSync(b.file)).forEach((b, k) => {
     const input = args.filter((a) => a === "-i").length;
     args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), "-i", b.file!);
@@ -92,6 +132,12 @@ export async function render(
     filters.push(`${videoOut}[motion]overlay=format=auto:shortest=0:eof_action=pass,format=yuv420p[moved]`);
     videoOut = "[moved]";
   }
+  if (behind.length) {
+    // The person on top of the captions (and the text layer), only while a "behind me" caption shows.
+    const when = behind.map((c) => `between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})`).join("+");
+    filters.push(`${videoOut}[person]overlay=format=auto:enable='${when}',format=yuv420p[behindout]`);
+    videoOut = "[behindout]";
+  }
   if (analysis.hasAudio) {
     // Voiceover files come after the segment (and caption) inputs.
     const firstVo = args.filter((a) => a === "-i").length;
@@ -118,25 +164,37 @@ export async function render(
   return resolve(out);
 }
 
-/** Turns the joined video [cat] into the output frame [framed], placed per plan.transform. */
+/** Turns the joined video [cat] into the output frame [framed], placed per plan.transform (labels prefixed with p_). */
 function frameFilters(
-  plan: EditPlan, W: number, H: number, size: { width: number; height: number }, fps: number, total: number,
+  plan: EditPlan, W: number, H: number, size: { width: number; height: number }, fps: number, total: number, p_ = "",
 ): string[] {
   const { width: OW, height: OH } = size;
   // Untouched transform: a centered cover crop is all that's needed (and cheapest).
   if (isIdentity(plan.transform)) {
     const k = Math.max(OW / W, OH / H);
-    return [`[cat]scale=${even(W * k)}:${even(H * k)}:flags=lanczos,crop=${OW}:${OH},format=yuv420p[framed]`];
+    return [`[${p_}cat]scale=${even(W * k)}:${even(H * k)}:flags=lanczos,crop=${OW}:${OH},format=yuv420p[${p_}framed]`];
   }
   // Otherwise: size the video, rotate it, and place its center on a black frame (bars where it doesn't reach).
   const p = placement(plan, W, H, OW, OH);
   const rad = ((p.rotate * Math.PI) / 180).toFixed(6);
   const rotate = p.rotate ? `,format=rgba,rotate=${rad}:ow='rotw(${rad})':oh='roth(${rad})':c=none` : "";
   return [
-    `[cat]scale=${even(p.w)}:${even(p.h)}:flags=lanczos${rotate}[placed]`,
-    `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[bg]`,
-    `[bg][placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[framed]`,
+    `[${p_}cat]scale=${even(p.w)}:${even(p.h)}:flags=lanczos${rotate}[${p_}placed]`,
+    `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[${p_}bg]`,
+    `[${p_}bg][${p_}placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[${p_}framed]`,
   ];
+}
+
+/** Audio clips for the B-roll clips that play their sound (files without an audio track are skipped). */
+async function brollAudio(plan: EditPlan): Promise<EditPlan["voiceovers"]> {
+  const out: EditPlan["voiceovers"] = [];
+  for (const b of plan.broll) {
+    if (b.muted || !b.file || !existsSync(b.file)) continue;
+    const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", b.file]);
+    if (!stdout.trim()) continue;
+    out.push({ id: `broll-${b.id}`, kind: "sfx", track: 1, file: b.file, text: "", voice: "", at: b.at, offset: b.offset, duration: b.duration, volumeDb: 0 });
+  }
+  return out;
 }
 
 let aac: Promise<string> | undefined;

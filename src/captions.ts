@@ -5,18 +5,19 @@ import { GlobalFonts, createCanvas } from "@napi-rs/canvas";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EditPlan } from "./schema.ts";
-import { type Cue, captionFontSize } from "./timeline.ts";
+import { type Cue, cueFontSize, lookBox } from "./timeline.ts";
+import { BUNDLED_FONTS } from "./fonts.ts";
+import { ROOT } from "./tools.ts";
 
-const FONT = "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
-// Fallback so emoji in captions draw in colour instead of as empty boxes.
+// Fallback so emoji in captions draw in colour instead of as empty boxes. Caption fonts are the Mac's
+// own (CAPTION_FONTS), which the canvas finds by name.
 const EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc";
 
 /** Writes one PNG per cue plus a blank, and an ffmpeg concat list that plays them on time. */
 export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: number, dir: string, total: number): string {
-  GlobalFonts.registerFromPath(FONT, "CaptionFont");
   GlobalFonts.registerFromPath(EMOJI_FONT, "CaptionEmoji");
-  const bold = plan.captions.style === "bold";
-  const size = Math.round(captionFontSize(plan, width, height));
+  // Creatron's own caption fonts (Anton, Bebas Neue, Poppins…), by family name like the Mac's.
+  for (const f of BUNDLED_FONTS) GlobalFonts.registerFromPath(join(ROOT, "motion", "fonts", f.file), f.family);
   const maxWidth = width * 0.86;
 
   const blank = join(dir, "cap-blank.png");
@@ -30,7 +31,9 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
   cues.forEach((cue, i) => {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
-    ctx.font = `${size}px CaptionFont, CaptionEmoji`;
+    const look = cue.look;
+    const size = Math.round(cueFontSize(plan, look, width, height));
+    ctx.font = `${look.italic ? "italic " : ""}${look.bold ? "bold " : ""}${size}px "${look.font}", Arial, CaptionEmoji`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const text = plan.captions.uppercase ? cue.text.toUpperCase() : cue.text;
@@ -41,24 +44,30 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
     const centerY = height * (0.5 + cue.y);
     const top = centerY - ((wrapped.length - 1) * lineHeight) / 2;
 
-    if (!bold) {
+    const box = lookBox(look);
+    if (box) {
       const w = Math.max(...wrapped.map((l) => ctx.measureText(l).width)) + size;
       const h = wrapped.length * lineHeight + size * 0.4;
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillStyle = box;
       ctx.beginPath();
       ctx.roundRect(centerX - w / 2, centerY - h / 2, w, h, size * 0.3);
       ctx.fill();
     }
     wrapped.forEach((line, n) => {
       const y = top + n * lineHeight;
-      if (bold) {
+      const w = ctx.measureText(line).width;
+      // Underline and strikethrough: a bar under / through the line, with an edge like the letters.
+      const bars = [look.underline && y + size * 0.42, look.strike && y + size * 0.02].filter((v): v is number => typeof v === "number");
+      if (look.outline === "outline") {
         ctx.lineJoin = "round";
         ctx.lineWidth = size * 0.16;
         ctx.strokeStyle = "black";
         ctx.strokeText(line, centerX, y);
+        for (const by of bars) ctx.strokeRect(centerX - w / 2, by - size * 0.035, w, size * 0.07);
       }
-      ctx.fillStyle = plan.captions.color;
+      ctx.fillStyle = look.color;
       ctx.fillText(line, centerX, y);
+      for (const by of bars) ctx.fillRect(centerX - w / 2, by - size * 0.035, w, size * 0.07);
     });
 
     const file = join(dir, `cap-${String(i).padStart(4, "0")}.png`);

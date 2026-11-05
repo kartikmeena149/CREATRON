@@ -1,9 +1,11 @@
 // "＋ Import from link": paste a YouTube / Instagram / X / Vimeo… link, see what it is, then
-// download it (or just a from-to part) as the main video or as B-roll at the playhead.
+// download it (or just a from-to part) into the library, onto the timeline at the playhead
+// (full length, with its sound), or as the main video.
 // The first time, the user agrees once that they have the right to use what they download.
 import { useEffect, useState } from "react";
 import type { LinkInfo } from "../src/webvideo.ts";
 import { shortTime } from "./format.ts";
+import { freeTrack } from "../src/tracks.ts";
 import { useEditor } from "./store.ts";
 
 const RIGHTS_KEY = "creatron.linkRightsAgreed";
@@ -89,22 +91,24 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
           : "";
   const range = info && (start !== undefined || end !== undefined) ? { start: start ?? 0, end: Math.min(end ?? info.duration, info.duration) } : {};
 
-  const download = async (purpose: "main" | "broll") => {
+  const download = async (to: "library" | "timeline" | "main") => {
     if (!info || busy || rangeError) return;
     setBusy("downloading");
     setProgress(0);
     setError("");
-    const r = await window.creatron.linkDownload({ url: info.url, id: info.id, site: info.site, ...range, purpose });
+    const r = await window.creatron.linkDownload({ url: info.url, id: info.id, site: info.site, ...range, purpose: to === "main" ? "main" : "broll" });
     setBusy("");
     if (!r.ok) return setError(r.error);
+    const s = useEditor.getState();
+    onClose();
+    if (to === "main") return onOpenMain(r.value.file);
+    // Whatever you download lands in the library, so you can drag it anywhere later.
+    s.addToLibrary(r.value.file);
+    if (to === "library") return s.set({ leftView: "media" });
     const credit = `${info.title}${info.channel ? ` by ${info.channel}` : ""} (${info.site}) ${info.url}`;
-    if (purpose === "main") {
-      onClose();
-      onOpenMain(r.value.file);
-    } else {
-      useEditor.getState().addBroll({ file: r.value.file, length: r.value.length, source: `link:${info.site.toLowerCase()}:${info.id}`, query: info.title, credit });
-      onClose();
-    }
+    const length = r.value.length;
+    const track = freeTrack(s.plan, "video", s.time, length);
+    s.addBroll({ file: r.value.file, length, duration: length, track, source: `link:${info.site.toLowerCase()}:${info.id}`, query: info.title, credit });
   };
 
   return (
@@ -159,12 +163,14 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
               <div className="link-actions">
                 <button disabled={Boolean(busy) || Boolean(rangeError)} onClick={() => download("main")}>Open as main video</button>
                 <button
-                  className="primary"
-                  disabled={!project || Boolean(busy) || Boolean(rangeError)}
-                  title={project ? "Place it on the V2 track at the playhead" : "Open a main video first"}
-                  onClick={() => download("broll")}
+                  disabled={!project?.analysis || !useEditor.getState().plan.segments.length || Boolean(busy) || Boolean(rangeError)}
+                  title={project ? "Full length, with its sound, on a free video track at the playhead (also added to the library)" : "Open a main video first"}
+                  onClick={() => download("timeline")}
                 >
-                  Add as B-roll at playhead
+                  Add to timeline
+                </button>
+                <button className="primary" disabled={Boolean(busy) || Boolean(rangeError)} title="Download it into this project's library" onClick={() => download("library")}>
+                  Add to library
                 </button>
               </div>
             )}

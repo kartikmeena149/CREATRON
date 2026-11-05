@@ -2,7 +2,10 @@
 // Motion track (titles, lower thirds, and custom animations the AI wrote, see custom.ts). The app shows it live with <Player>; the export renders
 // it with @remotion/renderer and lays it on top. Props come from overlayProps() in src/motion.ts.
 import type React from "react";
-import { AbsoluteFill, interpolate, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { useEffect, useState } from "react";
+import { AbsoluteFill, continueRender, delayRender, interpolate, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { lookBox } from "../src/timeline.ts";
+import { loadBundledFonts } from "./fonts.ts";
 import type { OverlayCue, OverlayProps } from "../src/motion.ts";
 import { customComponent } from "./custom.ts";
 
@@ -14,6 +17,9 @@ const OUTLINE = [
 ].join(", ");
 
 export const Overlay: React.FC<OverlayProps> = (props) => {
+  // Creatron's caption fonts (Anton, Bebas Neue, Poppins…): frames wait until they're loaded.
+  const [fonts] = useState(() => delayRender("caption fonts"));
+  useEffect(() => void loadBundledFonts().then(() => continueRender(fonts), () => continueRender(fonts)), [fonts]);
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
@@ -61,6 +67,9 @@ function Cue({ cue, ...c }: { cue: OverlayCue } & NonNullable<OverlayProps["capt
   const { s } = useEntry(cue.start);
   // The word being said: the last one that has started.
   const current = cue.words.reduce((n, w, i) => (c.t >= w.start ? i : n), 0);
+  // This caption's own look (font, size, colour, B/I/U/S, outline), falling back to the captions' look.
+  const look = cue.look;
+  const fontSize = cue.fontSize ?? c.fontSize;
   const box: React.CSSProperties = {
     position: "absolute",
     left: `${(0.5 + cue.x) * 100}%`,
@@ -69,26 +78,31 @@ function Cue({ cue, ...c }: { cue: OverlayCue } & NonNullable<OverlayProps["capt
     maxWidth: c.W * 0.86,
     textAlign: "center",
     lineHeight: 1.2,
-    fontWeight: 700,
-    fontSize: c.fontSize,
-    color: c.color,
+    fontFamily: look ? `"${look.font}", ${FONT}` : FONT,
+    fontWeight: look && !look.bold ? 400 : 700,
+    fontStyle: look?.italic ? "italic" : "normal",
+    textDecoration: [look?.underline && "underline", look?.strike && "line-through"].filter(Boolean).join(" ") || "none",
+    fontSize,
+    color: look?.color ?? c.color,
     textTransform: c.uppercase ? "uppercase" : "none",
     whiteSpace: "pre-wrap",
-    ...(c.style === "bold"
-      ? { textShadow: OUTLINE }
-      : { background: "rgba(0,0,0,0.55)", padding: "0.15em 0.5em", borderRadius: "0.3em" }),
+    ...((look?.outline ?? (c.style === "bold" ? "outline" : "box")) === "outline" ? { textShadow: OUTLINE } : {}),
+    ...(look ? (lookBox(look) ? { background: lookBox(look), padding: "0.15em 0.5em", borderRadius: "0.3em" } : {})
+      : c.style !== "bold" ? { background: "rgba(0,0,0,0.55)", padding: "0.15em 0.5em", borderRadius: "0.3em" } : {}),
   };
+  // The word being said: its own colour when one is set, otherwise the text colour.
+  const spoken = look ? (look.highlight ?? look.color) : c.highlight;
 
   if (c.animation === "word") {
     const w = cue.words[current];
-    return <Word key={current} text={w.text} at={w.start} box={{ ...box, fontSize: c.fontSize * 1.45, color: c.highlight }} />;
+    return <Word key={current} text={w.text} at={w.start} box={{ ...box, fontSize: fontSize * 1.45, color: spoken }} />;
   }
   const scale = c.animation === "pop" ? interpolate(s, [0, 1], [0.55, 1]) : interpolate(s, [0, 1], [0.9, 1]);
   return (
     <div style={{ ...box, transform: `translate(-50%, -50%) scale(${scale})`, opacity: Math.min(1, s * 1.6) }}>
       {cue.words.map((w, i) => (
         <span key={i}>
-          {c.animation === "highlight" ? <Lit on={i === current} at={w.start} color={c.highlight} text={w.text} /> : w.text}
+          {c.animation === "highlight" ? <Lit on={i === current} at={w.start} color={spoken} text={w.text} /> : w.text}
           {i < cue.words.length - 1 ? " " : ""}
         </span>
       ))}

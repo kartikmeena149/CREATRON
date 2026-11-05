@@ -4,14 +4,16 @@ import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { runAgent } from "../src/agent.ts";
 import { analyze } from "../src/analyze.ts";
+import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
-import { type Focus, makePlan } from "../src/plan.ts";
+import { type Attachment, type Focus, enhancePrompt, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { run } from "../src/tools.ts";
+import { personCutout } from "../src/person.ts";
 import { downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
   cloneVoice,
@@ -71,15 +73,47 @@ ipcMain.handle("pick-video", async () => {
   return r.canceled ? undefined : r.filePaths[0];
 });
 
+// Library: videos, music and sound effects, several at once.
+ipcMain.handle("pick-library", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "m4v", "mkv", "webm", "mp3", "wav", "m4a", "aac", "flac", "ogg"] }],
+  });
+  return r.canceled ? [] : r.filePaths;
+});
+
 ipcMain.handle(
   "import-video",
   safe(async (path: string) => {
     const analysis = await analyze(path, (m) => status(m.replace(/^analyze: /, "")));
     status("building timeline");
-    const thumbs = await thumbnails(analysis);
+    // A voice recording (faceless video) has no picture to make thumbnails from.
+    const thumbs = analysis.width ? await thumbnails(analysis) : { url: "", cols: 1, frameW: 0, frameH: 0, interval: 1, count: 0 };
     status("");
     return { analysis, videoUrl: mediaUrl(analysis.source), thumbs, wave: waveform(analysis) };
   }),
+);
+
+/** A file attached to an AI request: video or sound, and its length. */
+async function describeAttachment(path: string): Promise<Attachment> {
+  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", path]);
+  const info = JSON.parse(stdout);
+  const video = (info.streams ?? []).some((s: { codec_type: string }) => s.codec_type === "video") && !/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
+  return { path, name: path.split("/").pop() ?? path, kind: video ? "video" : "audio", seconds: Number(info.format?.duration) || 0 };
+}
+
+ipcMain.handle(
+  "person-cutout",
+  safe(async (path: string) => {
+    const { cutout } = await personCutout(path, (m) => status(m));
+    status("");
+    return { cutoutUrl: mediaUrl(cutout) };
+  }),
+);
+
+ipcMain.handle(
+  "enhance-prompt",
+  safe(async (request: string, model: string, path?: string) => enhancePrompt(request, model, path ? await analyze(path, () => {}) : undefined)),
 );
 
 ipcMain.handle(
@@ -87,12 +121,14 @@ ipcMain.handle(
   safe(async (path: string, request: string, current: EditPlan, model?: string, focus?: Focus) => {
     const analysis = await analyze(path, () => {});
     const say = (m: string) => status(m.replace(/^plan: /, ""));
+    // Attached files arrive as paths; the model needs to know what each is and how long.
+    if (focus?.attachments?.length) focus.attachments = await Promise.all(focus.attachments.map((a) => describeAttachment(a.path)));
     // Free models share capacity and are often busy: fall through to the next free one.
     const tries = [model, ...(model?.endsWith(":free") ? freeFallbacks(model, (await listModels()).models).slice(0, 3) : [])];
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const picked = focus?.clips.length || focus?.broll || focus?.markers?.length ? focus : undefined;
+        const picked = focus?.clips.length || focus?.broll || focus?.markers?.length || focus?.attachments?.length ? focus : undefined;
         // Claude through your subscription works as an agent (any change, its own Remotion code);
         // other models fill in the edit plan through tools.
         const result = m?.startsWith("claude-code/")
@@ -176,6 +212,55 @@ ipcMain.handle(
   }),
 );
 
+// ---- Auto Edit: Claude Code makes the whole video (src/autoedit.ts) ----
+// The job lives here, not in the window: the view can close or reload and pick it up again.
+type AutoJob = { running: boolean; fixing: boolean; video: string; model: string; log: AutoEditEvent[]; progress?: AutoEditEvent; result?: unknown; error?: string };
+let autoJob: AutoJob | undefined;
+const autoEvent = (e: AutoEditEvent) => {
+  if (autoJob) e.type === "progress" ? (autoJob.progress = e) : (autoJob.log = [...autoJob.log.slice(-300), e]);
+  win.webContents.send("autoedit-event", e);
+};
+const withUrl = <T extends { final: string }>(r: T) => ({ ...r, url: `${mediaUrl(r.final)}&v=${Date.now()}` });
+async function runAutoJob(job: Omit<AutoJob, "running" | "log">, work: () => Promise<{ final: string }>) {
+  if (autoJob?.running) throw new Error("An Auto Edit is already running.");
+  autoJob = { ...job, result: job.fixing ? autoJob?.result : undefined, running: true, log: [], error: undefined };
+  win.webContents.send("autoedit-state", autoJob);
+  try {
+    autoJob.result = withUrl(await work());
+  } catch (e) {
+    autoJob.error = e instanceof Error ? e.message : String(e);
+  }
+  autoJob.running = false;
+  autoJob.progress = undefined;
+  win.webContents.send("autoedit-state", autoJob);
+}
+
+ipcMain.handle("autoedit-state", () => autoJob);
+ipcMain.handle(
+  "autoedit-start",
+  safe(async (opts: { video: string; brief: string; reference?: string; model: string }) => {
+    void runAutoJob({ fixing: false, video: opts.video, model: opts.model }, () => autoEdit(opts, autoEvent));
+  }),
+);
+ipcMain.handle(
+  "autoedit-fix",
+  safe(async (opts: { video: string; session: string; model: string; message: string; markers: AutoEditMarker[] }) => {
+    void runAutoJob({ fixing: true, video: opts.video, model: opts.model }, () =>
+      autoEditFix(opts.video, opts.session, opts.model, opts.message, opts.markers, autoEvent),
+    );
+  }),
+);
+ipcMain.handle("autoedit-cancel", () => cancelAutoEdit());
+ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
+  // Automated tests can't click the open dialog either.
+  if (process.argv.includes("--creatron-debug") && process.env.CREATRON_PICK_PATH) return process.env.CREATRON_PICK_PATH;
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile"],
+    filters: [{ name: kind === "video" ? "Video" : "Video or audio", extensions: ["mp4", "mov", "m4v", "mkv", "webm", ...(kind === "any" ? ["wav", "mp3", "m4a", "aac", "flac"] : [])] }],
+  });
+  return r.canceled ? undefined : r.filePaths[0];
+});
+
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
 
 // ---- Voice Lab ----
@@ -199,7 +284,7 @@ ipcMain.handle("delete-voice", safe(async (id: string) => deleteVoice(id)));
 ipcMain.handle(
   "generate-voiceover",
   safe(async (opts: { text: string; voiceId: string; speed: number }) => {
-    const r = await generateVoiceover(opts, status);
+    const r = await generateVoiceover(opts, status, (p) => win.webContents.send("voice-progress", p));
     status("");
     return { ...r, url: mediaUrl(r.file) };
   }),

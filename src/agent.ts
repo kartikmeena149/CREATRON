@@ -11,7 +11,7 @@ import { z } from "zod";
 import { agentDir, compileCustom, customDir, customFiles } from "./customcode.ts";
 import { outputSize } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
-import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll } from "./plan.ts";
+import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll, unknownAudio, useAttachments } from "./plan.ts";
 import { renderOverlayStill } from "./remotion.ts";
 import { type Analysis, EditPlan, checkPlan } from "./schema.ts";
 import { outputDuration, toSourceTime } from "./timeline.ts";
@@ -104,10 +104,11 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
   }
   const parsed = EditPlan.safeParse(raw);
   if (!parsed.success) return { problems: [`plan.json doesn't match plan.schema.json:\n${z.prettifyError(parsed.error)}`] };
-  const plan = placeBroll(parsed.data, new Map());
-  const problems = [...checkPlan(plan, analysis)];
+  const plan = useAttachments(placeBroll(parsed.data, new Map()), focus);
+  const problems = [...checkPlan(plan, analysis), ...unknownAudio(plan, current, focus)];
   if (focus?.clips.length) problems.push(...keepsUnpicked(current, plan, focus.clips).problems);
-  const known = new Set(current.broll.map((b) => b.source));
+  // B-roll already on the timeline, or a video the user attached to this request.
+  const known = new Set([...current.broll.map((b) => b.source), ...(focus?.attachments ?? []).filter((a) => a.kind === "video").map((a) => `library:${a.path}`)]);
   for (const b of plan.broll) if (!known.has(b.source)) problems.push(`broll ${b.source}: new B-roll can't be added in this mode yet; remove it`);
   const custom = plan.motion.filter((m) => m.template === "custom");
   if (custom.length) {
@@ -228,7 +229,8 @@ write new Remotion animations. You only have file tools, in this folder.
 ## Built in (no code needed)
 captions (style, size, colour, position, animation none / pop / highlight / word), motion templates "title" and
 "lower-third", per-segment speed / zoom / volume, transform (scale, x, y, rotate), aspect, audio cleanup.
-New B-roll can't be searched for in this mode (keep existing broll entries as they are).
+New B-roll can't be searched for in this mode (keep existing broll entries as they are). Files the user attached
+to the request are the exception: add those exactly as the request's ATTACHED FILES section says.
 
 ## Custom animations (Remotion)
 Anything the built-in options can't do: animated text in any style, shapes, icons drawn with SVG, emoji pops,

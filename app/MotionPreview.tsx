@@ -10,10 +10,13 @@ import { registerCustom } from "../motion/custom.ts";
 import { Overlay } from "../motion/Overlay.tsx";
 import { outputSize } from "../src/frame.ts";
 import { hasOverlay, overlayProps } from "../src/motion.ts";
+import { effectivePlan } from "../src/tracks.ts";
 import { useEditor } from "./store.ts";
 
 export function MotionPreview() {
-  const { plan, project, time } = useEditor();
+  const { plan: edit, project, time } = useEditor();
+  // Text on hidden tracks stays out of the preview, like the export.
+  const plan = useMemo(() => effectivePlan(edit), [edit]);
   const a = project!.analysis;
   const fps = a.fps;
   const props = useMemo(() => overlayProps(plan, a.words, outputSize(plan, a), fps), [plan, a, fps]);

@@ -34,7 +34,10 @@ export async function analyze(video: string, log = console.error): Promise<Analy
 async function probe(source: string) {
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", source]);
   const info = JSON.parse(stdout);
-  const v = info.streams.find((s: any) => s.codec_type === "video");
+  const v = info.streams.find((s: any) => s.codec_type === "video" && s.disposition?.attached_pic !== 1);
+  const hasAudio = info.streams.some((s: any) => s.codec_type === "audio");
+  // Audio only (a podcast, a voice memo): width and height 0. Only Auto Edit takes these.
+  if (!v && hasAudio) return { duration: round(Number(info.format.duration), 3), width: 0, height: 0, fps: 30, hasAudio };
   if (!v) throw new Error("no video stream found");
   const [num, den] = String(v.avg_frame_rate || v.r_frame_rate).split("/").map(Number);
   // Phone footage often stores rotation as metadata; swap so width/height match what people see.
@@ -45,7 +48,7 @@ async function probe(source: string) {
     width: turned ? v.height : v.width,
     height: turned ? v.width : v.height,
     fps: round(den ? num / den : num || 30, 3),
-    hasAudio: info.streams.some((s: any) => s.codec_type === "audio"),
+    hasAudio,
   };
 }
 

@@ -119,6 +119,7 @@ export function wholeVideo(analysis: Analysis): EditPlan {
     voiceovers: [],
     broll: [],
     motion: [],
+    tracks: { settings: {} },
     notes: "",
   };
 }

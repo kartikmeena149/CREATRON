@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import type { Analysis, EditPlan, Segment } from "./schema.ts";
 import { round, run } from "./tools.ts";
+import { editDuration, outputDuration } from "./timeline.ts";
 
 export const TARGET_LUFS = -14;
 /** The level generated voiceovers are made at, and that the original voice is matched to. */
@@ -43,9 +44,9 @@ export function voiceFilter(plan: EditPlan): string {
 /** Voiceovers that will actually play (their file still exists). */
 export const activeVoiceovers = (plan: EditPlan) => plan.voiceovers.filter((v) => existsSync(v.file));
 
-/** ffmpeg volume expression that dips to duckDb while any voiceover plays, with short ramps. */
+/** ffmpeg volume expression that dips to duckDb while any voiceover plays (not music or SFX), with short ramps. */
 function duckExpression(plan: EditPlan): string {
-  const vos = activeVoiceovers(plan);
+  const vos = activeVoiceovers(plan).filter((v) => (v.kind ?? "voice") === "voice");
   if (!vos.length || plan.audio.duckDb >= 0) return "";
   const r = DUCK_RAMP;
   const windows = vos.map(
@@ -71,11 +72,19 @@ export function mixFilters(plan: EditPlan, src: string, firstVo: number, origGai
     const delay = Math.round(v.at * 1000);
     filters.push(
       `[${firstVo + k}:a]atrim=start=${v.offset.toFixed(3)}:duration=${v.duration.toFixed(3)},asetpts=PTS-STARTPTS,` +
-        `aresample=48000,aformat=channel_layouts=stereo,volume=${v.volumeDb}dB,adelay=${delay}:all=1[vo${k}]`,
+        `aresample=48000,aformat=channel_layouts=stereo,volume=${v.volumeDb}dB${fades(v)},adelay=${delay}:all=1[vo${k}]`,
     );
   });
   filters.push(`[orig]${vos.map((_, k) => `[vo${k}]`).join("")}amix=inputs=${vos.length + 1}:normalize=0:duration=first[mix]`);
   return filters;
+}
+
+/** The clip's fade in / fade out, as filters (fades never overlap past the clip's middle). */
+function fades(v: EditPlan["voiceovers"][number]): string {
+  const half = v.duration / 2;
+  const fin = Math.min(v.fadeIn ?? 0, half);
+  const fout = Math.min(v.fadeOut ?? 0, half);
+  return (fin > 0 ? `,afade=t=in:d=${fin.toFixed(3)}` : "") + (fout > 0 ? `,afade=t=out:st=${(v.duration - fout).toFixed(3)}:d=${fout.toFixed(3)}` : "");
 }
 
 /** Inputs for the voiceover files, in the order mixFilters expects them. */
@@ -106,7 +115,9 @@ async function measure(plan: EditPlan, analysis: Analysis, opts: { withVoiceover
   args.push(...voiceoverInputs(p));
   const filters = plan.segments.map(segmentAudio);
   const pads = plan.segments.map((_, i) => `[a${i}]`).join("");
-  filters.push(`${pads}concat=n=${plan.segments.length}:v=0:a=1[acat]`);
+  // Padded with silence to the end of the edit, so clips past the main track are measured too.
+  const tail = Math.max(0, editDuration(p) - outputDuration(p));
+  filters.push(`${pads}concat=n=${plan.segments.length}:v=0:a=1${tail > 0.01 ? `,apad=pad_dur=${tail.toFixed(3)}` : ""}[acat]`);
   filters.push(...mixFilters(p, "[acat]", plan.segments.length, opts.origGainDb));
   filters.push(`[mix]${opts.tail ? `${opts.tail},` : ""}ebur128=peak=true[m]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[m]", "-f", "null", "-");

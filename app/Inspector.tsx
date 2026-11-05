@@ -1,36 +1,68 @@
 // Left panel: hands-on controls for the selected clip, the frame, captions and the voice.
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
+import { useEffect, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
-import { timecode } from "./format.ts";
+import { isAudio, isGeneratedVoice, mediaUrl, shortTime, timecode } from "./format.ts";
+import { Icon } from "./icons.tsx";
+import * as act from "./clipActions.ts";
+import { VoiceLab } from "./VoiceLab.tsx";
+import { CaptionList } from "./CaptionList.tsx";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
 import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
-export function Inspector() {
-  const { project, plan, selected, commit, checkpoint, live, updateSegment } = useEditor();
-  if (!project) return <aside className="panel inspector" />;
-  const a = project.analysis;
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice" };
+
+export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+  const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
+
+  // Selecting something on the timeline opens the page that edits it.
+  useEffect(() => void (selected !== null && set({ leftView: "clip" })), [selected]);
+  useEffect(() => void (selectedCue !== null && set({ leftView: "captions" })), [selectedCue]);
+  useEffect(() => void (selectedMotion !== null && set({ leftView: "text" })), [selectedMotion]);
+  const selectedVo = useEditor((s) => s.selectedVo);
+  useEffect(() => void (selectedVo !== null && set({ leftView: "audio" })), [selectedVo]);
+
+  // More than one clip selected: one panel for all of them.
+  const group = useEditor((s) => s.picked.length + s.pickedIds.length);
+  if (group > 1) return <aside className="panel inspector"><GroupPanel /></aside>;
+
+  if (!view) return null;
+  const head = (
+    <header className="side-head">
+      <h2>{TITLES[view]}</h2>
+      <button className="icon-btn" title="Hide panel" onClick={() => set({ leftView: null })}><Icon name="panel" /></button>
+    </header>
+  );
+  if (view === "media") return (
+    <aside className="panel inspector">
+      {head}
+      <Library onAdd={onOpen} onLink={onLink} onOpenMain={onOpenMain} />
+    </aside>
+  );
+  // Voices (clone, script, generate) work before any video is open.
+  if (view === "voice") return <aside className="panel inspector">{head}<VoiceLab /></aside>;
+  if (!project) return <aside className="panel inspector">{head}<p className="hint pad">Import a video first.</p></aside>;
+
   const seg = selected !== null ? plan.segments[selected] : undefined;
   const setPlan = (patch: Partial<EditPlan>) => commit({ ...plan, ...patch });
   const liveAudio = (patch: Partial<EditPlan["audio"]>) => live({ ...plan, audio: { ...plan.audio, ...patch } });
 
-
   return (
     <aside className="panel inspector">
-      <section>
-        <h3>Media</h3>
-        <div className="file-name" title={a.source}>{a.source.split("/").pop()}</div>
-        <div className="meta">
-          <span>{a.width}×{a.height}</span>
-          <span>{a.fps} fps</span>
-          <span>{timecode(a.duration)}</span>
-          <span>{a.words.length} words</span>
-        </div>
-      </section>
+      {head}
+      {view === "text" && <>
+        <MotionEditor />
+        {!plan.motion.find((m) => m.id === selectedMotion) && (
+          <section>
+            <p className="hint">Animated titles sit on the Text track. Add one at the playhead, or ask the AI for "a title at the start".</p>
+            <button className="wide-btn" onClick={() => useEditor.getState().addMotion("title")}>＋ Add title</button>
+          </section>
+        )}
+      </>}
 
-      <MotionEditor />
-
+      {view === "clip" && <>
       <section>
         <h3>Clip {seg ? selected! + 1 : ""}</h3>
         {seg ? (
@@ -61,11 +93,18 @@ export function Inspector() {
       </section>
 
       <PositionSize />
+      </>}
 
-      <CaptionStyle />
+      {view === "captions" && <>
+        <CaptionStyle />
+        <CaptionList />
+      </>}
 
+      {view === "audio" && <AudioClip />}
+
+      {view === "audio" && (
       <section>
-        <h3>Voice</h3>
+        <h3>Main track sound</h3>
         <Row label="Clean up noise" hint="removes hiss and hum">
           <Toggle value={plan.audio.denoise} onChange={(denoise) => commit({ ...plan, audio: { ...plan.audio, denoise } })} />
         </Row>
@@ -80,9 +119,132 @@ export function Inspector() {
         )}
         {plan.audio.denoise && <p className="hint">Noise cleanup is applied in full on export.</p>}
       </section>
+      )}
     </aside>
   );
 }
+
+/** MIME type for a library video being dragged onto the timeline. */
+export const MEDIA_DRAG = "application/x-creatron-media";
+
+function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+  const library = useEditor((s) => s.library);
+  const [query, setQuery] = useState("");
+  const shown = library.filter((p) => baseName(p).toLowerCase().includes(query.trim().toLowerCase()));
+  return (
+    <>
+      <div className="lib-actions">
+        <label className="lib-search">
+          <Icon name="search" size={14} />
+          <input value={query} placeholder="Search project media…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        </label>
+        <button className="lib-add" onClick={onAdd}><Icon name="plus" size={14} /> Add</button>
+        <button className="lib-add icon" onClick={onLink} title="Import from link"><Icon name="link" size={14} /></button>
+      </div>
+      {!library.length && <p className="hint pad">Add a video, or drop one anywhere in the window.</p>}
+      {library.length > 0 && !shown.length && <p className="hint pad">No media matches “{query}”.</p>}
+      <div className="media-grid">
+        {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
+      </div>
+      {library.length > 0 && <p className="hint pad">Drag videos, music or sound effects onto any track. Double-click one to make it the main track (a voice recording makes a faceless video).</p>}
+    </>
+  );
+}
+
+/** Several clips selected (box-select or ⇧-click): changes apply to all of them. */
+function GroupPanel() {
+  useEditor((s) => s.plan); // follow changes
+  const { checkpoint, setSelection, deleteSelection } = useEditor();
+  const refs = act.groupRefs();
+  const withLevel = refs.filter((r) => r.kind === "segment" || r.kind === "audio");
+  const sound = refs.filter(act.canMute);
+  const allMuted = sound.length > 0 && sound.every(act.isMuted);
+  const first = withLevel[0];
+  const plan = useEditor.getState().plan;
+  const level = !first ? 100 : first.kind === "segment" ? (plan.segments[first.index]?.volume ?? 1) * 100
+    : Math.round(10 ** ((plan.voiceovers.find((v) => v.id === first.id)?.volumeDb ?? 0) / 20) * 100);
+  return (
+    <>
+      <header className="side-head">
+        <h2>{refs.length} clips</h2>
+        <button className="icon-btn" title="Clear the selection" onClick={() => setSelection([], [])}><Icon name="close" /></button>
+      </header>
+      <section>
+        <p className="hint" style={{ marginTop: 0 }}>Multiple selection</p>
+        {withLevel.length > 0 && (
+          <Slider label="Volume" unit="%" min={0} max={200} step={1} value={level} display={(x) => Math.round(x)}
+            onStart={checkpoint} onChange={(x) => act.setGroupVolume(x, refs)} />
+        )}
+        {sound.length > 0 && (
+          <Row label="Mute">
+            <Toggle value={allMuted} onChange={() => act.toggleMuteGroup(refs)} />
+          </Row>
+        )}
+        <button className="wide-btn danger-btn" onClick={deleteSelection}><Icon name="trash" size={13} /> Delete {refs.length} clips</button>
+        <p className="hint">Changes apply to all {refs.length} selected clips. Drag any selected B-roll, text or audio clip to move them together. ⇧-click adds or removes a clip.</p>
+      </section>
+    </>
+  );
+}
+
+/** The selected music, sound effect or voiceover clip: level and fades. */
+function AudioClip() {
+  const { plan, selectedVo, checkpoint, updateVoiceover } = useEditor();
+  const v = plan.voiceovers.find((x) => x.id === selectedVo);
+  if (!v) return null;
+  const kind = { voice: "Voiceover", music: "Music", sfx: "Sound effect" }[v.kind ?? "voice"];
+  const max = Math.min(5, Math.floor(v.duration * 5) / 10);
+  return (
+    <section>
+      <h3>{kind}<span className="dim small">{v.duration.toFixed(1)}s</span></h3>
+      <div className="file-name" title={v.file}>{v.text || v.file.split("/").pop()}</div>
+      <Row label="Mute">
+        <Toggle value={Boolean(v.muted)} onChange={(muted) => updateVoiceover(v.id, { muted })} />
+      </Row>
+      <Slider label="Volume" unit=" dB" min={-24} max={12} step={0.5} value={v.volumeDb}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { volumeDb: x }, false)} />
+      <Slider label="Fade in" min={0} max={max} step={0.1} value={Math.min(v.fadeIn ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeIn: x }, false)} />
+      <Slider label="Fade out" min={0} max={max} step={0.1} value={Math.min(v.fadeOut ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
+        onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeOut: x }, false)} />
+    </section>
+  );
+}
+
+function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: string) => void }) {
+  const main = useEditor((s) => s.project?.path === path);
+  const mainUrl = useEditor((s) => s.project?.videoUrl);
+  const [length, setLength] = useState<number>();
+  const audio = isAudio(path);
+  return (
+    <div
+      className={`media-card ${main ? "main" : ""} ${audio ? "audio" : ""}`}
+      title={path}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(MEDIA_DRAG, JSON.stringify({ path, length, audio }));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      onDoubleClick={() => !main && onOpenMain(path)}
+    >
+      <div className="media-thumb">
+        {audio ? (
+          <>
+            <div className={`audio-tile ${isGeneratedVoice(path) ? "voice" : ""}`}><Icon name={isGeneratedVoice(path) ? "mic" : "music"} size={28} /></div>
+            <audio src={mediaUrl(path)} preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
+          </>
+        ) : (
+          <video src={`${main ? mainUrl : mediaUrl(path)}#t=1`} muted preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
+        )}
+        {length !== undefined && <span className="pill left">{shortTime(length)}</span>}
+        {main && <span className="pill right">Main</span>}
+      </div>
+      <div className="media-name"><Icon name="play" size={10} fill /> <span>{baseName(path)}</span></div>
+    </div>
+  );
+}
+
+const baseName = (p: string) => p.split("/").pop() ?? p;
 
 function Slider(p: {
   label: string; min: number; max: number; step: number; value: number; unit?: string;
