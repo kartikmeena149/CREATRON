@@ -6,7 +6,7 @@ import { timecode } from "./format.ts";
 import { useEditor } from "./store.ts";
 
 export function CaptionList() {
-  const { project, plan, selectedCue, time, selectCue, seek, setPlaying, setCaptionStyle, addCaption } = useEditor();
+  const { project, plan, selectedCue, time, selectCue, seek, setPlaying } = useEditor();
   const list = useRef<HTMLDivElement>(null);
   const words = project?.analysis.words ?? [];
   const all = captionsOf(plan, words);
@@ -18,17 +18,12 @@ export function CaptionList() {
     list.current?.querySelector(".cap-row.selected")?.scrollIntoView({ block: "nearest" });
   }, [selectedCue]);
 
-  if (!project) return null;
-  if (!plan.captions.enabled)
-    return (
-      <div className="cap-empty">
-        <p>Captions are off.</p>
-        <button className="primary" onClick={() => setCaptionStyle({ enabled: true })}>Turn on captions</button>
-      </div>
-    );
+  // The on/off switch sits right above, in the caption style section.
+  if (!project || !plan.captions.enabled) return null;
 
   return (
-    <>
+    <section className="cap-section">
+      <h3>Caption text <span className="dim small">{all.length}</span></h3>
       <div className="cap-list" ref={list}>
         {all.map((c, i) => {
           const cue = placed.get(i);
@@ -59,10 +54,7 @@ export function CaptionList() {
           );
         })}
       </div>
-      <div className="cap-foot">
-        <button className="wide-btn" onClick={addCaption}>＋ Add caption at playhead</button>
-      </div>
-    </>
+    </section>
   );
 }
 

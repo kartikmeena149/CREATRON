@@ -2,11 +2,11 @@
 // Drag clip edges to trim, click to select, S to split, Delete to ripple-delete.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { roughCut } from "../src/autocut.ts";
-import { type Cue, buildCues, captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
+import { type Cue, buildCues, captionsOf, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
 import type { Broll, EditPlan, Motion, Segment, Voiceover } from "../src/schema.ts";
-import { type TrackKind, brollSound, freeTrack, setTrack, trackCount, trackKey, trackName, trackSetting } from "../src/tracks.ts";
+import { type TrackKind, brollSound, freeTrack, userClip, setTrack, trackCount, trackKey, trackName, trackSetting } from "../src/tracks.ts";
 import { wholeVideo } from "../src/autocut.ts";
-import { mediaUrl, shortTime } from "./format.ts";
+import { isGeneratedVoice, mediaUrl, shortTime } from "./format.ts";
 import { Icon, type IconName } from "./icons.tsx";
 import { MEDIA_DRAG } from "./Inspector.tsx";
 import { openClipMenu } from "./ClipMenu.tsx";
@@ -18,7 +18,8 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
   const { project, plan, time, pxPerSec, selected, picked, past, future, markers, playing, pointing } = useEditor();
   const { seek, select, selectCue, setZoom, split, deleteSelected, undo, redo, commit, say, setPlaying, setCaptionStyle } = useEditor();
   const scroller = useRef<HTMLDivElement>(null);
-  const total = outputDuration(plan);
+  // The whole edit: the main track, or longer when other clips run past it.
+  const total = editDuration(plan);
   // The timeline never ends: there is always at least a screen of empty time past what you
   // can see, so scrolling right keeps going, like an infinite canvas.
   const [view, setView] = useState({ left: 0, w: 1000 });
@@ -37,7 +38,7 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
   // Fit the whole edit in view when a video is loaded.
   const fit = () => {
     const el = scroller.current;
-    if (el && project) setZoom((el.clientWidth - 80) / Math.max(1, outputDuration(useEditor.getState().plan)));
+    if (el && project) setZoom((el.clientWidth - 80) / Math.max(1, editDuration(useEditor.getState().plan)));
   };
   useEffect(fit, [project]);
 
@@ -169,7 +170,8 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
     // It lands on the track under the pointer when that track takes it, else the first free one.
     const lane = laneAt(e.clientX, e.clientY);
     if (audio) {
-      const kind = lane && (lane.kind === "voice" || lane.kind === "music" || lane.kind === "sfx") ? lane.kind : "music";
+      // On an audio track it goes there; elsewhere a generated voiceover goes to Voiceover, anything else to Music.
+      const kind = lane && (lane.kind === "voice" || lane.kind === "music" || lane.kind === "sfx") ? lane.kind : isGeneratedVoice(path) ? "voice" : "music";
       // Dropped in the space under the tracks: a new track of its own.
       const track = lane?.kind === kind ? lane.n : lane?.kind === "below" ? trackCount(s.plan, kind) + 1 : freeTrack(s.plan, kind, at, len);
       s.addVoiceover({ file: path, duration: len, text: name ?? "", voice: "", kind, track, at, volumeDb: kind === "music" ? -12 : kind === "sfx" ? -4 : 0 });
@@ -310,9 +312,8 @@ function moveGroup(id: string, x0: number): boolean {
       s.checkpoint();
     }
     const d = (ev.clientX - x0) / s.pxPerSec;
-    const total = outputDuration(s.plan);
     const shift = <T extends { id: string; at: number; duration: number }>(c: T): T =>
-      orig.has(c.id) ? { ...c, at: Math.max(0, Math.min(total - c.duration, orig.get(c.id)! + d)) } : c;
+      orig.has(c.id) ? { ...c, at: Math.max(0, orig.get(c.id)! + d) } : c;
     s.live({ ...s.plan, broll: s.plan.broll.map(shift), motion: s.plan.motion.map(shift), voiceovers: s.plan.voiceovers.map(shift) });
   };
   const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
@@ -593,7 +594,6 @@ function CueBlock({ cue }: { cue: Cue }) {
 /** A voiceover on A2: drag to move it in time, drag an edge to trim, click to select. */
 function VoiceoverBlock({ vo }: { vo: Voiceover }) {
   const { pxPerSec, selectedVo, selectVo, pickedIds } = useEditor();
-  const total = useEditor((s) => outputDuration(s.plan));
   const selected = selectedVo === vo.id || pickedIds.includes(vo.id);
 
   const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
@@ -621,14 +621,14 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
         const kind = vo.kind ?? "voice";
         const to = lane && (lane.kind === "voice" || lane.kind === "music" || lane.kind === "sfx") ? { kind: lane.kind as Voiceover["kind"], track: lane.n }
           : lane?.kind === "below" ? { track: trackCount(useEditor.getState().plan, kind) + 1 } : {};
-        up(vo.id, { at: Math.max(0, Math.min(total - orig.duration, orig.at + d)), ...to }, false);
+        up(vo.id, { at: Math.max(0, orig.at + d), ...to }, false);
       }
       else if (mode === "start") {
         // Trim the front: start later in the file and later on the timeline.
         const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.2, d));
         up(vo.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
       } else {
-        const max = Math.min((orig.length ?? Infinity) - orig.offset, total - orig.at);
+        const max = (orig.length ?? Infinity) - orig.offset;
         up(vo.id, { duration: Math.max(0.2, Math.min(max, orig.duration + d)) }, false);
       }
     };
@@ -657,7 +657,6 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
 /** A title or lower third on M1: drag to move, drag edges to trim, click to edit it in the inspector. */
 function MotionBlock({ m }: { m: Motion }) {
   const { pxPerSec, selectedMotion, selectMotion, pickedIds } = useEditor();
-  const total = useEditor((s) => outputDuration(s.plan));
   const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
     e.stopPropagation();
     if (e.button !== 0) return; // right-click opens the clip menu instead
@@ -680,12 +679,12 @@ function MotionBlock({ m }: { m: Motion }) {
         const lane = laneAt(ev.clientX, ev.clientY);
         // Above the top track (over the ruler): a new top text track.
         const track = lane?.kind === "text" ? lane.n : lane?.kind === "above" ? trackCount(useEditor.getState().plan, "text") + 1 : undefined;
-        up(m.id, { at: Math.max(0, Math.min(total - orig.duration, orig.at + d)), ...(track ? { track } : {}) }, false);
+        up(m.id, { at: Math.max(0, orig.at + d), ...(track ? { track } : {}) }, false);
       }
       else if (mode === "start") {
         const dd = Math.max(-orig.at, Math.min(orig.duration - 0.5, d));
         up(m.id, { at: orig.at + dd, duration: orig.duration - dd }, false);
-      } else up(m.id, { duration: Math.max(0.5, Math.min(total - orig.at, orig.duration + d)) }, false);
+      } else up(m.id, { duration: Math.max(0.5, Math.min(3600, orig.duration + d)) }, false);
     };
     const end = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
     window.addEventListener("pointermove", onMove);
@@ -721,11 +720,10 @@ function brollSource(b: Broll): string {
 /** A B-roll clip on V2: drag to move, drag edges to trim, click to select, ⌫ to delete. */
 function BrollBlock({ b }: { b: Broll }) {
   const { pxPerSec, selectedBroll, selectBroll, pickedIds } = useEditor();
-  const total = useEditor((s) => outputDuration(s.plan));
   const selected = selectedBroll === b.id || pickedIds.includes(b.id);
   // A "muted" badge on your own videos (and any clip you muted); stock B-roll is silent anyway.
   const plan = useEditor((s) => s.plan);
-  const showMuted = (b.source.startsWith("library:") || b.muted !== undefined) && !brollSound(plan, b);
+  const showMuted = (userClip(b) || b.muted !== undefined) && !brollSound(plan, b);
   const drag = (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
     e.stopPropagation();
     if (e.button !== 0) return; // right-click opens the clip menu instead
@@ -749,13 +747,13 @@ function BrollBlock({ b }: { b: Broll }) {
         // Over a Text track or the ruler: a new top video track.
         const track = lane?.kind === "video" && lane.n > 1 ? lane.n
           : lane?.kind === "above" || lane?.kind === "text" ? Math.max(2, trackCount(useEditor.getState().plan, "video") + 1) : undefined;
-        up(b.id, { at: Math.max(0, Math.min(total - orig.duration, orig.at + d)), ...(track ? { track } : {}) }, false);
+        up(b.id, { at: Math.max(0, orig.at + d), ...(track ? { track } : {}) }, false);
       }
       else if (mode === "start") {
         const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.5, d));
         up(b.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
       } else {
-        const max = Math.min((orig.length ?? Infinity) - orig.offset, total - orig.at);
+        const max = (orig.length ?? Infinity) - orig.offset;
         up(b.id, { duration: Math.max(0.5, Math.min(max, orig.duration + d)) }, false);
       }
     };

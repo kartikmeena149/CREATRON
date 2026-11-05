@@ -18,10 +18,13 @@ declare global {
       pickVideo(): Promise<string | undefined>;
       pickLibrary(): Promise<string[]>;
       importVideo(path: string): Promise<Result<{ analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave }>>;
-      aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string; markers?: { n: number; time: number; x: number; y: number; context: string }[] }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string; markers?: { n: number; time: number; x: number; y: number; context: string }[]; attachments?: { path: string }[] }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
+      enhancePrompt(request: string, model: string, path?: string): Promise<Result<string>>;
+      personCutout(path: string): Promise<Result<{ cutoutUrl: string }>>;
       linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
       linkDownload(opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }): Promise<Result<{ file: string; length: number }>>;
       onLinkProgress(fn: (f: number) => void): () => void;
+      onVoiceProgress(fn: (p: { stage: "starting" | "speaking" | "finishing"; done: number; total: number }) => void): () => void;
       customCode(path: string): Promise<Result<{ version: string; code: Record<string, string>; errors: string[] }>>;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;

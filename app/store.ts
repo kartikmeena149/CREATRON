@@ -3,12 +3,13 @@
 // Every change goes through history so anything (including an AI edit) can be undone.
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
-import { type Analysis, type Broll, type Caption, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
-import { captionsOf, outputDuration, toSourceTime } from "../src/timeline.ts";
-import { compactTracks, freeTrack } from "../src/tracks.ts";
+import { type Analysis, type Broll, type Caption, type CaptionLook, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
+import { captionLook, captionsOf, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
+import { compactTracks, freeTrack, userClip } from "../src/tracks.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
-export type LeftView = "media" | "clip" | "text" | "captions" | "audio";
+export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number };
+export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
 
@@ -63,10 +64,13 @@ type State = {
 
   /** Selected caption (index into captionsOf), and which right-panel tab shows. */
   selectedCue: number | null;
-  rightTab: "ai" | "captions" | "voice";
   /** Videos in this project's library (the main video and any added for B-roll), by path. */
   library: string[];
   addToLibrary(path: string): void;
+  /** Voiceovers made in the Voice page for this project, newest first. */
+  voiceTakes: VoiceTake[];
+  /** What's typed in the Voice page, kept while you switch pages or tabs. */
+  voiceDraft: { text: string; speed: number; voiceId: string };
   /** Which page the left panel shows (null: panel hidden). */
   leftView: LeftView | null;
   selectCue(i: number | null): void;
@@ -75,6 +79,16 @@ type State = {
   /** Change one caption. The first edit turns auto captions into the user's own list. */
   editCaption(i: number, patch: Partial<Caption>, record?: boolean): void;
   deleteCaption(i: number): void;
+  /** Changes how one caption looks (font, size, colour, B/I/U/S, outline, behind the person). */
+  setCaptionLook(i: number, patch: CaptionLook, record?: boolean): void;
+  /** Gives every caption the look of caption i. */
+  applyLookToAll(i: number): void;
+  /** The person cut out of the main video (see-through), for "behind me" captions in the preview. */
+  cutoutUrl: string | null;
+  /** What's happening while the cutout is made ("finding you in the video"), or "" when idle. */
+  cutoutStatus: string;
+  /** Makes the cutout for the main video if it doesn't exist yet. */
+  prepareCutout(): Promise<void>;
   /** New caption at the playhead, 2 s long (cut short if the clip ends sooner). */
   addCaption(): void;
   /** Throw away caption edits and follow the transcript again. */
@@ -182,7 +196,7 @@ export const useEditor = create<State>((set, get) => ({
       motion: s.plan.motion.filter((m) => !gone.has(m.id)),
       voiceovers: s.plan.voiceovers.filter((v) => !gone.has(v.id)),
     });
-    set((st) => ({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, time: Math.min(st.time, outputDuration(st.plan)) }));
+    set((st) => ({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, time: Math.min(st.time, editDuration(st.plan)) }));
   },
   time: 0,
   playing: false,
@@ -193,7 +207,7 @@ export const useEditor = create<State>((set, get) => ({
   exporting: null,
 
   load: (project) =>
-    set((s) => ({ library: s.library.includes(project.path) ? s.library : [project.path, ...s.library], project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false })),
+    set((s) => ({ library: s.library.includes(project.path) ? s.library : [project.path, ...s.library], project, plan: wholeVideo(project.analysis), markers: [], pointing: false, past: [], future: [], selected: null, picked: [], pickedIds: [], cutoutUrl: null, selectedCue: null, selectedVo: null, selectedBroll: null, time: 0, playing: false })),
   // Every change closes the gaps left by tracks that emptied, so tracks exist only while they hold clips.
   commit: (plan) => set((s) => ({ plan: compactTracks(plan), past: [...s.past, s.plan].slice(-200), future: [] })),
   checkpoint: () => set((s) => ({ past: [...s.past, s.plan].slice(-200), future: [] })),
@@ -217,7 +231,7 @@ export const useEditor = create<State>((set, get) => ({
       const picked = s.picked.includes(i) ? s.picked.filter((n) => n !== i) : [...s.picked, i].sort((a, b) => a - b);
       return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
-  seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, outputDuration(s.plan))) })),
+  seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, editDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(2, Math.min(400, pxPerSec)) }),
 
@@ -248,12 +262,13 @@ export const useEditor = create<State>((set, get) => ({
     if (selected === null) return;
     const gone = new Set([selected, ...picked]);
     get().commit({ ...plan, segments: plan.segments.filter((_, i) => !gone.has(i)) });
-    set((s) => ({ selected: null, picked: [], time: Math.min(s.time, outputDuration(s.plan)) }));
+    set((s) => ({ selected: null, picked: [], time: Math.min(s.time, editDuration(s.plan)) }));
   },
 
   selectedCue: null,
-  rightTab: "ai",
   leftView: "media",
+  voiceTakes: [],
+  voiceDraft: { text: "", speed: 1.067, voiceId: "kartik" },
   library: [],
   addToLibrary: (path) => set((s) => (s.library.includes(path) ? s : { library: [...s.library, path] })),
   selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], pickedIds: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
@@ -270,6 +285,34 @@ export const useEditor = create<State>((set, get) => ({
     get().setCaptionStyle({ cues }, record);
   },
 
+  cutoutUrl: null,
+  cutoutStatus: "",
+  prepareCutout: async () => {
+    const { project, cutoutUrl, cutoutStatus } = get();
+    if (!project || cutoutUrl || cutoutStatus || !project.analysis.width) return;
+    set({ cutoutStatus: "Finding you in the video…" });
+    const r = await window.creatron.personCutout(project.path);
+    // Only if the same video is still open (the tab may have changed meanwhile).
+    if (get().project?.path !== project.path) return set({ cutoutStatus: "" });
+    if (r.ok) set({ cutoutUrl: r.value.cutoutUrl, cutoutStatus: "" });
+    else set({ cutoutStatus: "", messages: [...get().messages, { role: "error", text: r.error }] });
+  },
+  setCaptionLook: (i, patch, record = true) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const own = captionsOf(plan, project.analysis.words)[i]?.look ?? {};
+    get().editCaption(i, { look: { ...own, ...patch } }, record);
+  },
+  applyLookToAll: (i) => {
+    const { plan, project } = get();
+    if (!project) return;
+    const cues = captionsOf(plan, project.analysis.words);
+    const { highlight, background, ...look } = captionLook(plan, cues[i]?.look);
+    // Spoken-word and background colours have no captions-wide setting, so every caption carries them.
+    const extra = { ...(highlight !== null ? { highlight } : {}), ...(background ? { background } : {}) };
+    const keep = Object.keys(extra).length > 0;
+    get().setCaptionStyle({ ...look, cues: cues.map(({ look: _, ...c }) => (keep ? { ...c, look: extra } : c)) });
+  },
   deleteCaption: (i) => {
     const { plan, project } = get();
     if (!project) return;
@@ -288,7 +331,7 @@ export const useEditor = create<State>((set, get) => ({
     if (end - start < 0.2) return;
     const cues = [...captionsOf(plan, project.analysis.words), { start, end, text: "New caption" }].sort((a, b) => a.start - b.start);
     get().setCaptionStyle({ cues, enabled: true });
-    set({ selectedCue: cues.findIndex((c) => c.start === start && c.text === "New caption"), rightTab: "captions" });
+    set({ selectedCue: cues.findIndex((c) => c.start === start && c.text === "New caption"), leftView: "captions" });
   },
 
   resetCaptions: () => {
@@ -308,10 +351,11 @@ export const useEditor = create<State>((set, get) => ({
   },
   addBroll: (b) => {
     const { plan, time } = get();
-    const at = Math.max(0, Math.min(b.at ?? time, outputDuration(plan) - 0.5));
-    // AI picks are kept short; a video dragged in from the library keeps its full length.
-    const cap = b.source.startsWith("library:") ? Infinity : 15;
-    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, cap, outputDuration(plan) - at));
+    // Your own videos (library, pasted link) keep their full length, even past the end of the main
+    // track (the edit gets longer). AI picks are kept short and inside the main track.
+    const own = userClip(b);
+    const at = Math.max(0, own ? (b.at ?? time) : Math.min(b.at ?? time, outputDuration(plan) - 0.5));
+    const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, own ? Infinity : Math.min(15, outputDuration(plan) - at)));
     const id = `b${Math.random().toString(36).slice(2, 10)}`;
     const clip: Broll = { id, track: b.track ?? 2, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
     get().commit({ ...plan, broll: [...plan.broll, clip] });
@@ -333,11 +377,10 @@ export const useEditor = create<State>((set, get) => ({
     set(selectedMotion === null ? { selectedMotion, pickedIds: [] } : { selectedMotion, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
   addMotion: (template, track) => {
     const { plan, time } = get();
-    const total = outputDuration(plan);
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
-    const at = Math.max(0, Math.min(time, total - 0.5));
+    const at = Math.max(0, time);
     const item: Motion = {
-      id, track: track ?? freeTrack(plan, "text", at, 3), template, props: {}, at, duration: Math.max(0.5, Math.min(3, total - at)), color: "#facc15",
+      id, track: track ?? freeTrack(plan, "text", at, 3), template, props: {}, at, duration: 3, color: "#facc15",
       text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
     };
     get().commit({ ...plan, motion: [...plan.motion, item] });
@@ -361,8 +404,10 @@ export const useEditor = create<State>((set, get) => ({
     const { plan, time } = get();
     const id = Math.random().toString(36).slice(2, 10);
     const at = Math.max(0, v.at ?? time);
-    // Music and sound effects stop at the end of the video; voiceovers keep their full length.
-    const duration = v.kind && v.kind !== "voice" ? Math.max(0.2, Math.min(v.duration, outputDuration(plan) - at)) : v.duration;
+    // Music stops where the edit ends (a long song shouldn't make the video longer); voiceovers and
+    // sound effects keep their full length, even past the end.
+    const end = editDuration(plan);
+    const duration = v.kind === "music" && end - at > 1 ? Math.min(v.duration, end - at) : v.duration;
     const vo: Voiceover = {
       id, kind: v.kind ?? "voice", track: v.track ?? 1, file: v.file, text: v.text, voice: v.voice,
       at, offset: 0, duration, length: v.duration, volumeDb: v.volumeDb ?? 0,

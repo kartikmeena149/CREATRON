@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import type { Analysis, EditPlan, Segment } from "./schema.ts";
 import { round, run } from "./tools.ts";
+import { editDuration, outputDuration } from "./timeline.ts";
 
 export const TARGET_LUFS = -14;
 /** The level generated voiceovers are made at, and that the original voice is matched to. */
@@ -114,7 +115,9 @@ async function measure(plan: EditPlan, analysis: Analysis, opts: { withVoiceover
   args.push(...voiceoverInputs(p));
   const filters = plan.segments.map(segmentAudio);
   const pads = plan.segments.map((_, i) => `[a${i}]`).join("");
-  filters.push(`${pads}concat=n=${plan.segments.length}:v=0:a=1[acat]`);
+  // Padded with silence to the end of the edit, so clips past the main track are measured too.
+  const tail = Math.max(0, editDuration(p) - outputDuration(p));
+  filters.push(`${pads}concat=n=${plan.segments.length}:v=0:a=1${tail > 0.01 ? `,apad=pad_dur=${tail.toFixed(3)}` : ""}[acat]`);
   filters.push(...mixFilters(p, "[acat]", plan.segments.length, opts.origGainDb));
   filters.push(`[mix]${opts.tail ? `${opts.tail},` : ""}ebur128=peak=true[m]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[m]", "-f", "null", "-");

@@ -83,13 +83,16 @@ export function setTrack(plan: EditPlan, key: string, patch: { name?: string; mu
   return { ...plan, tracks: { settings: { ...settings, [key]: { ...settings[key], ...patch } } } };
 }
 
+/** A video the user brought in themselves (from the library or a pasted link), not one the AI found. */
+export const userClip = (b: { source: string }) => b.source.startsWith("library:") || b.source.startsWith("link:");
+
 /**
- * Whether a B-roll clip plays its own sound. Unset means: the user's own videos (from the
- * library) play their sound, stock and web B-roll stays silent. A muted track silences all.
+ * Whether a B-roll clip plays its own sound. Unset means: the user's own videos (library or
+ * link) play their sound, stock and web B-roll the AI found stays silent. A muted track silences all.
  */
 export function brollSound(plan: EditPlan, b: EditPlan["broll"][number]): boolean {
   if (trackSetting(plan, trackKey("video", b.track ?? 2)).muted) return false;
-  return b.muted === undefined ? b.source.startsWith("library:") : !b.muted;
+  return b.muted === undefined ? userClip(b) : !b.muted;
 }
 
 /**

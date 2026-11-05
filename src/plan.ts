@@ -51,7 +51,10 @@ Editing rules:
 - In notes, tell the user in one or two plain sentences what you did.`;
 
 /** What the user picked on the timeline: segment indexes, and maybe one B-roll id. */
-export type Focus = { clips: number[]; broll?: string; markers?: Marker[] };
+export type Focus = { clips: number[]; broll?: string; markers?: Marker[]; attachments?: Attachment[] };
+
+/** A file the user attached to the request (it's in the project library): a video or a sound. */
+export type Attachment = { path: string; name: string; kind: "video" | "audio"; seconds: number };
 
 /**
  * A spot the user pointed at on the video: time on the edited timeline, place in the frame
@@ -217,13 +220,14 @@ export async function makePlan(
 
       let problems: string[];
       try {
-        const plan = placeBroll(EditPlan.parse(args), clips);
-        // B-roll already on the user's timeline is fine; anything new must come from a search.
-        const known = (id: string) => clips.has(id) || Boolean(current?.broll.some((b) => b.source === id && b.file));
+        const plan = useAttachments(placeBroll(EditPlan.parse(args), clips), focus);
+        // B-roll already on the user's timeline or attached by the user is fine; anything new must come from a search.
+        const known = (id: string) => clips.has(id) || attached(focus, id) || Boolean(current?.broll.some((b) => b.source === id && b.file));
         problems = [
           ...checkPlan(plan, analysis),
           ...(current && focus?.clips.length ? keepsUnpicked(current, plan, focus.clips).problems : []),
           ...plan.broll.filter((b) => !known(b.source)).map((b) => `broll ${b.source}: not a clip id returned by search_broll or search_web_video`),
+          ...unknownAudio(plan, current, focus),
         ];
         if (!problems.length) return { plan, model, ...totals, clips };
       } catch (e) {
@@ -251,6 +255,16 @@ export function describeFocus(plan: EditPlan, focus: Focus): string {
   const b = focus.broll ? plan.broll.find((x) => x.id === focus.broll) : undefined;
   if (b) lines.push(`- B-roll id "${b.id}" (${b.query ?? b.source}) at ${b.at.toFixed(2)}s for ${b.duration.toFixed(2)}s`);
   const parts = [];
+  if (focus.attachments?.length)
+    parts.push(
+      `\nATTACHED FILES (the user added these to the project for this request; use them as the request says):\n${focus.attachments
+        .map((a) =>
+          a.kind === "video"
+            ? `- video "${a.name}", ${a.seconds.toFixed(1)}s: put it on screen with a broll entry {"source": "library:${a.path}", "at" or "atSource", "duration" (at most ${a.seconds.toFixed(1)}), "offset" (seconds into the file, default 0), "track" 2+}`
+            : `- sound "${a.name}", ${a.seconds.toFixed(1)}s: add a voiceovers entry {"id", "kind": "music" | "sfx" | "voice", "file": "${a.path}", "at", "offset": 0, "duration" (at most ${a.seconds.toFixed(1)}), "volumeDb" (music about -12), "track": 1}`,
+        )
+        .join("\n")}`,
+    );
   if (lines.length) parts.push(`\nPICKED ON THE TIMELINE (apply the request to these only; keep everything else exactly as it is):\n${lines.join("\n")}`);
   if (focus.markers?.length)
     parts.push(
@@ -259,6 +273,32 @@ export function describeFocus(plan: EditPlan, focus: Focus): string {
         .join("\n")}`,
     );
   return parts.join("\n");
+}
+
+const attached = (focus: Focus | undefined, source: string) =>
+  Boolean(focus?.attachments?.some((a) => a.kind === "video" && source === `library:${a.path}`));
+
+/** Attached files in the plan get their file and length filled in, and can't run longer than the file. */
+export function useAttachments(plan: EditPlan, focus?: Focus): EditPlan {
+  const files = new Map((focus?.attachments ?? []).map((a) => [a.path, a]));
+  if (!files.size) return plan;
+  return {
+    ...plan,
+    broll: plan.broll.map((b) => {
+      const a = b.source.startsWith("library:") ? files.get(b.source.slice("library:".length)) : undefined;
+      return a ? { ...b, file: a.path, length: a.seconds, duration: Math.min(b.duration, a.seconds - b.offset), query: b.query ?? a.name } : b;
+    }),
+    voiceovers: plan.voiceovers.map((v) => {
+      const a = files.get(v.file);
+      return a ? { ...v, length: a.seconds, duration: Math.min(v.duration, a.seconds - v.offset), text: v.text || a.name } : v;
+    }),
+  };
+}
+
+/** Audio clips may only use files already on the timeline or attached to this request. */
+export function unknownAudio(plan: EditPlan, current: EditPlan | undefined, focus?: Focus): string[] {
+  const ok = new Set([...(current?.voiceovers ?? []).map((v) => v.file), ...(focus?.attachments ?? []).filter((a) => a.kind === "audio").map((a) => a.path)]);
+  return plan.voiceovers.filter((v) => !ok.has(v.file)).map((v) => `voiceovers ${v.id}: "${v.file}" is not a file on the timeline or attached to this request`);
 }
 
 /** "upper left", "center", "lower right"... */
@@ -332,6 +372,36 @@ function placeMotion(plan: EditPlan): EditPlan {
   });
   return { ...plan, motion };
 }
+
+const ENHANCE = `You improve a video creator's rough request to Creatron, an AI video editor, before it's sent.
+Rewrite it as one clear, specific edit instruction: keep what they want and their language, and add concrete
+details that fit this video (the transcript is below): what to cut, the hook, pacing, captions, B-roll, on-screen
+text, music, length. Don't invent facts about the video or ask questions. Answer with the rewritten request only:
+1 to 4 sentences, no preamble, no quotes.`;
+
+/** Rewrites a rough request into a clear, specific one, using the video's transcript when there is one. */
+export async function enhancePrompt(request: string, model: string, analysis?: Analysis): Promise<string> {
+  const video = analysis ? describe(analysis).slice(0, 6000) : "(no video opened yet)";
+  const user = `REQUEST: ${request}\n\n${video}`;
+  if (model.startsWith("claude-code/")) {
+    const { askClaude } = await import("./claudecli.ts");
+    return clean(await askClaude(model.replace(/^claude-code\//, ""), `${ENHANCE}\n\n${user}`));
+  }
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
+    body: JSON.stringify({ model, messages: [{ role: "system", content: ENHANCE }, { role: "user", content: user }] }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = (await res.json()) as any;
+  if (data.error) throw new Error(`OpenRouter ${data.error.code ?? res.status}: ${data.error.message ?? "unknown error"}`);
+  return clean(String(data.choices?.[0]?.message?.content ?? ""));
+}
+
+/** Models sometimes wrap the answer in quotes or a "Here's…" line; keep just the request. */
+const clean = (s: string) => s.trim().replace(/^(here(’|')?s|rewritten|improved)[^:\n]*:\s*/i, "").replace(/^["“](.*)["”]$/s, "$1").trim();
 
 /** The text the model sees: video info, phrases with times, and pauses. */
 export function describe(a: Analysis): string {

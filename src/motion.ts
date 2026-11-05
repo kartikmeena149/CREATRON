@@ -3,10 +3,10 @@
 // show the same thing. No Node or browser APIs.
 import { round } from "./round.ts";
 import type { EditPlan, Word } from "./schema.ts";
-import { buildCues, captionFontSize, captionsOf, outputDuration, toOutputTime } from "./timeline.ts";
+import { type Look, buildCues, captionFontSize, captionsOf, cueFontSize, editDuration, toOutputTime } from "./timeline.ts";
 
 export type OverlayWord = { text: string; start: number; end: number };
-export type OverlayCue = { start: number; end: number; x: number; y: number; words: OverlayWord[] };
+export type OverlayCue = { start: number; end: number; x: number; y: number; words: OverlayWord[]; look: Look; fontSize: number };
 export type OverlayProps = {
   width: number;
   height: number;
@@ -47,7 +47,7 @@ export function overlayProps(plan: EditPlan, words: Word[], size: { width: numbe
     width: size.width,
     height: size.height,
     fps,
-    duration: round(outputDuration(plan), 3),
+    duration: round(editDuration(plan), 3),
     captions: animatedCaptions(plan, words)
       ? {
           animation: caps.animation as "pop" | "highlight" | "word",
@@ -56,7 +56,7 @@ export function overlayProps(plan: EditPlan, words: Word[], size: { width: numbe
           highlight: caps.highlight,
           uppercase: caps.uppercase,
           fontSize: captionFontSize(plan, size.width, size.height),
-          cues: cueWords(plan, words),
+          cues: cueWords(plan, words, size),
         }
       : undefined,
     motion: plan.motion.map((m) => ({
@@ -69,7 +69,7 @@ export function overlayProps(plan: EditPlan, words: Word[], size: { width: numbe
  * Each caption with its words timed on the output clock. Real word times from the transcript
  * when the caption's words match it; otherwise (edited text) the words share the caption's time.
  */
-function cueWords(plan: EditPlan, words: Word[]): OverlayCue[] {
+function cueWords(plan: EditPlan, words: Word[], size: { width: number; height: number }): OverlayCue[] {
   const source = captionsOf(plan, words);
   return buildCues(plan, words).map((cue) => {
     const c = source[cue.index];
@@ -87,6 +87,9 @@ function cueWords(plan: EditPlan, words: Word[]): OverlayCue[] {
             start: cue.start + ((cue.end - cue.start) * i) / texts.length,
             end: cue.start + ((cue.end - cue.start) * (i + 1)) / texts.length,
           }));
-    return { start: cue.start, end: cue.end, x: cue.x, y: cue.y, words: timed.map((w) => ({ ...w, start: round(w.start, 3), end: round(w.end, 3) })) };
+    return {
+      start: cue.start, end: cue.end, x: cue.x, y: cue.y, look: cue.look, fontSize: cueFontSize(plan, cue.look, size.width, size.height),
+      words: timed.map((w) => ({ ...w, start: round(w.start, 3), end: round(w.end, 3) })),
+    };
   });
 }

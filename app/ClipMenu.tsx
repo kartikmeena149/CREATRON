@@ -118,7 +118,7 @@ function groupItems(item: Item, sep: (key: string) => React.ReactNode) {
 function captionItems(index: number, item: Item, sep: (key: string) => React.ReactNode) {
   const s = useEditor.getState();
   return [
-    item("type", "Edit caption", () => s.set({ rightTab: "captions" })),
+    item("type", "Edit caption", () => s.set({ leftView: "captions" })),
     item("plus", "Add caption at playhead", () => s.addCaption()),
     item("cc", "Caption style…", () => s.set({ leftView: "captions" })),
     sep("caption"),

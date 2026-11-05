@@ -2,15 +2,17 @@
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
 import { useEffect, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
-import { isAudio, mediaUrl, shortTime, timecode } from "./format.ts";
+import { isAudio, isGeneratedVoice, mediaUrl, shortTime, timecode } from "./format.ts";
 import { Icon } from "./icons.tsx";
 import * as act from "./clipActions.ts";
+import { VoiceLab } from "./VoiceLab.tsx";
+import { CaptionList } from "./CaptionList.tsx";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
 import { PositionSize } from "./PositionSize.tsx";
 import { useEditor } from "./store.ts";
 
-const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text" };
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice" };
 
 export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
   const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
@@ -39,6 +41,8 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
       <Library onAdd={onOpen} onLink={onLink} onOpenMain={onOpenMain} />
     </aside>
   );
+  // Voices (clone, script, generate) work before any video is open.
+  if (view === "voice") return <aside className="panel inspector">{head}<VoiceLab /></aside>;
   if (!project) return <aside className="panel inspector">{head}<p className="hint pad">Import a video first.</p></aside>;
 
   const seg = selected !== null ? plan.segments[selected] : undefined;
@@ -91,7 +95,10 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
       <PositionSize />
       </>}
 
-      {view === "captions" && <CaptionStyle />}
+      {view === "captions" && <>
+        <CaptionStyle />
+        <CaptionList />
+      </>}
 
       {view === "audio" && <AudioClip />}
 
@@ -223,7 +230,7 @@ function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: stri
       <div className="media-thumb">
         {audio ? (
           <>
-            <div className="audio-tile"><Icon name="music" size={28} /></div>
+            <div className={`audio-tile ${isGeneratedVoice(path) ? "voice" : ""}`}><Icon name={isGeneratedVoice(path) ? "mic" : "music"} size={28} /></div>
             <audio src={mediaUrl(path)} preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
           </>
         ) : (

@@ -45,6 +45,9 @@ const PATHS = {
   volume: "M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12",
   mute: "M4 9h4l5-4v14l-5-4H4zM16 9l5 6M21 9l-5 6",
   wave: "M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2M21 12h0",
+  contrast: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v18",
+  person: "M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1",
+  paperclip: "M20 11.5 12.3 19.2a5 5 0 0 1-7-7l8-8a3.3 3.3 0 0 1 4.7 4.7l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3",
 } as const;
 
 export type IconName = keyof typeof PATHS;

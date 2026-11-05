@@ -7,12 +7,13 @@ import { analyze } from "../src/analyze.ts";
 import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
-import { type Focus, makePlan } from "../src/plan.ts";
+import { type Attachment, type Focus, enhancePrompt, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { run } from "../src/tools.ts";
+import { personCutout } from "../src/person.ts";
 import { downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
   cloneVoice,
@@ -93,17 +94,41 @@ ipcMain.handle(
   }),
 );
 
+/** A file attached to an AI request: video or sound, and its length. */
+async function describeAttachment(path: string): Promise<Attachment> {
+  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", path]);
+  const info = JSON.parse(stdout);
+  const video = (info.streams ?? []).some((s: { codec_type: string }) => s.codec_type === "video") && !/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
+  return { path, name: path.split("/").pop() ?? path, kind: video ? "video" : "audio", seconds: Number(info.format?.duration) || 0 };
+}
+
+ipcMain.handle(
+  "person-cutout",
+  safe(async (path: string) => {
+    const { cutout } = await personCutout(path, (m) => status(m));
+    status("");
+    return { cutoutUrl: mediaUrl(cutout) };
+  }),
+);
+
+ipcMain.handle(
+  "enhance-prompt",
+  safe(async (request: string, model: string, path?: string) => enhancePrompt(request, model, path ? await analyze(path, () => {}) : undefined)),
+);
+
 ipcMain.handle(
   "ai-edit",
   safe(async (path: string, request: string, current: EditPlan, model?: string, focus?: Focus) => {
     const analysis = await analyze(path, () => {});
     const say = (m: string) => status(m.replace(/^plan: /, ""));
+    // Attached files arrive as paths; the model needs to know what each is and how long.
+    if (focus?.attachments?.length) focus.attachments = await Promise.all(focus.attachments.map((a) => describeAttachment(a.path)));
     // Free models share capacity and are often busy: fall through to the next free one.
     const tries = [model, ...(model?.endsWith(":free") ? freeFallbacks(model, (await listModels()).models).slice(0, 3) : [])];
     let lastError: unknown;
     for (const m of tries) {
       try {
-        const picked = focus?.clips.length || focus?.broll || focus?.markers?.length ? focus : undefined;
+        const picked = focus?.clips.length || focus?.broll || focus?.markers?.length || focus?.attachments?.length ? focus : undefined;
         // Claude through your subscription works as an agent (any change, its own Remotion code);
         // other models fill in the edit plan through tools.
         const result = m?.startsWith("claude-code/")
@@ -259,7 +284,7 @@ ipcMain.handle("delete-voice", safe(async (id: string) => deleteVoice(id)));
 ipcMain.handle(
   "generate-voiceover",
   safe(async (opts: { text: string; voiceId: string; speed: number }) => {
-    const r = await generateVoiceover(opts, status);
+    const r = await generateVoiceover(opts, status, (p) => win.webContents.send("voice-progress", p));
     status("");
     return { ...r, url: mediaUrl(r.file) };
   }),

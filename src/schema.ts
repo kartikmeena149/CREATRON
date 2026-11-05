@@ -22,12 +22,35 @@ export const Segment = z
  * One caption, timed in SOURCE seconds so it stays on its words through any re-cut.
  * x / y, when set, move just this caption (added to the shared caption position).
  */
+/** How captions look. On the captions as a whole, or on one caption (only what differs). */
+export const CAPTION_FONTS = [
+  // Bundled with Creatron (src/fonts.ts), then the Mac's own.
+  "Anton", "Bebas Neue", "Archivo Black", "Poppins", "Bangers", "Luckiest Guy", "Lilita One", "Permanent Marker",
+  "Arial", "Arial Black", "Helvetica Neue", "Avenir Next", "Avenir Next Condensed", "Futura", "Impact", "Gill Sans",
+  "Rockwell", "Georgia", "Didot", "American Typewriter", "Copperplate", "Menlo", "Marker Felt", "Chalkboard SE",
+] as const;
+export const CaptionLook = z.object({
+  font: z.string().optional().describe("A font from CAPTION_FONTS, e.g. Impact"),
+  size: z.number().min(0.3).max(4).optional().describe("Size multiplier, 1 = normal"),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+  strike: z.boolean().optional(),
+  outline: z.enum(["outline", "box", "none"]).optional().describe("outline = black edge, box = dark box behind, none = plain"),
+  behind: z.boolean().optional().describe("Drawn behind the person in the video (the person stays in front of the text)"),
+  highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional().describe("Colour of the word being said; null = same as the text"),
+  background: z.string().regex(/^(#[0-9a-fA-F]{8})?$/).optional().describe('Box colour behind the text as #RRGGBBAA; "" = no box (the outline style still applies)'),
+});
+export type CaptionLook = z.infer<typeof CaptionLook>;
+
 export const Caption = z.object({
   start: z.number().min(0),
   end: z.number().positive(),
   text: z.string(),
   x: z.number().min(-1).max(1).optional(),
   y: z.number().min(-1).max(1).optional(),
+  look: CaptionLook.optional().describe("This caption's own look, where it differs from the others"),
 });
 export type Caption = z.infer<typeof Caption>;
 
@@ -118,6 +141,12 @@ export const DEFAULT_CAPTIONS = {
   uppercase: true,
   animation: "none" as const,
   highlight: "#facc15",
+  font: "Arial",
+  bold: true,
+  italic: false,
+  underline: false,
+  strike: false,
+  behind: false,
 };
 
 export const EditPlan = z.object({
@@ -155,6 +184,13 @@ export const EditPlan = z.object({
         .default("none")
         .describe("none = plain; pop = each caption pops in; highlight = the word being said lights up; word = one big word at a time"),
       highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Color of the word being said (highlight / word)"),
+      font: z.string().default("Arial").describe("Caption font, one of CAPTION_FONTS"),
+      bold: z.boolean().default(true),
+      italic: z.boolean().default(false),
+      underline: z.boolean().default(false),
+      strike: z.boolean().default(false),
+      outline: z.enum(["outline", "box", "none"]).optional().describe("Unset: outline for the bold style, box for minimal"),
+      behind: z.boolean().default(false).describe("All captions drawn behind the person in the video"),
       // Absent = captions follow the transcript automatically. Present = the user's (or AI's) own captions.
       cues: z.array(Caption).optional().describe("Explicit captions in SOURCE seconds; set to fix wording or timing"),
     })

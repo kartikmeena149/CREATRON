@@ -3,8 +3,7 @@
 // Every action is one undo step.
 import { removePauses } from "../src/autocut.ts";
 import type { Broll, Motion, Segment, Voiceover } from "../src/schema.ts";
-import { outputDuration } from "../src/timeline.ts";
-import { freeTrack } from "../src/tracks.ts";
+import { freeTrack, userClip } from "../src/tracks.ts";
 import { locate, selectionOf, useEditor } from "./store.ts";
 
 export type ClipRef =
@@ -50,9 +49,8 @@ function commitFree(kind: Exclude<ClipRef["kind"], "segment">, items: Free[]) {
 /** Where a copy goes: this track if it has room there, otherwise the first free one. */
 function placeCopy(kind: Exclude<ClipRef["kind"], "segment">, c: Free, at: number): Free {
   const plan = useEditor.getState().plan;
-  const total = outputDuration(plan);
-  const start = Math.max(0, Math.min(at, total - 0.2));
-  const duration = Math.max(0.2, Math.min(c.duration, total - start));
+  const start = Math.max(0, at);
+  const duration = c.duration;
   const trackKind = kind === "broll" ? "video" : kind === "motion" ? "text" : ((c as Voiceover).kind ?? "voice");
   const sameTrack = (plan[listOf[kind]] as Free[]).filter((x) => x.track === c.track);
   const fits = !sameTrack.some((x) => x.at < start + duration && start < x.at + x.duration);
@@ -116,7 +114,7 @@ export function isMuted(ref: ClipRef): boolean {
   if (ref.kind === "broll") {
     // Unset: the user's own videos play their sound, stock B-roll is silent.
     const b = c as Broll;
-    return b.muted ?? !b.source.startsWith("library:");
+    return b.muted ?? !userClip(b);
   }
   return Boolean((c as Voiceover).muted);
 }

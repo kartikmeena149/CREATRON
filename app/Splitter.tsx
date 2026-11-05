@@ -2,7 +2,7 @@
 // double-click a divider to put it back.
 import { useState } from "react";
 
-const DEFAULTS = { left: 290, ai: 400, timeline: 320 };
+const DEFAULTS = { left: 400, ai: 400, timeline: 320 };
 type Sizes = typeof DEFAULTS;
 const KEY = "creatron.layout";
 

@@ -159,15 +159,20 @@ export function scriptChunks(text: string): string[] {
     }, []);
 }
 
+/** Where a voiceover is: engine starting, line `done` of `total` spoken, or joining the lines. */
+export type VoiceProgress = { stage: "starting" | "speaking" | "finishing"; done: number; total: number };
+
 /** Speaks the script in the chosen voice and returns the finished wav (speed applied, pitch kept). */
 export async function generateVoiceover(
   opts: { text: string; voiceId: string; speed: number },
   log: (m: string) => void = () => {},
+  progress: (p: VoiceProgress) => void = () => {},
 ): Promise<{ file: string; duration: number }> {
   const chunks = scriptChunks(opts.text);
   if (!chunks.length) throw new Error("The script is empty.");
   const voice = listVoices().find((v) => v.id === opts.voiceId);
   if (!voice) throw new Error("That voice no longer exists.");
+  progress({ stage: "starting", done: 0, total: chunks.length });
   const port = await ensureServer(log);
 
   const id = randomUUID().slice(0, 8);
@@ -176,6 +181,7 @@ export async function generateVoiceover(
   const parts: string[] = [];
   for (const [i, text] of chunks.entries()) {
     log(`speaking line ${i + 1} of ${chunks.length}`);
+    progress({ stage: "speaking", done: i, total: chunks.length });
     const form = new FormData();
     form.append("text", text);
     if (voice.kind === "builtin") form.append("voice_url", voice.id.replace("builtin:", ""));
@@ -189,6 +195,7 @@ export async function generateVoiceover(
 
   // Join with a short breath between lines, apply the speed (atempo keeps pitch), level it.
   log("finishing the voiceover");
+  progress({ stage: "finishing", done: chunks.length, total: chunks.length });
   const file = join(OUT_DIR, `${id}.wav`);
   const inputs = parts.flatMap((p) => ["-i", p]);
   const gap = "anullsrc=r=24000:cl=mono";

@@ -4,8 +4,9 @@
 // and voice tweaks run through Web Audio.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionOverlay } from "./CaptionOverlay.tsx";
+import { CaptionToolbar } from "./CaptionToolbar.tsx";
 import { pictureSize, placement } from "../src/frame.ts";
-import { buildCues, outputDuration } from "../src/timeline.ts";
+import { buildCues, editDuration, outputDuration } from "../src/timeline.ts";
 import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
 import { mediaUrl, timecode } from "./format.ts";
@@ -15,9 +16,10 @@ import { effectivePlan, trackSetting } from "../src/tracks.ts";
 export function Viewer() {
   const { project, plan, time, playing, seek, setPlaying, markers, pointing, busy, status } = useEditor();
   const video = useRef<HTMLVideoElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
-  const total = outputDuration(plan);
+  const mainEnd = outputDuration(plan);
   const a = project?.analysis;
 
   const ratio = useMemo(() => {
@@ -44,28 +46,49 @@ export function Viewer() {
     if (Math.abs(v.currentTime - target) > 0.02) v.currentTime = target;
   }, [time, playing, seg, offset]);
 
-  // Playing: follow the video clock and hop to the next kept range at every cut.
+  // Playing: follow the video clock and hop to the next kept range at every cut. After the main
+  // track ends (when other clips run longer), a wall clock moves the playhead over black.
   useEffect(() => {
     const v = video.current;
     if (!v || !playing) return;
-    if (!plan.segments.length) return setPlaying(false);
+    const mainEnd = outputDuration(plan);
+    const end = editDuration(plan);
+    if (end <= 0) return setPlaying(false);
     let raf = 0;
-    let i = locate(plan, useEditor.getState().time).index;
-    const start = () => {
-      const st = useEditor.getState();
-      const loc = locate(plan, st.time >= total - 0.05 ? 0 : st.time);
+    let i = 0;
+    let clock: { t0: number; at: number } | null = null;
+    const runClock = (at: number) => {
+      v.pause();
+      clock = { t0: performance.now(), at };
+    };
+    const from = useEditor.getState().time >= end - 0.05 ? 0 : useEditor.getState().time;
+    if (from >= mainEnd - 0.01) runClock(from);
+    else {
+      const loc = locate(plan, from);
       i = loc.index;
       const s = plan.segments[i];
-      v.currentTime = s.start + ((st.time >= total - 0.05 ? 0 : st.time) - loc.offset) * s.speed;
+      v.currentTime = s.start + (from - loc.offset) * s.speed;
       v.playbackRate = s.speed;
       v.play().catch(() => setPlaying(false));
-    };
+    }
     const tick = () => {
+      if (clock) {
+        const t = clock.at + (performance.now() - clock.t0) / 1000;
+        if (t >= end) return seek(end), setPlaying(false);
+        seek(t);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
       const s = plan.segments[i];
       if (v.currentTime >= s.end - 0.01) {
         if (i + 1 >= plan.segments.length) {
+          if (end > mainEnd + 0.05) {
+            runClock(mainEnd);
+            raf = requestAnimationFrame(tick);
+            return;
+          }
           v.pause();
-          seek(total);
+          seek(end);
           setPlaying(false);
           return;
         }
@@ -79,7 +102,6 @@ export function Viewer() {
       seek(off + Math.max(0, v.currentTime - cur.start) / cur.speed);
       raf = requestAnimationFrame(tick);
     };
-    start();
     raf = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(raf);
@@ -99,12 +121,18 @@ export function Viewer() {
 
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
+  const cutoutUrl = useEditor((s) => s.cutoutUrl);
+  const behind = Boolean(cue?.look.behind);
+  // A caption set to "behind me": make (or load the cached) person cutout once.
+  const anyBehind = cues.some((c) => c.look.behind);
+  useEffect(() => void (anyBehind && !cutoutUrl && useEditor.getState().prepareCutout()), [anyBehind, cutoutUrl]);
   const place = placement(plan, a ? pictureSize(a).width : 16, a ? pictureSize(a).height : 9, frameSize.w, frameSize.h);
 
   // Drag the picture to move it, like in a phone editor. One undo step per drag.
   const [dragging, setDragging] = useState(false);
   const startDrag = (e: React.PointerEvent) => {
     if (e.button !== 0 || !frameSize.w) return;
+    useEditor.getState().selectCue(null); // clicking the picture (not a caption) closes the caption's style bar
     const { checkpoint, live } = useEditor.getState();
     const start = useEditor.getState().plan;
     const x0 = e.clientX;
@@ -139,7 +167,7 @@ export function Viewer() {
   if (!project) return <div className="viewer" />;
   return (
     <div className="viewer">
-      <div className="viewer-stage">
+      <div className="viewer-stage" ref={stage}>
         <div
           className={`viewer-frame ${dragging ? "dragging" : ""}`}
           ref={frame}
@@ -151,6 +179,8 @@ export function Viewer() {
           <div
             className="video-box"
             style={{
+              // Past the end of the main track the picture is black, like the export.
+              visibility: time >= mainEnd ? "hidden" : undefined,
               width: place.w,
               height: place.h,
               left: place.cx - place.w / 2,
@@ -170,6 +200,22 @@ export function Viewer() {
           {/* Animated captions are drawn by the Remotion layer instead of the editable plain caption. */}
           {cue && frameSize.w > 0 && plan.captions.animation === "none" && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
           <MotionPreview />
+          {/* "Behind me": the person, cut out, drawn over the caption (same place and zoom as the video). */}
+          {cutoutUrl && (
+            <div
+              className="video-box cutout-box"
+              style={{
+                visibility: behind && time < mainEnd ? "visible" : "hidden",
+                width: place.w,
+                height: place.h,
+                left: place.cx - place.w / 2,
+                top: place.cy - place.h / 2,
+                transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined,
+              }}
+            >
+              <CutoutVideo url={cutoutUrl} main={video} zoom={seg?.zoom ?? 1} />
+            </div>
+          )}
           {/* Markers near the playhead (all of them while pointing), numbered like in the AI box. */}
           {markers
             .filter((m) => pointing || Math.abs(m.time - time) < 0.4)
@@ -195,9 +241,32 @@ export function Viewer() {
             />
           )}
         </div>
+        <CaptionToolbar stage={stage} />
       </div>
     </div>
   );
+}
+
+/** The see-through person, kept on the same frame as the main video (it plays muted alongside it). */
+function CutoutVideo({ url, main, zoom }: { url: string; main: React.RefObject<HTMLVideoElement | null>; zoom: number }) {
+  const el = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    let raf = 0;
+    const sync = () => {
+      const v = main.current;
+      const c = el.current;
+      if (v && c && c.readyState > 0) {
+        if (Math.abs(c.currentTime - v.currentTime) > (v.paused ? 0.02 : 0.12)) c.currentTime = v.currentTime;
+        c.playbackRate = v.playbackRate;
+        if (v.paused && !c.paused) c.pause();
+        if (!v.paused && c.paused) c.play().catch(() => {});
+      }
+      raf = requestAnimationFrame(sync);
+    };
+    raf = requestAnimationFrame(sync);
+    return () => cancelAnimationFrame(raf);
+  }, [main]);
+  return <video ref={el} src={url} muted preload="auto" style={{ transform: zoom > 1 ? `scale(${zoom})` : undefined }} />;
 }
 
 /** Routes the preview's sound through the same voice tweaks the export applies. */

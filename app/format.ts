@@ -15,5 +15,8 @@ export function shortTime(t: number): string {
 /** Music and sound-effect files (everything else in the library is video). */
 export const isAudio = (path: string) => /\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
 
+/** A voiceover made in the Voice page (saved in work/voiceovers). */
+export const isGeneratedVoice = (path: string) => path.includes("/work/voiceovers/");
+
 /** URL the app's media:// handler serves a local file at (same as electron/media.ts). */
 export const mediaUrl = (path: string) => `media://local/?p=${encodeURIComponent(path)}`;

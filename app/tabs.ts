@@ -6,7 +6,7 @@ import { useEditor } from "./store.ts";
 type EditorState = ReturnType<typeof useEditor.getState>;
 const KEYS = [
   "project", "plan", "past", "future", "messages", "time", "pxPerSec", "selected", "picked", "pickedIds", "selectedCue",
-  "selectedVo", "selectedBroll", "selectedMotion", "markers", "pointing", "leftView", "rightTab", "exported", "library",
+  "selectedVo", "selectedBroll", "selectedMotion", "markers", "pointing", "leftView", "exported", "library", "voiceTakes", "voiceDraft", "cutoutUrl",
 ] as const satisfies readonly (keyof EditorState)[];
 type Snapshot = Pick<EditorState, (typeof KEYS)[number]>;
 

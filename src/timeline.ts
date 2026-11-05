@@ -1,10 +1,48 @@
 // Timeline math shared by the renderer and the app's live preview: where each segment sits
 // in the output, and which caption shows when. Pure functions, no Node or browser APIs.
-import type { Caption, EditPlan, Word } from "./schema.ts";
+import type { Caption, CaptionLook, EditPlan, Word } from "./schema.ts";
 import { round } from "./round.ts";
 
 /** A caption placed on the OUTPUT timeline, ready to draw. index points into captionsOf(). */
-export type Cue = { index: number; text: string; start: number; end: number; x: number; y: number };
+export type Cue = { index: number; text: string; start: number; end: number; x: number; y: number; look: Look };
+
+/** A caption's final look: the captions' look with its own changes on top. */
+export type Look = Required<CaptionLook>;
+
+/** The dark box minimal captions have always had, when no background colour is chosen. */
+export const DEFAULT_BOX = "#0000008c";
+
+/** The box behind a caption as a CSS colour, or "" for none. */
+export function lookBox(look: Look): string {
+  const c = look.background || (look.outline === "box" ? DEFAULT_BOX : "");
+  if (!c) return "";
+  const a = parseInt(c.slice(7, 9), 16) / 255;
+  return a > 0 ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${a.toFixed(3)})` : "";
+}
+
+export function captionLook(plan: EditPlan, own?: CaptionLook): Look {
+  const c = plan.captions;
+  const all: Look = {
+    font: c.font ?? "Arial",
+    size: c.size,
+    color: c.color,
+    bold: c.bold ?? true,
+    italic: c.italic ?? false,
+    underline: c.underline ?? false,
+    strike: c.strike ?? false,
+    outline: c.outline ?? (c.style === "bold" ? "outline" : "box"),
+    behind: c.behind ?? false,
+    // The word being said: the highlight colour for highlight captions, otherwise the text colour.
+    highlight: c.animation === "highlight" ? c.highlight : null,
+    background: "",
+  };
+  return { ...all, ...Object.fromEntries(Object.entries(own ?? {}).filter(([, v]) => v !== undefined)) } as Look;
+}
+
+/** One caption's text size in pixels for a frame (its own size multiplier on the captions' base). */
+export function cueFontSize(plan: EditPlan, look: Look, width: number, height: number): number {
+  return Math.min(width, height) * (plan.captions.style === "bold" ? 0.075 : 0.05) * look.size;
+}
 
 /** Maps a source time into the output timeline, or undefined when that moment was cut. */
 export function toOutputTime(plan: EditPlan, t: number): number | undefined {
@@ -27,8 +65,18 @@ export function toSourceTime(plan: EditPlan, t: number): number {
   return plan.segments.at(-1)?.end ?? 0;
 }
 
+/** Length of the main track (Track 1) after cuts and speed changes. */
 export function outputDuration(plan: EditPlan): number {
   return plan.segments.reduce((sum, s) => sum + (s.end - s.start) / s.speed, 0);
+}
+
+/**
+ * Length of the whole edit: the main track, or longer when a B-roll, text or audio clip runs past
+ * its end (the picture is black there, under whatever is on the other tracks).
+ */
+export function editDuration(plan: EditPlan): number {
+  const ends = [...plan.broll, ...plan.motion, ...plan.voiceovers].map((c) => c.at + c.duration);
+  return Math.max(outputDuration(plan), ...ends);
 }
 
 /** Captions made from the transcript: a few words each, breaking at pauses and sentence ends. */
@@ -79,6 +127,7 @@ export function buildCues(plan: EditPlan, words: Word[]): Cue[] {
       end,
       x: plan.captions.x + (c.x ?? 0),
       y: plan.captions.y + (c.y ?? 0),
+      look: captionLook(plan, c.look),
     });
   });
   cues.sort((a, b) => a.start - b.start);

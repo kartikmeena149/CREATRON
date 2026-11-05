@@ -67,7 +67,7 @@ export function App() {
         if (paths.length) addMedia(paths);
       }}
     >
-      <TopBar onLink={() => setLinkOpen(true)} onAuto={() => setAutoOpen(true)}
+      <TopBar
         aiOpen={aiOpen} onToggleAi={() => setAiOpen(!aiOpen)} />
       <div className="body" style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${sizes.ai}px` : "minmax(0, 1fr)" }}>
         <div className="editor" style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${sizes.timeline}px` }}>
@@ -88,7 +88,7 @@ export function App() {
         </div>
         {aiOpen && <>
           <Splitter dir="x" value={sizes.ai} min={300} max={680} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
-          <AIPanel />
+          <AIPanel onAuto={() => setAutoOpen(true)} />
         </>}
       </div>
       {autoOpen && (
@@ -111,7 +111,7 @@ export function App() {
   );
 }
 
-function TopBar(p: { onLink: () => void; onAuto: () => void; aiOpen: boolean; onToggleAi: () => void }) {
+function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   const { project, plan, exporting, exported, set, commit } = useEditor();
   const doExport = async () => {
     const s = useEditor.getState();
@@ -134,10 +134,6 @@ function TopBar(p: { onLink: () => void; onAuto: () => void; aiOpen: boolean; on
       <div className="brand" title="Creatron"><Icon name="grid" size={14} /> Creatron</div>
       <ProjectTabs />
       <div className="grow" />
-      <button className="chip-btn" title="Import from link" onClick={p.onLink}><Icon name="link" size={14} /> Link</button>
-      <button className="chip-btn auto" title="Auto Edit: Claude makes the whole finished video" onClick={p.onAuto}>
-        <Icon name="sparkle" size={14} /> Auto Edit
-      </button>
       {project && (
         <label className="aspect-pick" title="Frame">
           <Icon name="phone" size={14} />
@@ -198,6 +194,7 @@ const RAIL: [LeftView, IconName, string][] = [
   ["media", "folder", "Library"],
   ["clip", "sliders", "Clip & frame"],
   ["audio", "music", "Audio"],
+  ["voice", "mic", "Voice"],
   ["captions", "cc", "Captions"],
   ["text", "type", "Text"],
 ];

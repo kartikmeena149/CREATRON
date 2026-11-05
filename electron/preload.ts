@@ -11,6 +11,8 @@ const api = {
   pickVideo: (): Promise<string | undefined> => ipcRenderer.invoke("pick-video"),
   pickLibrary: (): Promise<string[]> => ipcRenderer.invoke("pick-library"),
   importVideo: (path: string) => ipcRenderer.invoke("import-video", path),
+  personCutout: (path: string) => ipcRenderer.invoke("person-cutout", path),
+  enhancePrompt: (request: string, model: string, path?: string) => ipcRenderer.invoke("enhance-prompt", request, model, path),
   aiEdit: (path: string, request: string, current: unknown, model?: string, focus?: unknown) =>
     ipcRenderer.invoke("ai-edit", path, request, current, model, focus),
   models: () => ipcRenderer.invoke("models"),
@@ -18,6 +20,7 @@ const api = {
   linkInfo: (url: string) => ipcRenderer.invoke("link-info", url),
   linkDownload: (opts: unknown) => ipcRenderer.invoke("link-download", opts),
   onLinkProgress: on("link-progress"),
+  onVoiceProgress: on("voice-progress"),
   exportVideo: (path: string, plan: unknown) => ipcRenderer.invoke("export", path, plan),
   pickMedia: (kind: "video" | "any"): Promise<string | undefined> => ipcRenderer.invoke("pick-media", kind),
   autoEditStart: (opts: { video: string; brief: string; reference?: string; model: string }) => ipcRenderer.invoke("autoedit-start", opts),
