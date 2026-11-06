@@ -17,15 +17,17 @@ export type Placement = {
  * Then the user's scale, shift (fractions of the frame) and rotation are applied.
  */
 export function placement(plan: EditPlan, srcW: number, srcH: number, outW: number, outH: number): Placement {
-  const cover = Math.max(outW / srcW, outH / srcH);
-  const k = cover * plan.transform.scale;
-  return {
-    w: srcW * k,
-    h: srcH * k,
-    cx: outW / 2 + plan.transform.x * outW,
-    cy: outH / 2 + plan.transform.y * outH,
-    rotate: plan.transform.rotate,
-  };
+  return placeBox(plan.transform, srcW, srcH, outW, outH);
+}
+
+/**
+ * Where a picture sits in the frame: at scale 1 it just covers the frame (its own shape kept),
+ * smaller or bigger from there, its middle shifted by x / y (fractions of the frame). The main
+ * video and every clip on the upper tracks (videos, photos) are placed the same way.
+ */
+export function placeBox(t: { scale?: number; x?: number; y?: number; rotate?: number }, srcW: number, srcH: number, outW: number, outH: number): Placement {
+  const k = Math.max(outW / srcW, outH / srcH) * (t.scale ?? 1);
+  return { w: srcW * k, h: srcH * k, cx: outW / 2 + (t.x ?? 0) * outW, cy: outH / 2 + (t.y ?? 0) * outH, rotate: t.rotate ?? 0 };
 }
 
 export const isIdentity = (t: EditPlan["transform"]) => t.scale === 1 && t.x === 0 && t.y === 0 && t.rotate === 0;

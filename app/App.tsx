@@ -3,6 +3,7 @@ import { AIPanel } from "./AIPanel.tsx";
 import { AutoEdit } from "./AutoEdit.tsx";
 import { Inspector } from "./Inspector.tsx";
 import { LinkImport } from "./LinkImport.tsx";
+import { useMagnet } from "./magnet.ts";
 import { Timeline } from "./Timeline.tsx";
 import { Viewer } from "./Viewer.tsx";
 import { Icon, type IconName } from "./icons.tsx";
@@ -10,14 +11,17 @@ import { type LeftView, useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
 import { ClipMenu } from "./ClipMenu.tsx";
 import * as act from "./clipActions.ts";
-import { isAudio } from "./format.ts";
+import { isAudio, isImage } from "./format.ts";
 import { Splitter, defaultSize, useLayoutSizes } from "./Splitter.tsx";
+import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
+import { deleteSceneKey } from "./SceneLayers.tsx";
 
 export function App() {
   const { project, status, set, load } = useEditor();
+  const sceneImport = useEditor((s) => s.sceneImport);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
-  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState<false | "video" | "audio">(false);
   const [autoOpen, setAutoOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [sizes, setSizes] = useLayoutSizes();
@@ -25,6 +29,8 @@ export function App() {
   const leftOpen = useEditor((s) => s.leftView !== null || s.picked.length + s.pickedIds.length > 1);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
+  // Fonts edits brought into Creatron, ready for captions and the preview.
+  useEffect(() => void useEditor.getState().loadFontLibrary(), []);
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
   useEffect(() => window.creatron.onOpenPath((p: string) => open(p)), []);
@@ -35,26 +41,36 @@ export function App() {
    */
   // All files of one drop or pick go in together: added one by one, each would race to become the main video.
   const addMedia = async (given?: string[]) => {
-    const paths = given ?? (await window.creatron.pickLibrary());
+    let paths = given ?? (await window.creatron.pickLibrary());
+    // A Claude edit (HyperFrames folder or .html) goes to its import dialog instead.
+    const edits = await Promise.all(paths.map((p) => window.creatron.isScene(p)));
+    const edit = paths.find((_, i) => edits[i]);
+    if (edit) set({ sceneImport: edit });
+    paths = paths.filter((_, i) => !edits[i]);
     const s = useEditor.getState();
-    const main = s.project ? undefined : (paths.find((p) => !isAudio(p)) ?? paths[0]);
+    // Photos can't be a main track: the first video, else the first recording (a faceless video).
+    const main = s.project ? undefined : (paths.find((p) => !isAudio(p) && !isImage(p)) ?? paths.find((p) => isAudio(p)));
     for (const p of paths) if (p !== main) s.addToLibrary(p);
     if (paths.length) s.set({ leftView: "media" });
     if (main) await open(main);
   };
 
-  /** Opens a video as the main video (V1): here if the tab is empty, otherwise in a new tab. */
-  const open = async (path?: string) => {
+  /**
+   * Opens a video as the main video (V1): here if the tab is empty (or `here`, a clip dropped on an
+   * empty timeline), otherwise in a new tab.
+   */
+  const open = async (path?: string, here = false): Promise<boolean> => {
     path ??= await window.creatron.pickVideo();
-    if (!path) return;
+    if (!path) return false;
     setImporting(true);
     setError("");
     const r = await window.creatron.importVideo(path);
     setImporting(false);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) return setError(r.error), false;
     // A tab that already has a video keeps it: the new one opens in its own tab.
-    if (useEditor.getState().project) useTabs.getState().add();
+    if (useEditor.getState().project && !here) useTabs.getState().add();
     load({ path, ...r.value });
+    return true;
   };
 
   return (
@@ -75,7 +91,7 @@ export function App() {
             <Rail />
             {leftOpen && <>
               <div className="inspector-wrap" style={{ width: sizes.left }}>
-                <Inspector onOpen={() => addMedia()} onLink={() => setLinkOpen(true)} onOpenMain={open} />
+                <Inspector onOpen={() => addMedia()} onLink={(kind) => setLinkOpen(kind)} onOpenMain={open} />
               </div>
               <Splitter dir="x" value={sizes.left} min={220} max={560} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
             </>}
@@ -84,7 +100,7 @@ export function App() {
             </main>
           </div>
           <Splitter dir="y" value={sizes.timeline} min={150} max={Math.max(200, window.innerHeight - 260)} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
-          <Timeline onOpenMain={open} />
+          <Timeline onOpenMain={(p) => open(p, true)} />
         </div>
         {aiOpen && <>
           <Splitter dir="x" value={sizes.ai} min={300} max={680} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
@@ -97,7 +113,8 @@ export function App() {
         </Catch>
       )}
       <ClipMenu />
-      {linkOpen && <LinkImport onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
+      {sceneImport && <SceneImport key={sceneImport} path={sceneImport} onClose={() => set({ sceneImport: null })} onOpenMain={open} />}
+      {linkOpen && <LinkImport key={linkOpen} audio={linkOpen === "audio"} onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
       {importing && (
         <div className="overlay">
           <div className="overlay-card">
@@ -194,7 +211,7 @@ const RAIL: [LeftView, IconName, string][] = [
   ["media", "folder", "Library"],
   ["clip", "sliders", "Clip & frame"],
   ["audio", "music", "Audio"],
-  ["voice", "mic", "Voice"],
+  ["voice", "mic", "Voice Studio"],
   ["captions", "cc", "Captions"],
   ["text", "type", "Text"],
 ];
@@ -222,6 +239,9 @@ function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => 
         <button className="primary" onClick={onOpen}>Choose video</button>
         <p className="dim small auto-hint">
           or <button className="link" onClick={onAuto}>✨ Auto Edit</button>: Claude makes the whole finished video for you
+        </p>
+        <p className="dim small auto-hint">
+          or <button className="link" onClick={pickClaudeEdit}>Import a Claude edit</button>: a HyperFrames video, with every layer and keyframe editable
         </p>
         {error && <p className="error">{error}</p>}
       </div>
@@ -252,11 +272,15 @@ function useShortcuts() {
         const clip = act.selectedClip();
         if (clip && clip.kind !== "segment") act.split(clip);
         else s.split();
+      } else if (e.key === "n" || e.key === "N") {
+        useMagnet.getState().toggle();
       } else if (e.key === "m" || e.key === "M") {
         const clip = act.selectedClip();
         if (act.groupRefs().length) act.toggleMuteGroup();
         else if (clip && act.canMute(clip)) act.toggleMute(clip);
       } else if ((e.key === "Backspace" || e.key === "Delete") && act.groupRefs().length) s.deleteSelection();
+      else if ((e.key === "Backspace" || e.key === "Delete") && s.openScene && s.sceneKey) deleteSceneKey();
+      else if ((e.key === "Backspace" || e.key === "Delete") && s.openScene && s.selectedLayer) s.editLayer(s.openScene, s.selectedLayer, (x) => ({ ...x, hidden: true }));
       else if (e.key === "Backspace" || e.key === "Delete") s.selectedMotion !== null ? s.deleteMotion(s.selectedMotion) : s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));
       else if (e.key === "ArrowRight") s.seek(s.time + (e.shiftKey ? 1 : frame));

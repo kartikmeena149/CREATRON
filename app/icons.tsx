@@ -19,6 +19,7 @@ const PATHS = {
   scissors: "M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
   bolt: "M13 2 4 14h7l-1 8 9-12h-7z",
+  magnet: "M5 4h4v8a3 3 0 0 0 6 0V4h4v8a7 7 0 0 1-14 0zM5 8h4M15 8h4",
   skipBack: "M19 20 9 12l10-8zM5 19V5",
   skipFwd: "M5 4l10 8-10 8zM19 5v14",
   play: "M7 4v16l13-8z",

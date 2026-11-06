@@ -1,17 +1,29 @@
-// The clip menu: right-click (or double-click) any clip on the timeline.
+// The clip menu: right-click (or double-click) any clip on the timeline, or anything in the Library.
 import { useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import * as act from "./clipActions.ts";
 import { Icon, type IconName } from "./icons.tsx";
+import { freeTrack } from "../src/tracks.ts";
+import { isGeneratedVoice, isImage } from "./format.ts";
 import { locate, useEditor } from "./store.ts";
 
-/** What was right-clicked: a clip, or one caption on the Captions track. */
-type Target = act.ClipRef | { kind: "caption"; index: number };
+/** What was right-clicked: a clip, one caption on the Captions track, or a file in the Library. */
+type Media = { kind: "media"; path: string; length?: number; audio: boolean; made: boolean; onOpenMain: (path: string) => void };
+type Target = act.ClipRef | { kind: "caption"; index: number } | Media;
 
 const useMenu = create<{ open: { x: number; y: number; ref: Target; group?: boolean } | null }>(() => ({ open: null }));
 
+/** Opens the menu for a file in the Library (it knows whether Creatron made the file, so it may be trashed). */
+export async function openMediaMenu(e: React.MouseEvent, media: Omit<Media, "kind" | "made">) {
+  e.preventDefault();
+  e.stopPropagation();
+  const at = { x: e.clientX, y: e.clientY };
+  const made = await window.creatron.madeByCreatron(media.path);
+  useMenu.setState({ open: { ...at, ref: { kind: "media", ...media, made } } });
+}
+
 /** Opens the menu for a clip at the pointer, and selects the clip. */
-export function openClipMenu(e: React.MouseEvent, ref: Target) {
+export function openClipMenu(e: React.MouseEvent, ref: Exclude<Target, Media>) {
   e.preventDefault();
   e.stopPropagation();
   const s = useEditor.getState();
@@ -56,7 +68,7 @@ export function ClipMenu() {
     <>
       <div className="menu-catcher" onPointerDown={close} onContextMenu={(e) => (e.preventDefault(), close())} />
       <div className="clip-menu" ref={box} style={{ left: pos.x || open.x, top: pos.y || open.y }}>
-        {open.group ? groupItems(item, sep) : ref.kind === "caption" ? captionItems(ref.index, item, sep) : clipItems(ref, item, sep)}
+        {open.group ? groupItems(item, sep) : ref.kind === "caption" ? captionItems(ref.index, item, sep) : ref.kind === "media" ? mediaItems(ref, item, sep) : clipItems(ref, item, sep)}
       </div>
     </>
   );
@@ -73,7 +85,10 @@ function clipItems(ref: act.ClipRef, item: Item, sep: (key: string) => React.Rea
   })();
   const list: React.ReactNode[] = [];
   // Editing the text itself comes first for text clips.
-  if (ref.kind === "motion") {
+  if (ref.kind === "motion" && act.textStyle(ref) === "scene") {
+    list.push(item("layers", "Open layers", () => s.set({ openScene: ref.id, selectedLayer: null, sceneKey: null, leftView: "text" })));
+    list.push(sep("text"));
+  } else if (ref.kind === "motion") {
     list.push(item("type", "Edit text", () => s.set({ leftView: "text" })));
     if (act.textStyle(ref) !== "custom") {
       list.push(item("type", "Big title", () => act.setTextStyle(ref, "title"), undefined, { on: act.textStyle(ref) === "title" }));
@@ -86,7 +101,11 @@ function clipItems(ref: act.ClipRef, item: Item, sep: (key: string) => React.Rea
   list.push(item("duplicate", "Duplicate", () => act.duplicate(ref), "⌘D"));
   list.push(item("scissors", "Split at playhead", () => act.split(ref), "S", { disabled: !playheadInside, title: playheadInside ? undefined : "Move the playhead into this clip first" }));
   if (act.canHide(ref)) list.push(item(act.isHidden(ref) ? "eye" : "eyeOff", act.isHidden(ref) ? "Show" : "Hide", () => act.toggleHide(ref)));
-  list.push(item("trash", "Delete", () => act.remove(ref), "⌫", { danger: true }));
+  list.push(item("trash", deleteLabel(ref), () => act.remove(ref), "⌫", { danger: true }));
+  if (ref.kind === "segment" && s.plan.segments[ref.index]?.picture === false)
+    list.push(item("video", "Restore picture", () => s.updateSegment(ref.index, { picture: undefined })));
+  if (ref.kind === "segment" && s.plan.segments[ref.index]?.sound === false)
+    list.push(item("volume", "Restore sound", () => s.updateSegment(ref.index, { sound: undefined })));
   if (act.canMute(ref)) {
     list.push(sep("sound"));
     list.push(item(act.isMuted(ref) ? "volume" : "mute", act.isMuted(ref) ? "Unmute" : "Mute", () => act.toggleMute(ref), "M"));
@@ -124,5 +143,63 @@ function captionItems(index: number, item: Item, sep: (key: string) => React.Rea
     sep("caption"),
     item("eyeOff", "Hide all captions", () => s.setCaptionStyle({ enabled: false })),
     item("trash", "Delete caption", () => s.deleteCaption(index), "⌫", { danger: true }),
+  ];
+}
+
+/** A main-track clip deletes only its selected half (picture or sound) while it still has both. */
+function deleteLabel(ref: act.ClipRef): string {
+  if (ref.kind !== "segment") return "Delete";
+  const s = useEditor.getState();
+  const seg = s.plan.segments[ref.index];
+  const picture = Boolean(s.project?.analysis.width) && seg?.picture !== false;
+  const sound = Boolean(s.project?.analysis.hasAudio) && seg?.sound !== false;
+  if (!picture || !sound) return "Delete";
+  return s.selectedPart === "sound" ? "Delete sound" : "Delete picture";
+}
+
+/**
+ * A file in the Library: put it on the timeline at the playhead, make it the main track, find it,
+ * or take it out of the library. Files Creatron made (downloads, voiceovers) can go to the Trash
+ * (and come back from there) while nothing uses them; your own files are never deleted from here.
+ */
+function mediaItems(m: Media, item: Item, sep: (key: string) => React.ReactNode) {
+  const s = useEditor.getState();
+  const name = m.path.split("/").pop() ?? m.path;
+  const isMain = s.project?.path === m.path;
+  const used = isMain || s.plan.broll.some((b) => b.file === m.path) || s.plan.voiceovers.some((v) => v.file === m.path);
+  const photo = isImage(m.path);
+  const len = !photo && m.length && Number.isFinite(m.length) ? m.length : 5;
+  const voice = isGeneratedVoice(m.path);
+  const addToTimeline = () => {
+    if (m.audio) {
+      const kind = voice ? "voice" : "music";
+      return s.addVoiceover({ file: m.path, duration: len, text: name, voice: "", kind, track: freeTrack(s.plan, kind, s.time, len), volumeDb: kind === "music" ? -12 : 0 });
+    }
+    s.addBroll({ file: m.path, length: photo ? 3600 : len, duration: len, source: `library:${m.path}`, query: name, track: freeTrack(s.plan, "video", s.time, len) });
+  };
+  const forget = () => {
+    const st = useEditor.getState();
+    st.set({ library: st.library.filter((p) => p !== m.path), voiceTakes: st.voiceTakes.filter((t) => t.file !== m.path) });
+  };
+  return [
+    item("plus", m.audio ? (voice ? "Add to a voiceover track" : "Add to a music track") : "Add to timeline", addToTimeline, undefined, {
+      disabled: !s.project || isMain, title: isMain ? "This is the main track" : s.project ? "At the playhead, on a free track" : "Open a main video first",
+    }),
+    ...(photo ? [] : [item("video", m.audio ? "Use as main audio" : "Use as main video", () => m.onOpenMain(m.path), undefined, {
+      disabled: isMain, title: isMain ? "It's already the main track" : m.audio ? "Makes a faceless video over this recording" : undefined,
+    })]),
+    sep("find"),
+    item("folder", "Show in Finder", () => void window.creatron.reveal(m.path)),
+    item("copy", "Copy file path", () => void navigator.clipboard.writeText(m.path)),
+    sep("remove"),
+    item("close", "Remove from library", forget, undefined, {
+      disabled: isMain, title: isMain ? "The main track stays in the library" : "The file stays on your Mac",
+    }),
+    ...(m.made ? [item("trash", "Move to Trash", async () => {
+      if (!confirm(`Move “${name}” to the Trash?\n\nYou can put it back from the Trash.`)) return;
+      const r = await window.creatron.trashMedia(m.path);
+      if (r.ok) forget();
+      else alert(r.error);
+    }, undefined, { danger: true, disabled: used, title: used ? "It's used in this edit: take it off the timeline first" : "Moves the file to the Trash" })] : []),
   ];
 }

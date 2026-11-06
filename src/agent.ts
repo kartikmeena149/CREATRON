@@ -11,6 +11,7 @@ import { z } from "zod";
 import { agentDir, compileCustom, customDir, customFiles } from "./customcode.ts";
 import { outputSize } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
+import { sceneLibrary } from "./sceneFiles.ts";
 import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll, unknownAudio, useAttachments } from "./plan.ts";
 import { renderOverlayStill } from "./remotion.ts";
 import { type Analysis, EditPlan, checkPlan } from "./schema.ts";
@@ -127,7 +128,7 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
 async function markerFrames(dir: string, analysis: Analysis, plan: EditPlan, markers: Marker[]): Promise<string[]> {
   const size = outputSize(plan, analysis);
   const fps = analysis.fps;
-  const props = overlayProps(plan, analysis.words, size, fps);
+  const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
   const overlay = hasOverlay(plan, analysis.words);
   rmSync(join(dir, "markers"), { recursive: true, force: true });
   mkdirSync(join(dir, "markers"), { recursive: true });
@@ -157,7 +158,7 @@ async function markerFrames(dir: string, analysis: Analysis, plan: EditPlan, mar
 async function reviewFrames(dir: string, analysis: Analysis, plan: EditPlan) {
   const size = outputSize(plan, analysis);
   const fps = analysis.fps;
-  const props = overlayProps(plan, analysis.words, size, fps);
+  const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
   const out: { file: string; what: string }[] = [];
   for (const m of plan.motion.filter((x) => x.template === "custom").slice(0, 3)) {
     for (const k of [0.3, 0.7]) {

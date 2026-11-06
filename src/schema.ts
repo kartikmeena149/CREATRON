@@ -2,6 +2,8 @@
 // The model writes it, the user tweaks it, ffmpeg renders it. Times are in seconds
 // of the SOURCE video unless a field says otherwise.
 import { z } from "zod";
+import { TEST_FONTS } from "./fonts.ts";
+import { LayerEdit } from "./scene.ts";
 
 export const Segment = z
   .object({
@@ -15,6 +17,20 @@ export const Segment = z
       .max(2)
       .default(1)
       .describe("This clip's original sound: 1 = as recorded, 0.2 = 20%, 0 = muted, 1.5 = louder"),
+    picture: z
+      .boolean()
+      .optional()
+      .describe("false = this clip's picture was deleted: black there (B-roll and text above still show) while its sound plays on"),
+    gap: z
+      .number()
+      .min(0)
+      .max(3600)
+      .optional()
+      .describe("Seconds of empty (black, silent) timeline before this clip; set by dragging with the magnet off. Usually absent"),
+    sound: z
+      .boolean()
+      .optional()
+      .describe("false = this clip's sound was deleted (silent there, the picture stays). Muting is volume 0 instead"),
   })
   .refine((s) => s.end > s.start, { message: "end must be after start" });
 
@@ -25,13 +41,16 @@ export const Segment = z
 /** How captions look. On the captions as a whole, or on one caption (only what differs). */
 export const CAPTION_FONTS = [
   // Bundled with Creatron (src/fonts.ts), then the Mac's own.
-  "Anton", "Bebas Neue", "Archivo Black", "Poppins", "Bangers", "Luckiest Guy", "Lilita One", "Permanent Marker",
+  "Anton", "Bebas Neue", "Archivo Black", "Poppins", "Inter", "Bangers", "Luckiest Guy", "Lilita One", "Permanent Marker",
   "Arial", "Arial Black", "Helvetica Neue", "Avenir Next", "Avenir Next Condensed", "Futura", "Impact", "Gill Sans",
   "Rockwell", "Georgia", "Didot", "American Typewriter", "Copperplate", "Menlo", "Marker Felt", "Chalkboard SE",
-] as const;
+  // Then the try-out fonts.
+  ...new Set(TEST_FONTS.map((f) => f.family)),
+];
 export const CaptionLook = z.object({
   font: z.string().optional().describe("A font from CAPTION_FONTS, e.g. Impact"),
   size: z.number().min(0.3).max(4).optional().describe("Size multiplier, 1 = normal"),
+  wrapAt: z.number().min(0.3).max(4).optional().describe("The size the line width was set for: lines wrap at 86% of the frame at this size and scale with the text from there, so resizing keeps the line breaks"),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   bold: z.boolean().optional(),
   italic: z.boolean().optional(),
@@ -41,6 +60,7 @@ export const CaptionLook = z.object({
   behind: z.boolean().optional().describe("Drawn behind the person in the video (the person stays in front of the text)"),
   highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional().describe("Colour of the word being said; null = same as the text"),
   background: z.string().regex(/^(#[0-9a-fA-F]{8})?$/).optional().describe('Box colour behind the text as #RRGGBBAA; "" = no box (the outline style still applies)'),
+  align: z.enum(["center", "left", "right"]).optional().describe("Lines centred, or lined up on the left / right of a column as wide as the wrap width"),
 });
 export type CaptionLook = z.infer<typeof CaptionLook>;
 
@@ -99,6 +119,10 @@ export const Broll = z.object({
   credit: z.string().optional(),
   hidden: z.boolean().optional().describe("Switched off by the user; keep as it is"),
   muted: z.boolean().optional().describe("Whether its own sound is off. Leave unset: stock B-roll is silent, the user's own videos play their sound"),
+  scale: z.number().min(0.05).max(5).optional().describe("Size: 1 (or absent) fills the frame; 0.4 = a smaller picture-in-picture"),
+  x: z.number().min(-1.5).max(1.5).optional().describe("Shift of its middle from the frame's middle, as a fraction of the frame width"),
+  y: z.number().min(-1.5).max(1.5).optional().describe("Shift of its middle from the frame's middle, as a fraction of the frame height"),
+  rotate: z.number().min(-180).max(180).optional().describe("Turned this many degrees, clockwise"),
 });
 export type Broll = z.infer<typeof Broll>;
 
@@ -110,14 +134,23 @@ export const Motion = z.object({
   id: z.string().default(""),
   track: z.number().int().min(1).default(1).describe("Text track it sits on: 1, 2… Higher tracks draw on top"),
   template: z
-    .enum(["title", "lower-third", "custom"])
-    .describe("title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom; custom = an animation written for this project (component)"),
+    .enum(["title", "lower-third", "custom", "scene"])
+    .describe(
+      "title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom; custom = an animation written for this project (component); " +
+        "scene = a Claude edit the user imported (its layers and keyframes live in the scene file; never create one)",
+    ),
   component: z
     .string()
     .regex(/^[A-Z][A-Za-z0-9]*$/)
     .optional()
     .describe("custom only: the component's name, its file is custom/<component>.tsx"),
   props: z.record(z.string(), z.unknown()).default({}).describe("custom only: extra props for the component"),
+  scene: z.string().optional().describe("scene only: the imported edit's scene.json. Keep as it is"),
+  offset: z.number().min(0).optional().describe("scene only: seconds into the scene where this clip starts (after a trim or split)"),
+  layers: z
+    .record(z.string(), LayerEdit)
+    .optional()
+    .describe("scene only: changes to its layers by layer id (new text, CSS like colour or font size, keyframes). Change text and colours here when asked"),
   text: z.string().max(200).default("").describe("The main words, short (2-6 words)"),
   subtext: z.string().max(80).default("").describe("Optional smaller second line"),
   atSource: z.number().min(0).optional().describe("Transcript second where it should appear (use this; the app converts it)"),
@@ -128,7 +161,7 @@ export const Motion = z.object({
 });
 export type Motion = z.infer<typeof Motion>;
 
-export const CAPTION_ANIMATIONS = ["none", "pop", "highlight", "word"] as const;
+export const CAPTION_ANIMATIONS = ["none", "pop", "highlight", "word", "kinetic", "doc", "glow", "spec"] as const;
 
 export const DEFAULT_CAPTIONS = {
   enabled: false,
@@ -141,6 +174,7 @@ export const DEFAULT_CAPTIONS = {
   uppercase: true,
   animation: "none" as const,
   highlight: "#facc15",
+  accents: [] as string[],
   font: "Arial",
   bold: true,
   italic: false,
@@ -177,13 +211,25 @@ export const EditPlan = z.object({
       x: z.number().min(-0.5).max(0.5).default(0),
       y: z.number().min(-0.5).max(0.5).default(0.2).describe("0.2 = a little below the middle; negative = higher"),
       size: z.number().min(0.4).max(3).default(1).describe("Text size multiplier"),
+      wrapAt: z.number().min(0.3).max(4).optional().describe("The size the line width was set for (see CaptionLook.wrapAt); unset = 1"),
+      align: z.enum(["center", "left", "right"]).optional().describe("Unset: centred. left / right line every caption up on one edge of its column"),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#ffffff"),
       uppercase: z.boolean().default(true),
       animation: z
         .enum(CAPTION_ANIMATIONS)
         .default("none")
-        .describe("none = plain; pop = each caption pops in; highlight = the word being said lights up; word = one big word at a time"),
+        .describe(
+          "none = plain; pop = each caption pops in; highlight = the word being said lights up; word = one big word at a time; " +
+            "Kartik's styles: kinetic = words sharpen out of a blur, the key word slams in big in the accent, phrases push past; " +
+            "doc = words rise out of a blur, now and then a key word in serif italic accent; glow = each word flashes in as a glowing block; " +
+            "spec = words slide in, key word in accent with an underline, numbers as chips, the previous line dimmed above",
+        ),
       highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Color of the word being said (highlight / word)"),
+      accents: z
+        .array(z.string().regex(/^#[0-9a-fA-F]{6}$/))
+        .max(4)
+        .default([])
+        .describe("Accent palette: caption by caption the word being said takes these colours in turn (highlight / word); empty = highlight"),
       font: z.string().default("Arial").describe("Caption font, one of CAPTION_FONTS"),
       bold: z.boolean().default(true),
       italic: z.boolean().default(false),

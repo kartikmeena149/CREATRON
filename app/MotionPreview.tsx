@@ -10,20 +10,35 @@ import { registerCustom } from "../motion/custom.ts";
 import { Overlay } from "../motion/Overlay.tsx";
 import { outputSize } from "../src/frame.ts";
 import { hasOverlay, overlayProps } from "../src/motion.ts";
+import type { EditPlan } from "../src/schema.ts";
 import { effectivePlan } from "../src/tracks.ts";
 import { useEditor } from "./store.ts";
 
 export function MotionPreview() {
-  const { plan: edit, project, time } = useEditor();
+  const { plan: edit, project, time, playing } = useEditor();
   // Text on hidden tracks stays out of the preview, like the export.
   const plan = useMemo(() => effectivePlan(edit), [edit]);
   const a = project!.analysis;
   const fps = a.fps;
-  const props = useMemo(() => overlayProps(plan, a.words, outputSize(plan, a), fps), [plan, a, fps]);
+  const scenes = useSceneFiles(plan);
+  const props = useMemo(() => overlayProps(plan, a.words, outputSize(plan, a), fps, { scenes, prefix: MEDIA_PREFIX }), [plan, a, fps, scenes]);
   const player = useRef<PlayerRef>(null);
   const loaded = useCustomCode(project!.path, plan.motion.some((m) => m.template === "custom"), plan);
-  // The editor owns the clock (the video plays, the playhead follows); the layer just shows that frame.
-  useEffect(() => player.current?.seekTo(Math.round(time * fps)), [time, fps, props, loaded]);
+  // The editor owns the clock (the video plays, the playhead follows). Paused, the layer shows that
+  // exact frame. Playing, it plays along by itself (its videos play instead of being sought every
+  // frame, which stutters) and is only put back when it drifts a few frames off.
+  useEffect(() => {
+    const p = player.current;
+    if (!p) return;
+    const frame = Math.round(time * fps);
+    if (!playing) {
+      p.pause();
+      p.seekTo(frame);
+    } else if (!p.isPlaying() || Math.abs(p.getCurrentFrame() - frame) > Math.max(3, fps / 6)) {
+      p.seekTo(frame);
+      p.play();
+    }
+  }, [time, playing, fps, props, loaded]);
   if (!hasOverlay(plan, a.words)) return null;
   return (
     <Player
@@ -41,6 +56,21 @@ export function MotionPreview() {
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 4 }}
     />
   );
+}
+
+// Scene files load through media:// like every other file (see mediaUrl).
+const MEDIA_PREFIX = "media://local/?p=";
+
+/** The imported Claude edits the plan uses, loaded from disk once each (after a reopen or an undo brings one back). */
+export function useSceneFiles(plan: EditPlan) {
+  const scenes = useEditor((s) => s.scenes);
+  const files = plan.motion.filter((m) => m.template === "scene" && m.scene).map((m) => m.scene!);
+  const missing = files.filter((f) => !scenes[f]).join("\n");
+  useEffect(() => {
+    for (const file of missing ? missing.split("\n") : [])
+      window.creatron.loadScene(file).then((r) => r.ok && useEditor.setState((s) => ({ scenes: { ...s.scenes, [file]: r.value } })));
+  }, [missing]);
+  return scenes;
 }
 
 /** Loads the project's AI-written animations (compiled by the main process) into the registry. Returns their version. */

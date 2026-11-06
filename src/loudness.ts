@@ -22,8 +22,12 @@ const DUCK_RAMP = 0.25; // seconds to fade the original down/up around a voiceov
 /** The per-segment audio chain: speed, 10 ms fades at every cut so joins don't click. */
 export function segmentAudio(s: Segment, i: number): string {
   const fadeOut = Math.max((s.end - s.start) / s.speed - 0.01, 0).toFixed(3);
-  const volume = (s.volume ?? 1) === 1 ? "" : `volume=${(s.volume ?? 1).toFixed(3)},`;
-  return `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},${volume}afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01,aresample=48000[a${i}]`;
+  // A clip whose sound was deleted plays silent, like a muted one.
+  const level = s.sound === false ? 0 : (s.volume ?? 1);
+  const volume = level === 1 ? "" : `volume=${level.toFixed(3)},`;
+  // The empty gap before the clip (magnet off): silence first.
+  const gap = s.gap ? `,adelay=delays=${Math.round(s.gap * 1000)}:all=1` : "";
+  return `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},${volume}afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01${gap},aresample=48000[a${i}]`;
 }
 
 /** Filter that takes the mix to the target level. */

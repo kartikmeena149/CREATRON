@@ -2,11 +2,12 @@
 // as a transparent PNG. The renderer overlays them as one image stream. (The ffmpeg we ship
 // later will have libass; this keeps the prototype working with any ffmpeg build.)
 import { GlobalFonts, createCanvas } from "@napi-rs/canvas";
+import { libraryFonts } from "./fontLibrary.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EditPlan } from "./schema.ts";
-import { type Cue, cueFontSize, lookBox } from "./timeline.ts";
-import { BUNDLED_FONTS } from "./fonts.ts";
+import { type Cue, captionWrapWidth, cueFontSize, lookBox } from "./timeline.ts";
+import { BUNDLED_FONTS, TEST_FONTS } from "./fonts.ts";
 import { ROOT } from "./tools.ts";
 
 // Fallback so emoji in captions draw in colour instead of as empty boxes. Caption fonts are the Mac's
@@ -17,8 +18,9 @@ const EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc";
 export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: number, dir: string, total: number): string {
   GlobalFonts.registerFromPath(EMOJI_FONT, "CaptionEmoji");
   // Creatron's own caption fonts (Anton, Bebas Neue, Poppins…), by family name like the Mac's.
-  for (const f of BUNDLED_FONTS) GlobalFonts.registerFromPath(join(ROOT, "motion", "fonts", f.file), f.family);
-  const maxWidth = width * 0.86;
+  for (const f of [...BUNDLED_FONTS, ...TEST_FONTS]) GlobalFonts.registerFromPath(join(ROOT, "motion", "fonts", f.file), f.family);
+  // And the fonts edits brought into Creatron's library.
+  for (const f of libraryFonts()) GlobalFonts.registerFromPath(f.file, f.family);
 
   const blank = join(dir, "cap-blank.png");
   writeFileSync(blank, createCanvas(width, height).toBuffer("image/png"));
@@ -34,15 +36,19 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
     const look = cue.look;
     const size = Math.round(cueFontSize(plan, look, width, height));
     ctx.font = `${look.italic ? "italic " : ""}${look.bold ? "bold " : ""}${size}px "${look.font}", Arial, CaptionEmoji`;
-    ctx.textAlign = "center";
+    // Aligned captions line up on one edge of their column (as wide as the wrap width).
+    ctx.textAlign = look.align;
     ctx.textBaseline = "middle";
     const text = plan.captions.uppercase ? cue.text.toUpperCase() : cue.text;
-    // Typed line breaks are kept; long lines wrap at 86% of the frame width.
-    const wrapped = text.split("\n").flatMap((part) => wrap(ctx, part, maxWidth));
+    // Typed line breaks are kept; long lines wrap at a width that grows with the text size.
+    const wrapped = text.split("\n").flatMap((part) => wrap(ctx, part, captionWrapWidth(look, width)));
     const lineHeight = size * 1.2;
     const centerX = width * (0.5 + cue.x);
+    const column = captionWrapWidth(look, width);
+    const textX = look.align === "left" ? centerX - column / 2 : look.align === "right" ? centerX + column / 2 : centerX;
     const centerY = height * (0.5 + cue.y);
     const top = centerY - ((wrapped.length - 1) * lineHeight) / 2;
+    const lineLeft = (w: number) => (look.align === "left" ? textX : look.align === "right" ? textX - w : textX - w / 2);
 
     const box = lookBox(look);
     if (box) {
@@ -50,7 +56,7 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
       const h = wrapped.length * lineHeight + size * 0.4;
       ctx.fillStyle = box;
       ctx.beginPath();
-      ctx.roundRect(centerX - w / 2, centerY - h / 2, w, h, size * 0.3);
+      ctx.roundRect(look.align === "center" ? centerX - w / 2 : lineLeft(w - size) - size / 2, centerY - h / 2, w, h, size * 0.3);
       ctx.fill();
     }
     wrapped.forEach((line, n) => {
@@ -62,12 +68,12 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
         ctx.lineJoin = "round";
         ctx.lineWidth = size * 0.16;
         ctx.strokeStyle = "black";
-        ctx.strokeText(line, centerX, y);
-        for (const by of bars) ctx.strokeRect(centerX - w / 2, by - size * 0.035, w, size * 0.07);
+        ctx.strokeText(line, textX, y);
+        for (const by of bars) ctx.strokeRect(lineLeft(w), by - size * 0.035, w, size * 0.07);
       }
       ctx.fillStyle = look.color;
-      ctx.fillText(line, centerX, y);
-      for (const by of bars) ctx.fillRect(centerX - w / 2, by - size * 0.035, w, size * 0.07);
+      ctx.fillText(line, textX, y);
+      for (const by of bars) ctx.fillRect(lineLeft(w), by - size * 0.035, w, size * 0.07);
     });
 
     const file = join(dir, `cap-${String(i).padStart(4, "0")}.png`);

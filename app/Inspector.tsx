@@ -2,19 +2,21 @@
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
 import { useEffect, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
-import { isAudio, isGeneratedVoice, mediaUrl, shortTime, timecode } from "./format.ts";
+import { isAudio, isGeneratedVoice, isImage, mediaUrl, shortTime, timecode } from "./format.ts";
 import { Icon } from "./icons.tsx";
 import * as act from "./clipActions.ts";
 import { VoiceLab } from "./VoiceLab.tsx";
-import { CaptionList } from "./CaptionList.tsx";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
+import { pickClaudeEdit } from "./SceneImport.tsx";
 import { PositionSize } from "./PositionSize.tsx";
+import { openMediaMenu } from "./ClipMenu.tsx";
 import { useEditor } from "./store.ts";
+import { useTabs } from "./tabs.ts";
 
-const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice" };
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice Studio" };
 
-export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: (kind: "video" | "audio") => void; onOpenMain: (path: string) => void }) {
   const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
 
   // Selecting something on the timeline opens the page that edits it.
@@ -38,7 +40,7 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
   if (view === "media") return (
     <aside className="panel inspector">
       {head}
-      <Library onAdd={onOpen} onLink={onLink} onOpenMain={onOpenMain} />
+      <Library onAdd={onOpen} onLink={() => onLink("video")} onOpenMain={onOpenMain} />
     </aside>
   );
   // Voices (clone, script, generate) work before any video is open.
@@ -95,12 +97,11 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
       <PositionSize />
       </>}
 
-      {view === "captions" && <>
-        <CaptionStyle />
-        <CaptionList />
-      </>}
+      {view === "captions" && <CaptionStyle />}
 
       {view === "audio" && <AudioClip />}
+
+      {view === "audio" && <Music onAdd={onOpen} onLink={() => onLink("audio")} onOpenMain={onOpenMain} />}
 
       {view === "audio" && (
       <section>
@@ -139,15 +140,60 @@ function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () 
           <input value={query} placeholder="Search project media…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
         </label>
         <button className="lib-add" onClick={onAdd}><Icon name="plus" size={14} /> Add</button>
-        <button className="lib-add icon" onClick={onLink} title="Import from link"><Icon name="link" size={14} /></button>
+        <button className="lib-add" onClick={onLink} title="Import a video from a YouTube, Instagram, X, Vimeo… link"><Icon name="link" size={14} /> From link</button>
+        <button className="lib-add" onClick={pickClaudeEdit} title="Import a Claude edit (a HyperFrames project): every layer, text, colour and keyframe comes in editable"><Icon name="layers" size={14} /> Claude edit</button>
+        <KeepLibrary />
       </div>
       {!library.length && <p className="hint pad">Add a video, or drop one anywhere in the window.</p>}
       {library.length > 0 && !shown.length && <p className="hint pad">No media matches “{query}”.</p>}
       <div className="media-grid">
         {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
       </div>
-      {library.length > 0 && <p className="hint pad">Drag videos, music or sound effects onto any track. Double-click one to make it the main track (a voice recording makes a faceless video).</p>}
+      {library.length > 0 && <p className="hint pad">Drag videos, photos, music or sound effects onto any track. Double-click a video to open it as the main video in a new tab.</p>}
     </>
+  );
+}
+
+/** Whether a new tab starts with this library (so your clips are there in every project). */
+function KeepLibrary() {
+  const { keepLibrary, setKeepLibrary } = useTabs();
+  return (
+    <div className="lib-keep" title="When off, a new tab starts with an empty library">
+      <Icon name="layers" size={13} />
+      <span>Keep these clips in new tabs</span>
+      <button className={`toggle ${keepLibrary ? "on" : ""}`} role="switch" aria-checked={keepLibrary} onClick={() => setKeepLibrary(!keepLibrary)}><i /></button>
+    </div>
+  );
+}
+
+/** The Audio panel's music: the library's sound files, and music from a link (downloaded as an mp3). */
+function Music({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () => void; onOpenMain: (path: string) => void }) {
+  const library = useEditor((s) => s.library);
+  const [query, setQuery] = useState("");
+  const music = library.filter((p) => isAudio(p) && !isGeneratedVoice(p));
+  const shown = music.filter((p) => baseName(p).toLowerCase().includes(query.trim().toLowerCase()));
+  return (
+    <section>
+      <h3>Music</h3>
+      <div className="lib-actions">
+        <label className="lib-search">
+          <Icon name="search" size={14} />
+          <input value={query} placeholder="Search music…" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        </label>
+        <button className="lib-add" onClick={onAdd}><Icon name="plus" size={14} /> Add</button>
+        <button className="lib-add" onClick={onLink} title="Download music from a YouTube, SoundCloud… link, or a direct .mp3 link, as an mp3"><Icon name="link" size={14} /> From link</button>
+      </div>
+      {!music.length && <p className="hint">Download music from a YouTube, SoundCloud or .mp3 link as an mp3, or add a file from your Mac.</p>}
+      {music.length > 0 && !shown.length && <p className="hint">No music matches “{query}”.</p>}
+      {shown.length > 0 && (
+        <>
+          <div className="media-grid">
+            {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
+          </div>
+          <p className="hint">Drag a track onto the timeline: it lands on a Music track, at -12 dB under your voice.</p>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -216,16 +262,18 @@ function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: stri
   const mainUrl = useEditor((s) => s.project?.videoUrl);
   const [length, setLength] = useState<number>();
   const audio = isAudio(path);
+  const photo = isImage(path);
   return (
     <div
       className={`media-card ${main ? "main" : ""} ${audio ? "audio" : ""}`}
-      title={path}
+      title={`${baseName(path)}\nDrag onto the timeline · right-click for more`}
       draggable
+      onContextMenu={(e) => openMediaMenu(e, { path, length, audio, onOpenMain })}
       onDragStart={(e) => {
         e.dataTransfer.setData(MEDIA_DRAG, JSON.stringify({ path, length, audio }));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      onDoubleClick={() => !main && onOpenMain(path)}
+      onDoubleClick={() => !main && !photo && onOpenMain(path)}
     >
       <div className="media-thumb">
         {audio ? (
@@ -233,10 +281,12 @@ function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: stri
             <div className={`audio-tile ${isGeneratedVoice(path) ? "voice" : ""}`}><Icon name={isGeneratedVoice(path) ? "mic" : "music"} size={28} /></div>
             <audio src={mediaUrl(path)} preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
           </>
+        ) : photo ? (
+          <img src={mediaUrl(path)} alt="" />
         ) : (
           <video src={`${main ? mainUrl : mediaUrl(path)}#t=1`} muted preload="metadata" onLoadedMetadata={(e) => setLength(e.currentTarget.duration)} />
         )}
-        {length !== undefined && <span className="pill left">{shortTime(length)}</span>}
+        {photo ? <span className="pill left">Photo</span> : length !== undefined && <span className="pill left">{shortTime(length)}</span>}
         {main && <span className="pill right">Main</span>}
       </div>
       <div className="media-name"><Icon name="play" size={10} fill /> <span>{baseName(path)}</span></div>

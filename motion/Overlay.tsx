@@ -3,11 +3,14 @@
 // it with @remotion/renderer and lays it on top. Props come from overlayProps() in src/motion.ts.
 import type React from "react";
 import { useEffect, useState } from "react";
-import { AbsoluteFill, continueRender, delayRender, interpolate, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { lookBox } from "../src/timeline.ts";
+import { AbsoluteFill, continueRender, delayRender, interpolate, OffthreadVideo, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { alignBox, captionWrapWidth, lookBox } from "../src/timeline.ts";
 import { loadBundledFonts } from "./fonts.ts";
 import type { OverlayCue, OverlayProps } from "../src/motion.ts";
 import { customComponent } from "./custom.ts";
+import { SceneView } from "./Scene.tsx";
+import { parseFontFace, videoSpan } from "../src/scene.ts";
+import { DocCaption, GlowCaption, KineticCaption, SpecCaption } from "./StyledCaptions.tsx";
 
 const FONT = "Arial, Helvetica, sans-serif";
 // Outline drawn with shadows around the letters, the same look as the plain captions.
@@ -20,12 +23,19 @@ export const Overlay: React.FC<OverlayProps> = (props) => {
   // Creatron's caption fonts (Anton, Bebas Neue, Poppins…): frames wait until they're loaded.
   const [fonts] = useState(() => delayRender("caption fonts"));
   useEffect(() => void loadBundledFonts().then(() => continueRender(fonts), () => continueRender(fonts)), [fonts]);
+  // Fonts from Creatron's font library (fonts edits brought in): frames wait for them too.
+  const [library] = useState(() => delayRender("font library"));
+  useEffect(() => void Promise.all((props.fonts ?? []).map(loadFont)).finally(() => continueRender(library)), [library]);
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
   return (
     <AbsoluteFill style={{ fontFamily: FONT }}>
-      {props.motion.map((m, i) => (m.template === "custom" ? <Custom key={i} {...m} W={props.width} H={props.height} /> : null))}
+      {props.motion.map((m, i) =>
+        m.template === "custom" ? <Custom key={i} {...m} W={props.width} H={props.height} />
+        : m.template === "scene" && m.scene ? <SceneItem key={i} {...m} prefix={props.assetPrefix ?? ""} W={props.width} H={props.height} />
+        : null,
+      )}
       {props.motion.filter((m) => t >= m.at && t < m.at + m.duration).map((m, i) =>
         m.template === "title" ? <Title key={i} {...m} W={props.width} H={props.height} /> : m.template === "lower-third" ? <LowerThird key={i} {...m} W={props.width} H={props.height} /> : null,
       )}
@@ -49,6 +59,66 @@ function Custom({ component, props, text, subtext, color, at, duration, W, H }: 
   );
 }
 
+/** An imported Claude edit: its layers, timed from `at`, fitted into the frame. */
+function SceneItem({ scene, at, duration, prefix, W, H }: OverlayProps["motion"][number] & { prefix: string; W: number; H: number }) {
+  const { fps } = useVideoConfig();
+  const { data, dir, offset } = scene!;
+  const url = (file: string) => (/^[a-z]+:/i.test(file) ? file : `${prefix}${encodeURIComponent(`${dir}/${file}`)}`);
+  // Frames wait for the edit's fonts, so no frame is drawn in a stand-in font.
+  const [fonts] = useState(() => delayRender(`fonts of ${data.name}`));
+  useEffect(() => void Promise.all(data.fonts.map((rule) => loadFace(rule, url))).finally(() => continueRender(fonts)), [fonts]);
+  return (
+    <Sequence from={Math.round(at * fps)} durationInFrames={Math.max(1, Math.round(duration * fps))} layout="none">
+      <SceneFrame scene={data} offset={offset} url={url} W={W} H={H} />
+    </Sequence>
+  );
+}
+
+/** Loads one @font-face rule of a scene into the page's fonts; failures are left to the fallback. */
+function loadFace(rule: string, url: (f: string) => string): Promise<unknown> {
+  const face = parseFontFace(rule);
+  return face ? loadFont({ ...face, url: url(face.src) }) : Promise.resolve();
+}
+
+const added = new Set<string>();
+/**
+ * Adds a font file to the page once (fetched as bytes: the app's media:// files can't be a
+ * font's url(), the export's http ones could); failures are left to the fallback.
+ */
+export function loadFont(f: { family: string; url: string; weight: string; style: string; unicodeRange?: string }): Promise<unknown> {
+  const key = `${f.family}|${f.url}|${f.weight}|${f.style}`;
+  if (added.has(key)) return Promise.resolve();
+  added.add(key);
+  const desc = { weight: f.weight, style: f.style, ...(f.unicodeRange ? { unicodeRange: f.unicodeRange } : {}) };
+  return fetch(f.url)
+    .then((r) => r.arrayBuffer())
+    .then((data) => new FontFace(f.family, data, desc).load())
+    .then((face) => document.fonts.add(face), () => {});
+}
+
+/** Inside the clip: frame 0 is `offset` seconds into the scene (after a trim or split). */
+function SceneFrame({ scene, offset, url, W, H }: { scene: NonNullable<OverlayProps["motion"][number]["scene"]>["data"]; offset: number; url: (f: string) => string; W: number; H: number }) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  return (
+    <AbsoluteFill>
+      <SceneView
+        scene={scene}
+        t={frame / fps + offset}
+        url={url}
+        width={W}
+        height={H}
+        // Each video plays from the moment it first shows, from where the edit had it in its file.
+        video={(l, src, style) => (
+          <Sequence from={Math.round(((l.media?.start ?? 0) - offset) * fps)} durationInFrames={Math.max(1, Math.round((videoSpan(l, scene.duration)[1] - (l.media?.start ?? 0)) * fps))} layout="none">
+            <OffthreadVideo src={src} muted trimBefore={Math.round((l.media?.offset ?? 0) * fps)} playbackRate={l.media?.rate ?? 1} style={style} pauseWhenBuffering={false} />
+          </Sequence>
+        )}
+      />
+    </AbsoluteFill>
+  );
+}
+
 /** Seconds since `at`, and a 0→1 spring that starts there. */
 function useEntry(at: number, config = { damping: 13, stiffness: 180, mass: 0.6 }) {
   const frame = useCurrentFrame();
@@ -58,8 +128,20 @@ function useEntry(at: number, config = { damping: 13, stiffness: 180, mass: 0.6 
 }
 
 function Captions(c: NonNullable<OverlayProps["captions"]> & { t: number; W: number; H: number }) {
-  const cue = c.cues.find((q) => c.t >= q.start && c.t < q.end);
-  if (!cue) return null;
+  const { fps } = useVideoConfig();
+  const at = c.cues.findIndex((q) => c.t >= q.start && c.t < q.end);
+  if (at < 0) return null;
+  const cue = c.cues[at];
+  // Kartik's styles: the previous caption when it's right before this one (kinetic pushes it
+  // past the camera, spec keeps it dimmed above).
+  const before = c.cues[at - 1];
+  const prev = before && cue.start - before.end < 0.05 ? before : undefined;
+  const { t, W, H: _, ...caps } = c;
+  const styled = { cue, prev, t, fps, c: caps, W };
+  if (c.animation === "kinetic") return <KineticCaption {...styled} />;
+  if (c.animation === "doc") return <DocCaption key={cue.start} {...styled} />;
+  if (c.animation === "glow") return <GlowCaption key={cue.start} {...styled} />;
+  if (c.animation === "spec") return <SpecCaption {...styled} />;
   return <Cue key={cue.start} cue={cue} {...c} />;
 }
 
@@ -75,8 +157,9 @@ function Cue({ cue, ...c }: { cue: OverlayCue } & NonNullable<OverlayProps["capt
     left: `${(0.5 + cue.x) * 100}%`,
     top: `${(0.5 + cue.y) * 100}%`,
     width: "max-content",
-    maxWidth: c.W * 0.86,
+    maxWidth: look ? captionWrapWidth(look, c.W) : c.W * 0.86,
     textAlign: "center",
+    ...(look ? alignBox(look, c.W) : {}),
     lineHeight: 1.2,
     fontFamily: look ? `"${look.font}", ${FONT}` : FONT,
     fontWeight: look && !look.bold ? 400 : 700,

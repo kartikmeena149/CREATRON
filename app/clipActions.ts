@@ -24,7 +24,8 @@ export function selectedClip(): ClipRef | null {
 
 export function select(ref: ClipRef) {
   const s = useEditor.getState();
-  if (ref.kind === "segment") s.select(ref.index);
+  // The same clip again keeps the half that was picked (its sound, when right-clicked on the Audio lane).
+  if (ref.kind === "segment") s.select(ref.index, s.selected === ref.index ? s.selectedPart : "picture");
   else if (ref.kind === "broll") s.selectBroll(ref.id);
   else if (ref.kind === "motion") s.selectMotion(ref.id);
   else s.selectVo(ref.id);
@@ -89,7 +90,7 @@ export function split(ref: ClipRef) {
   const cut = s.time - c.at;
   if (cut < 0.2 || c.duration - cut < 0.2) return;
   const first = { ...c, duration: cut };
-  const second = { ...c, id: newId(ref.kind[0]), at: s.time, duration: c.duration - cut, ...("offset" in c ? { offset: c.offset + cut } : {}) };
+  const second = { ...c, id: newId(ref.kind[0]), at: s.time, duration: c.duration - cut, ...("offset" in c ? { offset: (c.offset ?? 0) + cut } : {}) };
   const list = (s.plan[listOf[ref.kind]] as Free[]).flatMap((x) => (x.id === c.id ? [first, second] : [x]));
   commitFree(ref.kind, list as Free[]);
   select({ kind: ref.kind, id: second.id } as ClipRef);
@@ -97,7 +98,7 @@ export function split(ref: ClipRef) {
 
 export function remove(ref: ClipRef) {
   const s = useEditor.getState();
-  if (ref.kind === "segment") return s.select(ref.index), s.deleteSelected();
+  if (ref.kind === "segment") return s.select(ref.index, s.selectedPart), s.deleteSelected();
   if (ref.kind === "broll") return s.deleteBroll(ref.id);
   if (ref.kind === "motion") return s.deleteMotion(ref.id);
   return s.deleteVoiceover(ref.id);

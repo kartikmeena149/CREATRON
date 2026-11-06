@@ -1,6 +1,7 @@
 // "＋ Import from link": paste a YouTube / Instagram / X / Vimeo… link, see what it is, then
 // download it (or just a from-to part) into the library, onto the timeline at the playhead
-// (full length, with its sound), or as the main video.
+// (full length, with its sound), or as the main video. With `audio` it's music: just the sound, as an
+// mp3, into the library or onto a Music track at the playhead.
 // The first time, the user agrees once that they have the right to use what they download.
 import { useEffect, useState } from "react";
 import type { LinkInfo } from "../src/webvideo.ts";
@@ -56,7 +57,7 @@ function parseTime(s: string): number | undefined {
   return parts.reduce((sum, n) => sum * 60 + n, 0);
 }
 
-export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpenMain: (path: string) => void }) {
+export function LinkImport({ onClose, onOpenMain, audio = false }: { onClose: () => void; onOpenMain: (path: string) => void; audio?: boolean }) {
   const { project } = useEditor();
   const [agreed, setAgreed] = useState(rightsAgreed);
   const [url, setUrl] = useState("");
@@ -73,7 +74,7 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
     setBusy("looking");
     setError("");
     setInfo(undefined);
-    const r = await window.creatron.linkInfo(url.trim());
+    const r = await window.creatron.linkInfo(url.trim(), audio);
     setBusy("");
     if (r.ok) setInfo(r.value);
     else setError(r.error);
@@ -96,6 +97,7 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
     setBusy("downloading");
     setProgress(0);
     setError("");
+    if (audio) return downloadMusic(to === "timeline");
     const r = await window.creatron.linkDownload({ url: info.url, id: info.id, site: info.site, ...range, purpose: to === "main" ? "main" : "broll" });
     setBusy("");
     if (!r.ok) return setError(r.error);
@@ -111,6 +113,21 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
     s.addBroll({ file: r.value.file, length, duration: length, track, source: `link:${info.site.toLowerCase()}:${info.id}`, query: info.title, credit });
   };
 
+  // Music: the mp3 goes into the library (shown in the Audio panel), and onto a free Music track at
+  // the playhead when asked, at -12 dB like music dropped from the library.
+  const downloadMusic = async (onTimeline: boolean) => {
+    const r = await window.creatron.linkAudio({ url: info!.url, id: info!.id, site: info!.site, ...range });
+    setBusy("");
+    if (!r.ok) return setError(r.error);
+    const s = useEditor.getState();
+    onClose();
+    s.addToLibrary(r.value.file);
+    s.set({ leftView: "audio" });
+    if (!onTimeline) return;
+    const length = r.value.length;
+    s.addVoiceover({ file: r.value.file, duration: length, text: info!.title, voice: "", kind: "music", track: freeTrack(s.plan, "music", s.time, length), volumeDb: -12 });
+  };
+
   return (
     <div className="overlay" onPointerDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <div className="link-card" onKeyDown={(e) => e.stopPropagation()}>
@@ -119,14 +136,14 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
         ) : (
           <>
             <div className="link-head">
-              <b>Import from link</b>
+              <b>{audio ? "Music from link" : "Import from link"}</b>
               <button className="ghost" disabled={Boolean(busy)} onClick={onClose}>✕</button>
             </div>
             <div className="link-row">
               <input
                 className="vl-input"
                 autoFocus
-                placeholder="Paste a YouTube, Instagram, X, Vimeo… link"
+                placeholder={audio ? "Paste a YouTube, SoundCloud, Bandcamp… link, or a link to an .mp3" : "Paste a YouTube, Instagram, X, Vimeo… link"}
                 value={url}
                 disabled={busy === "downloading"}
                 onChange={(e) => setUrl(e.target.value)}
@@ -144,7 +161,7 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
                     {info.cc && " · Creative Commons"}
                   </div>
                   <div className="link-range">
-                    <span className="dim small">Only part of it (optional):</span>
+                    <span className="dim small">{audio ? "Only part of the track (optional):" : "Only part of it (optional):"}</span>
                     <input className="vl-input" placeholder="from 0:00" value={from} onChange={(e) => setFrom(e.target.value)} />
                     <input className="vl-input" placeholder={`to ${shortTime(info.duration)}`} value={to} onChange={(e) => setTo(e.target.value)} />
                   </div>
@@ -159,7 +176,21 @@ export function LinkImport({ onClose, onOpenMain }: { onClose: () => void; onOpe
               </div>
             )}
             {error && <p className="error small">{error}</p>}
-            {info && (
+            {info && audio && (
+              <div className="link-actions">
+                <button
+                  disabled={!project?.analysis || Boolean(busy) || Boolean(rangeError)}
+                  title={project ? "As an mp3 on a free Music track at the playhead (also added to the library)" : "Open a main video first"}
+                  onClick={() => download("timeline")}
+                >
+                  Add to music track
+                </button>
+                <button className="primary" disabled={Boolean(busy) || Boolean(rangeError)} title="Download it as an mp3 into this project's library" onClick={() => download("library")}>
+                  Download mp3
+                </button>
+              </div>
+            )}
+            {info && !audio && (
               <div className="link-actions">
                 <button disabled={Boolean(busy) || Boolean(rangeError)} onClick={() => download("main")}>Open as main video</button>
                 <button

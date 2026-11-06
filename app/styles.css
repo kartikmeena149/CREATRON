@@ -129,13 +129,15 @@ button.link:hover { text-decoration: underline; background: none; }
   display: flex; align-items: center; justify-content: space-between;
 }
 .pad { padding: 4px 18px; }
-.lib-actions { display: flex; gap: 8px; padding: 6px 18px 14px; }
+/* Search across the top, then Add and From link side by side, the same size */
+.lib-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 6px 18px 14px; }
+.lib-actions .lib-search { grid-column: 1 / -1; }
 .lib-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; background: var(--panel-2); border: 1px solid transparent; border-radius: 9px; color: var(--faint); }
 .lib-search:focus-within { border-color: #3a3a3a; }
 .lib-search input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--text); font: inherit; }
 .lib-search input::placeholder { color: var(--faint); }
 .lib-add { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; background: var(--raised); border: none; border-radius: 9px; color: var(--text); font-weight: 500; }
-.lib-add.icon { width: 36px; padding: 0; }
+.lib-add svg { flex: none; color: var(--dim); }
 .lib-add:hover:not(:disabled) { background: var(--hover); border: none; }
 /* Cards keep one small size: a wider panel fits more of them instead of making them bigger. */
 .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 112px)); justify-content: start; gap: 8px; padding: 0 16px 8px; }
@@ -755,3 +757,394 @@ body.resizing-x video, body.resizing-y video, body.resizing-x iframe { pointer-e
 .ctb-behind span { font-size: 11px; font-weight: 600; }
 .ctb-behind.on { color: #fff; background: var(--accent); }
 .ctb-behind.on:hover:not(:disabled) { background: var(--accent-2); }
+.ctb-hex > input:not([type="color"]):not([type="range"]) { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--text); font: 12px "SF Mono", ui-monospace, monospace; letter-spacing: 0.04em; }
+.ctb-alpha { font-size: 11px; }
+/* The style bar keeps its one-line shape wherever it sits: positioned from the middle (docked)
+   a box would otherwise only get half the width and wrap. It wraps only if the viewer is too narrow. */
+.caption-toolbar { width: max-content; }
+
+/* Captions page: Presets / Transcript tabs */
+.cap-tabs { margin: 4px 0 12px; }
+.cap-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 0; }
+.caption-style .cap-section { padding: 14px 0 0; border-bottom: none; }
+.cap-group { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; margin: 4px 0 8px; }
+.cap-badge { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--raised); color: var(--text); }
+.cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.cap-tile {
+  position: relative; aspect-ratio: 3 / 4; padding: 0; overflow: hidden; border-radius: 9px;
+  border: 1.5px solid var(--line); background: linear-gradient(160deg, #4a4f5c, #23262e 70%);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.cap-tile:hover:not(:disabled) { border-color: var(--accent); }
+.cap-tile.on { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(139, 123, 255, 0.35); }
+.cap-tile:disabled { opacity: 0.45; cursor: default; }
+.cap-sample { position: relative; z-index: 1; padding: 0 8px; line-height: 1.02; text-align: center; font-size: 15px; overflow-wrap: anywhere; }
+.cap-sample.behind { align-self: flex-start; margin-top: 14%; }
+.cap-sample.outline { -webkit-text-stroke: 0.6px #000; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+.cap-sample.box > span, .cap-sample.box:not(:has(span)) { background: rgba(0, 0, 0, 0.55); padding: 1px 2px; border-radius: 3px; }
+.cap-person { position: absolute; z-index: 2; left: 15%; bottom: 0; width: 70%; fill: #15171c; }
+.cap-name {
+  position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; padding: 14px 8px 6px; text-align: left;
+  font-size: 12px; font-weight: 600; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+}
+
+/* Animated captions: the Remotion layer draws the text, this box only takes clicks and drags. */
+.caption.ghost span { color: transparent !important; text-shadow: none !important; background: transparent !important; text-decoration: none !important; }
+.caption.ghost.editing span { color: #fff !important; background: rgba(0, 0, 0, 0.7) !important; }
+
+/* Selected caption: a blue box with round corner handles that resize it, and centre guides while moving */
+.caption { --sel: #2f8cff; cursor: grab; }
+.caption.dragging { cursor: grabbing; }
+.caption:hover:not(.selected) { outline: 1px solid rgba(47, 140, 255, 0.7); outline-offset: 6px; }
+.caption.selected { outline: 1.5px solid var(--sel); outline-offset: 6px; }
+.caption.editing { outline-color: #fff; }
+.cap-handle {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 1.5px solid var(--sel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); z-index: 1; font-style: normal;
+}
+.cap-handle.nw { left: -13px; top: -13px; cursor: nwse-resize; }
+.cap-handle.ne { right: -13px; top: -13px; cursor: nesw-resize; }
+.cap-handle.sw { left: -13px; bottom: -13px; cursor: nesw-resize; }
+.cap-handle.se { right: -13px; bottom: -13px; cursor: nwse-resize; }
+.cap-handle:hover { transform: scale(1.2); }
+.snap-guide { position: absolute; background: #2f8cff; z-index: 6; pointer-events: none; }
+.snap-guide.v { left: 50%; top: 0; bottom: 0; width: 1px; }
+.snap-guide.h { top: 50%; left: 0; right: 0; height: 1px; }
+
+/* Accent palette in the caption colour panel */
+.ctb-palette { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.ctb-accent { position: relative; }
+.ctb-accent button { width: 30px; height: 30px; padding: 0; border-radius: 8px; border: 2px solid rgba(255, 255, 255, 0.15); cursor: pointer; }
+.ctb-accent.on button { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.ctb-accent i {
+  position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; border-radius: 50%; display: none;
+  place-items: center; font-style: normal; font-size: 11px; line-height: 1; background: #3a3d45; color: #fff; cursor: pointer;
+}
+.ctb-accent:hover i { display: grid; }
+.ctb-accent-add { width: 30px; height: 30px; padding: 0; border-radius: 8px; border: 1.5px dashed rgba(255, 255, 255, 0.3); background: transparent; color: var(--dim); display: grid; place-items: center; }
+.ctb-accent-add:hover { color: var(--text); border-color: var(--accent); }
+.ctb-own { margin-top: 8px; }
+.cap-palette { position: absolute; z-index: 3; top: 7px; right: 7px; display: flex; gap: 3px; }
+.cap-palette i { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.ctb-accent label { display: block; position: relative; overflow: hidden; width: 30px; height: 30px; border-radius: 8px; border: 2px solid rgba(255, 255, 255, 0.15); cursor: pointer; }
+.ctb-accent label:hover { border-color: #fff; }
+.ctb-accent label input { position: absolute; inset: -8px; width: 46px; height: 46px; opacity: 0; cursor: pointer; }
+.inspector section .lib-actions { padding: 0 0 12px; }
+
+/* An audio clip's own sound wave, under its name */
+.vo-wave { position: absolute; left: 0; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.vo-clip .vo-label { z-index: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+
+/* A main-track clip whose picture was deleted: black, striped, its sound still on the Audio track */
+.clip.no-picture { background: repeating-linear-gradient(135deg, #0b0b0b 0 8px, #161616 8px 16px); box-shadow: inset 0 0 0 1px #3a3a3a; }
+.clip.no-picture .clip-label span:first-child { color: var(--dim); }
+.wave-clip.muted { opacity: 0.35; }
+
+/* Voice Lab: the script's language, a compact pill like "Clone a voice" beside the section title */
+.vl-lang { position: relative; display: inline-flex; align-items: center; }
+.vl-lang select {
+  appearance: none; -webkit-appearance: none; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 26px 4px 10px; cursor: pointer; outline: none;
+}
+.vl-lang select:hover { background: var(--hover); }
+.vl-lang select:focus { border-color: var(--accent); }
+.vl-lang::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 6px; height: 6px; margin-top: -5px; pointer-events: none;
+  border-right: 1.5px solid var(--dim); border-bottom: 1.5px solid var(--dim); transform: rotate(45deg);
+}
+.voice-lab .hint .link { padding: 0; font-size: inherit; }
+
+/* ---- Voice page, in the same look as the Library, Audio and Captions pages ---- */
+.voice-lab { padding: 0; }
+.voice-lab section { padding: 14px 18px 16px; }
+.voice-lab section.selected-caption { margin: 12px 18px 0; padding: 10px; }
+.voice-lab .vl-head h3 { margin: 0; }
+
+/* The chosen voice: a card that opens the list of voices */
+.vl-picker { position: relative; }
+.vl-card {
+  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 12px 0 10px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid transparent; border-radius: 10px; color: var(--dim);
+}
+.vl-card:hover { background: var(--raised); }
+.vl-card.open { border-color: var(--accent); }
+.vl-card-text { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
+.vl-card-text b { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vl-card-text span { font-size: 11px; color: var(--faint); }
+.vl-avatar {
+  flex: none; display: grid; place-items: center; border-radius: 50%; font-weight: 600;
+  background: var(--raised); color: var(--dim); box-shadow: inset 0 0 0 1px var(--line);
+}
+.vl-avatar.own { background: linear-gradient(135deg, var(--accent), #8f6cf6); color: #fff; box-shadow: none; }
+.vl-avatar.add { width: 24px; height: 24px; background: transparent; box-shadow: none; border: 1px dashed #4a4a4a; color: var(--dim); }
+.vl-play {
+  flex: none; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border-radius: 50%;
+  background: var(--text); border: none; color: #111;
+}
+.vl-play:hover:not(:disabled) { background: #fff; }
+.vl-menu {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 6px); max-height: 320px; overflow-y: auto; padding: 6px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.vl-menu-group { padding: 8px 8px 4px; font-size: 11px; color: var(--faint); }
+.vl-menu-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-radius: 7px; cursor: pointer; color: var(--text); }
+.vl-menu-item > span:not(.vl-avatar) { flex: 1; }
+.vl-menu-item:hover { background: var(--raised); }
+.vl-menu-item.on { background: rgba(109, 92, 246, 0.16); }
+.vl-menu-item svg { color: var(--accent-2); }
+.vl-del { display: none; width: 24px; height: 24px; padding: 0; place-items: center; border: none; background: transparent; color: var(--faint); border-radius: 6px; }
+.vl-del svg { color: inherit; }
+.vl-menu-item:hover .vl-del { display: grid; }
+.vl-del:hover:not(:disabled) { color: #ff9b9b; background: rgba(255, 107, 107, 0.12); }
+.vl-menu-clone { margin-top: 4px; border-top: 1px solid var(--line-soft); border-radius: 0 0 7px 7px; color: var(--dim); }
+.vl-menu-clone:hover { color: var(--text); }
+
+/* Script: a soft field like the search boxes, with how long it'll run underneath */
+.voice-lab h3 .vl-lang select { font-weight: 500; height: 28px; padding: 0 26px 0 10px; background: var(--panel-2); border-color: transparent; border-radius: 8px; }
+.voice-lab h3 .vl-lang select:hover { background: var(--raised); }
+.vl-script-box { background: var(--panel-2); border: 1px solid transparent; border-radius: 10px; }
+.vl-script-box:focus-within { border-color: var(--accent); }
+.vl-script-box .vl-script {
+  display: block; width: 100%; min-height: 128px; resize: vertical; margin: 0; padding: 10px 12px; font: inherit; font-size: 13px; line-height: 1.5;
+  color: var(--text); background: transparent; border: none; outline: none;
+}
+.vl-script-box .vl-script::placeholder { color: var(--faint); }
+.vl-script-meta { padding: 0 12px 8px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.voice-lab .slider { margin: 14px 0 12px; }
+.vl-usual { margin-right: 8px; font-size: 11px; padding: 0; }
+.vl-generate { display: flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border-radius: 10px; }
+.voice-lab .hint { margin-top: 8px; line-height: 1.5; }
+
+/* Your voiceovers */
+.vl-take { border-radius: 10px; background: var(--panel-2); border-color: transparent; }
+
+/* Hear a voice: round play buttons on the card and on every voice in the list */
+.vl-play.small { width: 24px; height: 24px; background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.vl-play.small:hover:not(:disabled) { background: var(--text); color: #111; box-shadow: none; }
+.vl-play.playing { background: var(--accent); color: #fff; box-shadow: none; }
+.vl-play.playing:hover:not(:disabled) { background: var(--accent-2); color: #fff; }
+.vl-play.loading { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.vl-play .mini-spin { width: 11px; height: 11px; }
+.vl-menu-item .vl-play svg { color: inherit; }
+
+/* Generate: while a voiceover is made the button is its own progress bar */
+.vl-generate { position: relative; overflow: hidden; }
+.vl-generate-label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; }
+.vl-generate-label b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.75; }
+button.primary.vl-generate.busy, button.primary.vl-generate.busy:disabled {
+  opacity: 1; cursor: default; background: var(--raised); border-color: var(--line); color: var(--text);
+}
+.vl-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width 0.15s linear;
+  background: linear-gradient(90deg, var(--accent), #8f6cf6);
+}
+.vl-generate.waiting .vl-fill { width: 35%; animation: vl-sweep 1.3s ease-in-out infinite; }
+
+/* Your voiceovers: each a result card (play, its wave filling in as it plays, add to the timeline) */
+.vl-takes { display: grid; gap: 8px; }
+.vl-take {
+  display: flex; align-items: center; gap: 12px; padding: 12px; cursor: grab;
+  background: var(--panel-2); border: 1px solid transparent; border-radius: 12px;
+}
+.vl-take:hover { background: var(--raised); }
+.vl-take.playing { border-color: rgba(109, 92, 246, 0.55); }
+.vl-take > .vl-play { width: 34px; height: 34px; }
+.vl-take-body { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.vl-take-title { font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vl-take-wave { display: block; width: 100%; height: 26px; cursor: pointer; }
+.vl-take-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.vl-take-meta span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vl-take-add {
+  flex: none; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 50%;
+  background: transparent; border: 1px solid var(--line); color: var(--dim);
+}
+.vl-take-add:hover:not(:disabled) { background: var(--text); border-color: var(--text); color: #111; }
+.vl-take-add.placed { color: var(--accent-2); border-color: rgba(109, 92, 246, 0.5); }
+.vl-take { position: relative; }
+.vl-take-del {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; display: none; place-items: center;
+  border: none; border-radius: 6px; background: transparent; color: var(--faint);
+}
+.vl-take:hover .vl-take-del { display: grid; }
+.vl-take-del:hover:not(:disabled) { color: #ff9b9b; background: rgba(255, 107, 107, 0.12); }
+
+/* Generate when this exact voiceover already exists: a quiet "show it" button instead */
+button.primary.vl-generate.made { background: var(--raised); border-color: var(--line); color: var(--text); }
+button.primary.vl-generate.made:hover:not(:disabled) { background: var(--hover); border-color: var(--line); }
+button.primary.vl-generate.made svg { color: var(--accent-2); }
+/* The card it points at blinks */
+.vl-take.flash { animation: vl-flash 1.2s ease-out; }
+@keyframes vl-flash { 0%, 40% { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(139, 123, 255, 0.35); } 100% { border-color: transparent; box-shadow: none; } }
+
+/* A voice recording as the main track: its wave drawn right in the Track 1 clip (no separate Audio lane) */
+.clip .clip-wave { position: absolute; left: 0; top: 50%; transform: translateY(-50%); margin-top: 5px; pointer-events: none; }
+.clip .clip-label { z-index: 1; }
+
+/* Clone your voice: right under the chosen voice, a card in the panel's look with a soft accent */
+.vl-clone-cta {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 8px; padding: 12px; text-align: left;
+  border-radius: 10px; border: 1px solid rgba(139, 123, 255, 0.28); color: var(--dim);
+  background: linear-gradient(135deg, rgba(109, 92, 246, 0.16), rgba(109, 92, 246, 0.04) 60%), var(--panel-2);
+}
+.vl-clone-cta:hover:not(:disabled) { border-color: var(--accent-2); color: var(--text); background: linear-gradient(135deg, rgba(109, 92, 246, 0.24), rgba(109, 92, 246, 0.08) 60%), var(--panel-2); }
+.vl-clone-icon {
+  flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #8f6cf6); color: #fff; box-shadow: 0 4px 14px rgba(109, 92, 246, 0.35);
+}
+.vl-clone-text { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.3; }
+.vl-clone-text b { font-weight: 600; color: var(--text); }
+.vl-clone-text span { font-size: 11px; color: var(--dim); }
+
+/* Clone a voice: three short steps in the panel's own look */
+.clone-form { display: grid; gap: 8px; }
+.vl-step { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+.vl-step:first-child { margin-top: 0; }
+.vl-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.vl-source {
+  display: grid; justify-items: start; gap: 3px; min-width: 0; padding: 12px; text-align: left;
+  background: var(--panel-2); border: 1px solid transparent; border-radius: 10px; color: var(--dim);
+}
+.vl-source svg { margin-bottom: 4px; }
+.vl-source b { font-weight: 600; color: var(--text); }
+.vl-source span { max-width: 100%; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vl-source:hover:not(:disabled) { background: var(--raised); border-color: transparent; }
+.vl-source.on, .vl-source.on:hover:not(:disabled) { border-color: var(--accent); background: linear-gradient(135deg, rgba(109, 92, 246, 0.16), rgba(109, 92, 246, 0.04)), var(--panel-2); }
+.vl-source.on svg { color: var(--accent-2); }
+.clone-form .hint { margin: 0 0 4px; line-height: 1.5; }
+.vl-field {
+  width: 100%; height: 38px; padding: 0 12px; font: inherit; color: var(--text); outline: none;
+  background: var(--panel-2); border: 1px solid transparent; border-radius: 10px;
+}
+.vl-field::placeholder { color: var(--faint); }
+.vl-field:focus { border-color: var(--accent); }
+.vl-consent { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; font-size: 12px; color: var(--dim); cursor: pointer; }
+.vl-consent input { position: absolute; opacity: 0; pointer-events: none; }
+.vl-consent i {
+  flex: none; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 5px;
+  border: 1.5px solid #4a4a4a; color: #fff; transition: background 0.12s, border-color 0.12s;
+}
+.vl-consent.on { color: var(--text); }
+.vl-consent.on i { background: var(--accent); border-color: var(--accent); }
+.mini-spin.dark { border-color: rgba(0, 0, 0, 0.2); border-top-color: #111; }
+.vl-new {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 5px; vertical-align: 1px;
+  font-size: 10px; font-weight: 600; line-height: 16px; letter-spacing: 0.02em; color: #fff; background: var(--accent);
+}
+
+/* B-roll clips show their own frames side by side, like the main track; the labels stay on top */
+.broll-clip .thumbs { opacity: 0.9; }
+.broll-clip .broll-label, .broll-clip .broll-source { z-index: 1; }
+/* "Keep these clips in new tabs": a switch row right under Add / From link */
+.lib-keep { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 2px 2px 0; font-size: 12px; color: var(--dim); }
+.lib-keep span { flex: 1; }
+.lib-keep svg { color: var(--faint); }
+
+/* The magnet button, lit while on, and the line where a dragged clip snapped */
+.icon-btn.magnet.on { color: var(--accent-2); background: rgba(109, 92, 246, 0.16); }
+.snap-line { position: absolute; top: 0; bottom: 0; width: 1px; background: #facc15; box-shadow: 0 0 6px rgba(250, 204, 21, 0.8); pointer-events: none; z-index: 6; }
+
+/* Dragging a main-track clip to a new place: it lifts and follows the pointer; a bar shows where it drops */
+.clip.lifted { z-index: 4; opacity: 0.9; cursor: grabbing; box-shadow: inset 0 0 0 2px #fff, 0 10px 24px rgba(0, 0, 0, 0.55); }
+.reorder-mark {
+  position: absolute; top: 2px; bottom: 2px; width: 3px; margin-left: -2px; z-index: 5; pointer-events: none;
+  border-radius: 2px; background: var(--accent-2); box-shadow: 0 0 8px rgba(154, 140, 255, 0.9);
+}
+
+/* A short message about a drop (e.g. why a clip can't go on Track 1) */
+.tl-note {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 40; max-width: 520px; pointer-events: none;
+  padding: 8px 14px; border-radius: 10px; font-size: 12px; color: var(--text);
+  background: rgba(30, 30, 30, 0.96); border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* A photo on a video track: the picture repeated along the clip */
+.photo-strip { position: absolute; inset: 4px 0; background-repeat: repeat-x; background-size: auto 100%; opacity: 0.9; }
+.media-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+img.broll-layer { object-fit: cover; }
+
+/* Selection boxes are true rectangles: square corners, the handles sitting right on them */
+.caption { border-radius: 0; }
+
+/* Photos and videos on the upper tracks: each in its own box in the frame (click to pick, drag to move) */
+.broll-box { position: absolute; z-index: 2; cursor: move; }
+.broll-box img, .broll-box video { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+/* The selected picture's box: square corners, a handle on each corner to resize it */
+.size-box { --sel: #2f8cff; position: absolute; z-index: 7; pointer-events: none; outline: 1.5px solid var(--sel); }
+.size-box .cap-handle { pointer-events: auto; left: auto; right: auto; top: auto; bottom: auto; }
+.size-box .cap-handle.nw { left: -7px; top: -7px; }
+.size-box .cap-handle.ne { right: -7px; top: -7px; }
+.size-box .cap-handle.sw { left: -7px; bottom: -7px; }
+.size-box .cap-handle.se { right: -7px; bottom: -7px; }
+.frame-overlay { position: absolute; pointer-events: none; z-index: 8; }
+
+/* Rotate: a round handle on a short stem above the box's top edge, and the angle while turning */
+.size-box .rotate-stem { position: absolute; left: 50%; top: -22px; width: 1.5px; height: 22px; margin-left: -0.75px; background: var(--sel); pointer-events: none; }
+.size-box .rotate-handle {
+  position: absolute; left: 50%; top: -38px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; pointer-events: auto; cursor: grab;
+  background: #fff; border: 1.5px solid var(--sel); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f8cff' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5'/%3E%3C/svg%3E");
+  background-size: 11px; background-repeat: no-repeat; background-position: center;
+}
+.size-box .rotate-handle:active { cursor: grabbing; }
+.size-box .rotate-angle {
+  position: absolute; left: 50%; top: -70px; margin-left: -24px; width: 48px; text-align: center; pointer-events: none;
+  padding: 2px 0; border-radius: 6px; font-size: 11px; font-weight: 600; color: #fff; background: rgba(20, 20, 20, 0.9);
+}
+
+/* ---------- Claude edits: import dialog, layers on the timeline, layer inspector ---------- */
+.scene-import { width: 520px; }
+.si-file, .scene-card { display: flex; align-items: center; gap: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.si-file > div, .scene-card > div { min-width: 0; overflow: hidden; }
+.si-file .dim { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.si-badge.remotion { background: #0b84f3; }
+.si-badge { flex: none; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; color: #fff; background: #e4572e; border-radius: 6px; padding: 5px 7px; }
+.si-row { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 10px; }
+.si-row .field-label { margin: 0; color: var(--dim); }
+.si-row .segmented { margin: 0; }
+.si-status { margin-right: auto; display: flex; align-items: center; gap: 8px; }
+.spinner.small { width: 14px; height: 14px; border-width: 2px; }
+.si-done { display: flex; align-items: center; gap: 12px; padding: 4px 2px; }
+.si-check { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: rgba(45, 212, 191, 0.15); color: var(--voice); font-weight: 800; }
+
+.scene-bar { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); font-size: 12px; }
+.scene-bar .grow { flex: 1; }
+.scene-bar button.small { padding: 2px 8px; font-size: 11px; }
+.tl-labels.scene { border-right: 1px solid var(--line-soft); }
+.scene-label { display: flex; align-items: center; gap: 5px; padding-right: 6px; color: var(--dim); font-size: 11px; border-bottom: 1px solid #1b1b1b; cursor: default; white-space: nowrap; }
+.scene-label.on { background: rgba(109, 92, 246, 0.16); color: var(--text); }
+.scene-label.off .name, .scene-label.off .kind { opacity: 0.4; text-decoration: line-through; }
+.scene-label.prop { font-size: 10.5px; }
+.scene-label .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.scene-label .kind { width: 14px; text-align: center; color: var(--faint); font-size: 10px; flex: none; }
+.scene-label button { background: none; border: none; padding: 0 2px; color: var(--faint); font-size: 10px; line-height: 1; flex: none; }
+.scene-label button:hover:not(:disabled) { color: var(--text); background: none; }
+.scene-label .twirl { width: 12px; }
+.scene-label .twirl.none { visibility: hidden; }
+.scene-label .keys.on { color: #fbbf24; }
+.scene-label .eye { display: grid; place-items: center; }
+.scene-row { position: relative; border-bottom: 1px solid #1b1b1b; }
+.scene-row.on { background: rgba(109, 92, 246, 0.08); }
+.scene-row.prop { background: rgba(255, 255, 255, 0.015); }
+.scene-span { position: absolute; top: 5px; bottom: 5px; border-radius: 4px; background: rgba(167, 139, 250, 0.28); border: 1px solid rgba(167, 139, 250, 0.45); }
+.scene-span.text { background: rgba(250, 204, 21, 0.2); border-color: rgba(250, 204, 21, 0.4); }
+.scene-span.video, .scene-span.image { background: rgba(91, 108, 240, 0.28); border-color: rgba(91, 108, 240, 0.5); }
+.scene-span.svg { background: rgba(45, 212, 191, 0.2); border-color: rgba(45, 212, 191, 0.4); }
+.scene-key { position: absolute; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; transform: rotate(45deg); background: #d4d4d4; border: 1px solid #111; z-index: 2; cursor: ew-resize; }
+.scene-row:not(.prop) .scene-key { width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; background: #8a8a8a; }
+.scene-key:hover, .scene-key.on { background: #fbbf24 !important; }
+
+.scene-actions { display: flex; gap: 8px; margin-top: 10px; }
+.scene-actions button { flex: 1; }
+.layer-panel h3 .layer-actions { display: flex; gap: 10px; }
+.layer-panel textarea.vl-input { width: 100%; resize: vertical; font: inherit; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.field-grid label { display: grid; min-width: 0; }
+.field-grid .field-label { margin: 8px 0 4px; display: flex; align-items: center; justify-content: space-between; }
+.field-grid.props { grid-template-columns: 1fr 1fr 1fr; }
+.field-grid .vl-input { width: 100%; min-width: 0; }
+.color-field { display: flex; align-items: center; gap: 8px; }
+.color-field input[type="color"] { width: 30px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+.key-btn { background: none; border: none; padding: 0 2px; font-size: 10px; line-height: 1; color: var(--faint); }
+.key-btn.has { color: #a3a3a3; }
+.key-btn.on { color: #fbbf24; }
+.key-btn:hover:not(:disabled) { background: none; color: #fbbf24; }

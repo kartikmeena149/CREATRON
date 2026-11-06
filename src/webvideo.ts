@@ -33,17 +33,21 @@ export type LinkInfo = {
   captions?: string;
 };
 
-/** Looks a link up without downloading it. Throws a plain-English error for links that can't be used. */
-export async function linkInfo(url: string): Promise<LinkInfo> {
+/**
+ * Looks a link up without downloading it. Throws a plain-English error for links that can't be used.
+ * `audio`: the link only needs sound (music from YouTube, SoundCloud, Bandcamp, a direct .mp3…).
+ */
+export async function linkInfo(url: string, audio = false): Promise<LinkInfo> {
   if (!/^https?:\/\/\S+$/i.test(url.trim())) throw new Error("That doesn't look like a link. Paste the full address, starting with https://");
   const d = JSON.parse((await ytdlp(["-J", "--no-playlist", "--no-warnings", url.trim()])).stdout);
   if (d.is_live || d.live_status === "is_live" || d.live_status === "is_upcoming")
     throw new Error("That's a live stream. Only finished videos can be imported.");
-  const streams = ((d.formats ?? []) as any[]).filter((f) => f.url && f.vcodec !== "none");
-  if (!streams.length && !d.url) throw new Error("That link has no video Creatron can download (it may be a photo or a page without video).");
+  const streams = ((d.formats ?? []) as any[]).filter((f) => f.url && (audio ? f.acodec !== "none" : f.vcodec !== "none"));
+  if (!streams.length && !d.url)
+    throw new Error(audio ? "That link has no sound Creatron can download." : "That link has no video Creatron can download (it may be a photo or a page without video).");
   // Some sites (Instagram) don't say how long a video is: ask the video stream itself.
   if (!d.duration) d.duration = await streamDuration([...streams.map((f) => f.url), d.url].filter(Boolean));
-  if (!d.duration) throw new Error("Couldn't tell how long that video is, so it can't be imported. Try the link again in a minute.");
+  if (!d.duration) throw new Error(`Couldn't tell how long that ${audio ? "track" : "video"} is, so it can't be imported. Try the link again in a minute.`);
   const auto = d.automatic_captions ?? {};
   const subs = d.subtitles ?? {};
   const track = [subs.en, subs["en-US"], auto["en-orig"], auto.en].find(Boolean) as { ext: string; url: string }[] | undefined;
@@ -103,6 +107,33 @@ export async function downloadLink(
   });
   const file = stdout.trim().split("\n").filter((l) => l.startsWith("/")).pop();
   if (!file || !existsSync(file)) throw new Error("The download finished but no video file came out.");
+  return file;
+}
+
+/** Downloads just the sound of a link (or start-end seconds of it) as an mp3 under work/music. */
+export async function downloadAudio(
+  url: string,
+  opts: { id: string; site: string; start?: number; end?: number; dir?: string },
+  onProgress: (fraction: number) => void = () => {},
+): Promise<string> {
+  const dir = opts.dir ?? join(ROOT, "work", "music");
+  mkdirSync(dir, { recursive: true });
+  const range = opts.start !== undefined && opts.end !== undefined ? `-${round(opts.start, 2)}-${round(opts.end, 2)}` : "";
+  const base = join(dir, `${opts.site}-${opts.id}${range}`.replace(/[^\w./-]+/g, "-"));
+  if (existsSync(`${base}.mp3`)) return `${base}.mp3`;
+  const args = [
+    "--no-playlist", "--no-warnings", "--newline", "--progress",
+    // The best sound on offer, made into a high-quality mp3 that every player and editor takes.
+    "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+    "--print", "after_move:filepath",
+    "-o", `${base}.%(ext)s`,
+  ];
+  if (range) args.push("--download-sections", `*${opts.start}-${opts.end}`);
+  const { stdout } = await ytdlp([...args, url], (chunk) => {
+    for (const m of chunk.matchAll(/\[download\]\s+([\d.]+)%/g)) onProgress(Math.min(1, Number(m[1]) / 100));
+  });
+  const file = stdout.trim().split("\n").filter((l) => l.startsWith("/")).pop();
+  if (!file || !existsSync(file)) throw new Error("The download finished but no mp3 came out.");
   return file;
 }
 

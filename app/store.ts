@@ -4,11 +4,14 @@
 import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
 import { type Analysis, type Broll, type Caption, type CaptionLook, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
-import { captionLook, captionsOf, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
-import { compactTracks, freeTrack, userClip } from "../src/tracks.ts";
+import { captionLook, captionsOf, clipLength, clipStarts, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
+import { compactTracks, freeTrack, spanFree, userClip } from "../src/tracks.ts";
+import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
+import { loadFont } from "../motion/Overlay.tsx";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
-export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number };
+/** A generated voiceover; voiceId and speed say how it was made (older takes don't have them). */
+export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number; language?: string; voiceId?: string; speed?: number };
 export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
@@ -52,7 +55,9 @@ type State = {
   live(plan: EditPlan): void;
   undo(): void;
   redo(): void;
-  select(i: number | null): void;
+  select(i: number | null, part?: "picture" | "sound"): void;
+  /** Which half of the selected main-track clip was clicked: its picture (Track 1) or its sound (Audio). */
+  selectedPart: "picture" | "sound";
   /** ⇧/⌘-click: add a clip to (or take it out of) the picked set. */
   togglePick(i: number): void;
   seek(t: number): void;
@@ -70,7 +75,7 @@ type State = {
   /** Voiceovers made in the Voice page for this project, newest first. */
   voiceTakes: VoiceTake[];
   /** What's typed in the Voice page, kept while you switch pages or tabs. */
-  voiceDraft: { text: string; speed: number; voiceId: string };
+  voiceDraft: { text: string; speed: number; voiceId: string; language: string };
   /** Which page the left panel shows (null: panel hidden). */
   leftView: LeftView | null;
   selectCue(i: number | null): void;
@@ -114,6 +119,24 @@ type State = {
   addMotion(template: Motion["template"], track?: number): void;
   updateMotion(id: string, patch: Partial<Motion>, record?: boolean): void;
   deleteMotion(id: string): void;
+  /** Imported Claude edits by scene.json path (loaded once, never changed: edits live in the plan). */
+  scenes: Record<string, Scene>;
+  /** The scene clip whose layers the timeline shows instead of the tracks (by motion id). */
+  openScene: string | null;
+  /** The layer picked in the open scene (by layer id). */
+  selectedLayer: string | null;
+  /** Families in Creatron's font library (fonts edits brought in), loaded into the page. */
+  libraryFonts: string[];
+  /** Loads the font library into the page (again after an import added fonts). */
+  loadFontLibrary(): Promise<void>;
+  /** A Claude edit waiting in the import dialog (its folder or .html). */
+  sceneImport: string | null;
+  /** The keyframe picked in the open scene: one property's (channel), or all of a layer's at time t (scene seconds). */
+  sceneKey: { layer: string; channel: string | null; t: number } | null;
+  /** Puts an imported edit on a Text track at `at` (default: the playhead), its sounds on SFX tracks, one undo step. Returns the clip's id. */
+  addScene(file: string, scene: Scene, at?: number, opts?: { withoutVoice?: boolean }): string;
+  /** Changes one layer of a scene clip: `fn` gets its current changes and returns the new ones. */
+  editLayer(motionId: string, layerId: string, fn: (e: LayerEdit) => LayerEdit, record?: boolean): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
   selectVo(id: string | null): void;
@@ -149,13 +172,14 @@ export function selectionOf(s: Pick<State, "picked" | "selected" | "pickedIds" |
   return { segments, ids: s.pickedIds.length ? s.pickedIds : single };
 }
 
+/**
+ * The main-track clip at output time `t` and where it starts. In the gap before a clip it's that
+ * clip, with `t` before `offset` (the caller shows black there).
+ */
 export function locate(plan: EditPlan, t: number): { index: number; offset: number } {
-  let offset = 0;
-  for (let i = 0; i < plan.segments.length; i++) {
-    const len = (plan.segments[i].end - plan.segments[i].start) / plan.segments[i].speed;
-    if (t < offset + len || i === plan.segments.length - 1) return { index: i, offset };
-    offset += len;
-  }
+  const starts = clipStarts(plan);
+  for (let i = 0; i < plan.segments.length; i++)
+    if (t < starts[i] + clipLength(plan.segments[i]) || i === plan.segments.length - 1) return { index: i, offset: starts[i] };
   return { index: 0, offset: 0 };
 }
 
@@ -224,8 +248,9 @@ export const useEditor = create<State>((set, get) => ({
       if (!next) return s;
       return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
     }),
-  select: (selected) =>
-    set(selected === null ? { selected, picked: [], pickedIds: [] } : { selected, picked: [selected], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
+  selectedPart: "picture",
+  select: (selected, part = "picture") =>
+    set(selected === null ? { selected, picked: [], pickedIds: [] } : { selected, selectedPart: part, picked: [selected], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
   togglePick: (i) =>
     set((s) => {
       const picked = s.picked.includes(i) ? s.picked.filter((n) => n !== i) : [...s.picked, i].sort((a, b) => a - b);
@@ -246,29 +271,42 @@ export const useEditor = create<State>((set, get) => ({
     const { plan, time } = get();
     const { index, offset } = locate(plan, time);
     const s = plan.segments[index];
-    if (!s) return;
+    if (!s || time < offset) return; // in a gap: nothing to cut
     const at = s.start + (time - offset) * s.speed;
     if (at - s.start < 0.1 || s.end - at < 0.1) return;
     const segments = [...plan.segments];
-    segments.splice(index, 1, { ...s, end: at }, { ...s, start: at });
+    const { gap: _, ...rest } = s;
+    segments.splice(index, 1, { ...s, end: at }, { ...rest, start: at });
     get().commit({ ...plan, segments });
     set({ selected: index + 1, picked: [index + 1] });
   },
 
   // Remove the selected clips (all ⇧-picked ones); everything after slides left (ripple delete).
   // Removing the last one leaves an empty timeline.
+  // Deleting a main-track clip takes away only the half that was selected, like an editor with
+  // picture and sound unlinked: its picture (black there, the sound plays on and nothing moves) or
+  // its sound (silent there). Each leaves a gap on its lane. When the other half is already gone,
+  // the whole clip goes and the rest closes up.
   deleteSelected: () => {
-    const { plan, selected, picked } = get();
+    const { plan, selected, picked, selectedPart, project } = get();
     if (selected === null) return;
-    const gone = new Set([selected, ...picked]);
-    get().commit({ ...plan, segments: plan.segments.filter((_, i) => !gone.has(i)) });
+    const chosen = new Set([selected, ...picked]);
+    const hasSound = (s: Segment) => Boolean(project?.analysis.hasAudio) && s.sound !== false;
+    const hasPicture = (s: Segment) => Boolean(project?.analysis.width) && s.picture !== false;
+    const segments = plan.segments.flatMap((s, i) => {
+      if (!chosen.has(i)) return [s];
+      if (selectedPart === "picture" && hasPicture(s) && hasSound(s)) return [{ ...s, picture: false }];
+      if (selectedPart === "sound" && hasSound(s) && hasPicture(s)) return [{ ...s, sound: false }];
+      return [];
+    });
+    get().commit({ ...plan, segments });
     set((s) => ({ selected: null, picked: [], time: Math.min(s.time, editDuration(s.plan)) }));
   },
 
   selectedCue: null,
   leftView: "media",
   voiceTakes: [],
-  voiceDraft: { text: "", speed: 1.067, voiceId: "kartik" },
+  voiceDraft: { text: "", speed: 1.067, voiceId: "kartik", language: "english" },
   library: [],
   addToLibrary: (path) => set((s) => (s.library.includes(path) ? s : { library: [...s.library, path] })),
   selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], pickedIds: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
@@ -307,11 +345,16 @@ export const useEditor = create<State>((set, get) => ({
     const { plan, project } = get();
     if (!project) return;
     const cues = captionsOf(plan, project.analysis.words);
-    const { highlight, background, ...look } = captionLook(plan, cues[i]?.look);
-    // Spoken-word and background colours have no captions-wide setting, so every caption carries them.
-    const extra = { ...(highlight !== null ? { highlight } : {}), ...(background ? { background } : {}) };
+    const { highlight: _, background, ...look } = captionLook(plan, cues[i]?.look, i);
+    // The background colour has no captions-wide setting, so every caption carries it; so does a
+    // spoken-word colour set on this caption itself (not one it takes from the accent palette).
+    const highlight = cues[i]?.look?.highlight;
+    const extra = { ...(highlight !== undefined ? { highlight } : {}), ...(background ? { background } : {}) };
     const keep = Object.keys(extra).length > 0;
-    get().setCaptionStyle({ ...look, cues: cues.map(({ look: _, ...c }) => (keep ? { ...c, look: extra } : c)) });
+    // Its place too: this caption's spot becomes everyone's, and their own nudges are cleared.
+    const x = Math.max(-0.5, Math.min(0.5, plan.captions.x + (cues[i]?.x ?? 0)));
+    const y = Math.max(-0.5, Math.min(0.5, plan.captions.y + (cues[i]?.y ?? 0)));
+    get().setCaptionStyle({ ...look, x, y, cues: cues.map(({ look: _, x: _x, y: _y, ...c }) => (keep ? { ...c, look: extra } : c)) });
   },
   deleteCaption: (i) => {
     const { plan, project } = get();
@@ -357,7 +400,10 @@ export const useEditor = create<State>((set, get) => ({
     const at = Math.max(0, own ? (b.at ?? time) : Math.min(b.at ?? time, outputDuration(plan) - 0.5));
     const duration = Math.max(0.5, Math.min(b.duration ?? 5, b.length, own ? Infinity : Math.min(15, outputDuration(plan) - at)));
     const id = `b${Math.random().toString(36).slice(2, 10)}`;
-    const clip: Broll = { id, track: b.track ?? 2, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
+    // Never on top of another clip: a busy spot on the asked-for track sends it to a free track.
+    const want = b.track ?? 2;
+    const track = spanFree(plan, "video", want, at, duration) ? want : freeTrack(plan, "video", at, duration);
+    const clip: Broll = { id, track, source: b.source, at, duration, offset: 0, file: b.file, length: b.length, query: b.query, credit: b.credit };
     get().commit({ ...plan, broll: [...plan.broll, clip] });
     set({ selectedBroll: id, selected: null, picked: [], selectedCue: null, selectedVo: null });
   },
@@ -380,7 +426,7 @@ export const useEditor = create<State>((set, get) => ({
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
     const at = Math.max(0, time);
     const item: Motion = {
-      id, track: track ?? freeTrack(plan, "text", at, 3), template, props: {}, at, duration: 3, color: "#facc15",
+      id, track: track && spanFree(plan, "text", track, at, 3) ? track : freeTrack(plan, "text", at, 3), template, props: {}, at, duration: 3, color: "#facc15",
       text: template === "title" ? "Your title" : "Your name", subtext: template === "title" ? "" : "What you do",
     };
     get().commit({ ...plan, motion: [...plan.motion, item] });
@@ -388,13 +434,69 @@ export const useEditor = create<State>((set, get) => ({
   },
   updateMotion: (id, patch, record = true) => {
     const { plan } = get();
+    const before = plan.motion.find((m) => m.id === id);
     const motion = plan.motion.map((m) => (m.id === id ? { ...m, ...patch } : m));
-    (record ? get().commit : get().live)({ ...plan, motion });
+    // A scene's own sounds (ids "<scene id>-a…") move with it.
+    // Its content starts at `at - offset`: a trim at the start (both change) leaves them in place.
+    const shift = before?.template === "scene" && patch.at !== undefined ? patch.at - before.at - ((patch.offset ?? before.offset ?? 0) - (before.offset ?? 0)) : 0;
+    const voiceovers = shift ? plan.voiceovers.map((v) => (v.id.startsWith(`${id}-a`) ? { ...v, at: Math.max(0, v.at + shift) } : v)) : plan.voiceovers;
+    (record ? get().commit : get().live)({ ...plan, motion, voiceovers });
   },
   deleteMotion: (id) => {
+    const { plan, openScene } = get();
+    const gone = plan.motion.find((m) => m.id === id)?.template === "scene";
+    get().commit({ ...plan, motion: plan.motion.filter((m) => m.id !== id), voiceovers: gone ? plan.voiceovers.filter((v) => !v.id.startsWith(`${id}-a`)) : plan.voiceovers });
+    set({ selectedMotion: null, ...(openScene === id ? { openScene: null, selectedLayer: null } : {}) });
+  },
+
+  scenes: {},
+  openScene: null,
+  selectedLayer: null,
+  sceneImport: null,
+  libraryFonts: [],
+  loadFontLibrary: async () => {
+    const list = await window.creatron.fontLibrary();
+    await Promise.all(list.map(loadFont));
+    set({ libraryFonts: [...new Set(list.map((f) => f.family))].sort() });
+  },
+  sceneKey: null,
+  addScene: (file, scene, at, opts) => {
+    const { plan, time } = get();
+    const id = `m${Math.random().toString(36).slice(2, 10)}`;
+    const start = Math.max(0, at ?? time);
+    const item: Motion = {
+      id, track: freeTrack(plan, "text", start, scene.duration), template: "scene", scene: file, layers: {}, offset: 0, props: {},
+      at: start, duration: Math.max(0.5, scene.duration), color: "#7c5cff", text: scene.name.slice(0, 200), subtext: "",
+    };
+    const dir = file.replace(/\/[^/]*$/, "");
+    let next = { ...plan, motion: [...plan.motion, item] };
+    // Each sound on the first SFX track with room at its time.
+    // The voiceover is left out when it's already the main track's sound (a new project made from the edit).
+    const voice = opts?.withoutVoice ? voiceOf(scene) : undefined;
+    scene.audio.forEach((a, i) => {
+      if (a === voice) return;
+      const vo: Voiceover = {
+        id: `${id}-a${i}`, kind: "sfx", track: freeTrack(next, "sfx", start + a.at, a.duration), file: `${dir}/${a.file}`, text: a.name, voice: "",
+        at: start + a.at, offset: a.offset, duration: a.duration, volumeDb: Math.max(-24, Math.min(12, Math.round(20 * Math.log10(Math.max(0.01, a.volume)) * 10) / 10)),
+      };
+      next = { ...next, voiceovers: [...next.voiceovers, vo] };
+    });
+    set((s) => ({ scenes: { ...s.scenes, [file]: scene } }));
+    get().commit(next);
+    set({ selectedMotion: id, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null });
+    return id;
+  },
+  editLayer: (motionId, layerId, fn, record = true) => {
     const { plan } = get();
-    get().commit({ ...plan, motion: plan.motion.filter((m) => m.id !== id) });
-    set({ selectedMotion: null });
+    const motion = plan.motion.map((m) => {
+      if (m.id !== motionId) return m;
+      const layers = { ...m.layers };
+      const e = fn(layers[layerId] ?? {});
+      if (Object.values(e).every((v) => v === undefined)) delete layers[layerId];
+      else layers[layerId] = e;
+      return { ...m, layers };
+    });
+    (record ? get().commit : get().live)({ ...plan, motion });
   },
 
   selectedVo: null,
@@ -408,8 +510,11 @@ export const useEditor = create<State>((set, get) => ({
     // sound effects keep their full length, even past the end.
     const end = editDuration(plan);
     const duration = v.kind === "music" && end - at > 1 ? Math.min(v.duration, end - at) : v.duration;
+    const kind = v.kind ?? "voice";
+    const want = v.track ?? 1;
+    const track = spanFree(plan, kind, want, at, duration) ? want : freeTrack(plan, kind, at, duration);
     const vo: Voiceover = {
-      id, kind: v.kind ?? "voice", track: v.track ?? 1, file: v.file, text: v.text, voice: v.voice,
+      id, kind, track, file: v.file, text: v.text, voice: v.voice,
       at, offset: 0, duration, length: v.duration, volumeDb: v.volumeDb ?? 0,
     };
     get().commit({ ...plan, voiceovers: [...plan.voiceovers, vo] });

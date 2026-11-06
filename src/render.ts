@@ -5,6 +5,7 @@ import { drawCues } from "./captions.ts";
 import { buildCues, editDuration, outputDuration } from "./timeline.ts";
 import { isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
+import { sceneLibrary } from "./sceneFiles.ts";
 import { customDir } from "./customcode.ts";
 import { renderOverlay } from "./remotion.ts";
 import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudness.ts";
@@ -47,11 +48,15 @@ export async function render(
 
   const filters: string[] = [];
   const pads: string[] = [];
-  // Each clip's picture: sized, sped up or slowed, punched in. The person mask goes through the same steps.
+  // Each clip's picture: sized, sped up or slowed, punched in (or painted black when its picture was
+  // deleted; its sound stays). The person mask goes through the same steps.
   const segVideo = (s: EditPlan["segments"][number]) =>
     `scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}` +
     (s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "") +
-    `,fps=${fps},setsar=1`;
+    (s.picture === false ? ",drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill" : "") +
+    `,fps=${fps},setsar=1` +
+    // The empty gap before the clip (magnet off): black first.
+    (s.gap ? `,tpad=start_mode=add:start_duration=${s.gap.toFixed(3)}:color=black` : "");
   plan.segments.forEach((s, i) => {
     if (picture) {
       filters.push(`[${i}:v]${segVideo(s)}[v${i}]`);
@@ -94,11 +99,20 @@ export async function render(
   // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
   plan.broll.filter((b) => b.file && existsSync(b.file)).forEach((b, k) => {
     const input = args.filter((a) => a === "-i").length;
-    args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), "-i", b.file!);
+    // A photo is held as a still for the clip's length; a video plays from its offset.
+    if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(b.file!)) args.push("-loop", "1", "-framerate", String(fps), "-t", b.duration.toFixed(3), "-i", b.file!);
+    else args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), "-i", b.file!);
+    // Its size and place in the frame (placeBox): the frame-covering size times its scale, its middle
+    // shifted by x / y; whatever falls outside the frame is cut off by the overlay.
+    const s = b.scale ?? 1;
+    const ox = `(main_w-overlay_w)/2+${((b.x ?? 0) * size.width).toFixed(1)}`;
+    const oy = `(main_h-overlay_h)/2+${((b.y ?? 0) * size.height).toFixed(1)}`;
     filters.push(
-      `[${input}:v]scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height},` +
-        `setsar=1,fps=${fps},format=yuv420p,setpts=PTS-STARTPTS+${b.at.toFixed(3)}/TB[br${k}]`,
-      `${videoOut}[br${k}]overlay=eof_action=pass:enable='between(t,${b.at.toFixed(3)},${(b.at + b.duration).toFixed(3)})'[bo${k}]`,
+      `[${input}:v]scale=${Math.round(size.width * s)}:${Math.round(size.height * s)}:force_original_aspect_ratio=increase:force_divisible_by=2,` +
+        // Turned around its middle (the corners outside stay see-through); overlay keeps that middle in place.
+        (b.rotate ? `format=rgba,rotate=${((b.rotate * Math.PI) / 180).toFixed(6)}:ow='rotw(${((b.rotate * Math.PI) / 180).toFixed(6)})':oh='roth(${((b.rotate * Math.PI) / 180).toFixed(6)})':c=none,` : "") +
+        `setsar=1,fps=${fps},format=yuva420p,setpts=PTS-STARTPTS+${b.at.toFixed(3)}/TB[br${k}]`,
+      `${videoOut}[br${k}]overlay=x='${ox}':y='${oy}':eof_action=pass:enable='between(t,${b.at.toFixed(3)},${(b.at + b.duration).toFixed(3)})'[bo${k}]`,
     );
     videoOut = `[bo${k}]`;
   });
@@ -122,7 +136,7 @@ export async function render(
     // The Remotion layer (animated captions, titles, lower thirds) goes on top of everything.
     log("render: animating text (Remotion)");
     let shown = -1;
-    const frames = await renderOverlay(overlayProps(plan, analysis.words, size, fps), join(dir, "motion"), (f) => {
+    const frames = await renderOverlay(overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan)), join(dir, "motion"), (f) => {
       const pct = Math.floor(f * 20) * 5;
       if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
     }, customDir(analysis.source));

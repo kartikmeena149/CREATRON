@@ -3,11 +3,13 @@
 // so it loads once (~3 s per line instead of ~8 s with a fresh process each time).
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { SPEECH_LUFS } from "./loudness.ts";
+import { VOICE_LANGUAGES, type VoiceLanguage } from "./voiceLanguages.ts";
+export { VOICE_LANGUAGES, type VoiceLanguage };
 import { ROOT, run } from "./tools.ts";
 
 const POCKET_TTS =
@@ -21,6 +23,7 @@ export const BUILT_IN_VOICES = [
   "marius", "javert", "jean", "charles", "paul", "george", "michael", "bill_boerst", "peter_yearsley",
   "stuart_bell", "giovanni", "lola", "juergen", "rafael", "daan", "estelle",
 ];
+
 
 export type Voice = { id: string; name: string; kind: "cloned" | "builtin"; file?: string; createdAt?: string };
 type Stored = { id: string; name: string; file: string; createdAt: string; consent: true };
@@ -61,6 +64,12 @@ export async function cloneVoice(opts: { source: string; start: number; duration
   return { id, name, kind: "cloned", file };
 }
 
+/** Deletes a generated voiceover file; only ever one Creatron made (in work/voiceovers). */
+export function deleteVoiceoverFile(file: string) {
+  if (dirname(resolve(file)) !== resolve(OUT_DIR) || !file.endsWith(".wav")) throw new Error("That isn't a voiceover Creatron made.");
+  rmSync(file, { force: true });
+}
+
 export function deleteVoice(id: string) {
   const list = readIndex();
   const v = list.find((x) => x.id === id);
@@ -81,7 +90,7 @@ export function importSkillVoice() {
 
 // ---- The Pocket TTS server -------------------------------------------------------------------
 
-let server: { proc: ChildProcess; port: number; ready: Promise<void> } | undefined;
+let server: { proc: ChildProcess; port: number; ready: Promise<void>; language: VoiceLanguage } | undefined;
 
 function freePort(): Promise<number> {
   return new Promise((ok, fail) => {
@@ -94,18 +103,23 @@ function freePort(): Promise<number> {
   });
 }
 
-async function ensureServer(log: (m: string) => void): Promise<number> {
-  if (server && server.proc.exitCode === null) {
+/** The engine for one language; switching language restarts it with that language's model. */
+async function ensureServer(language: VoiceLanguage, log: (m: string) => void): Promise<number> {
+  if (server && server.proc.exitCode === null && server.language === language) {
     await server.ready;
     return server.port;
   }
+  if (server) stopVoiceEngine();
   if (!existsSync(POCKET_TTS)) throw new Error(`Pocket TTS isn't installed (looked for ${POCKET_TTS}).`);
   await stopStaleVoiceEngine();
   const port = await freePort();
-  log("starting the voice engine (first time takes a few seconds)");
-  const proc = spawn(POCKET_TTS, ["serve", "--port", String(port), "--host", "127.0.0.1"], { stdio: "ignore" });
+  const name = VOICE_LANGUAGES.find((l) => l.id === language)?.name ?? language;
+  // A language's model downloads the first time it's used (a few hundred MB), so allow longer.
+  const fresh = !languageDownloaded(language);
+  log(fresh ? `downloading the ${name} voice model (first time only, a minute or two)` : `starting the voice engine in ${name}`);
+  const proc = spawn(POCKET_TTS, ["serve", "--port", String(port), "--host", "127.0.0.1", "--language", language], { stdio: "ignore" });
   const ready = (async () => {
-    for (let i = 0; i < 240; i++) {
+    for (let i = 0; i < (fresh ? 1200 : 240); i++) {
       if (proc.exitCode !== null) throw new Error("The voice engine stopped while starting. Check the Hugging Face login.");
       try {
         if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return;
@@ -114,7 +128,7 @@ async function ensureServer(log: (m: string) => void): Promise<number> {
     }
     throw new Error("The voice engine took too long to start.");
   })();
-  server = { proc, port, ready };
+  server = { proc, port, ready, language };
   mkdirSync(join(ROOT, "work"), { recursive: true });
   writeFileSync(PID_FILE, String(proc.pid));
   await ready;
@@ -122,6 +136,13 @@ async function ensureServer(log: (m: string) => void): Promise<number> {
 }
 
 const PID_FILE = join(ROOT, "work", "voice-engine.pid");
+
+/** Whether a language's model is already in the Hugging Face cache (English comes with the install). */
+function languageDownloaded(language: VoiceLanguage): boolean {
+  const snapshots = join(homedir(), ".cache", "huggingface", "hub", "models--kyutai--pocket-tts", "snapshots");
+  if (!existsSync(snapshots)) return false;
+  return readdirSync(snapshots).some((s) => existsSync(join(snapshots, s, "languages", language)));
+}
 
 export function stopVoiceEngine() {
   server?.proc.kill();
@@ -159,12 +180,40 @@ export function scriptChunks(text: string): string[] {
     }, []);
 }
 
+const PREVIEW_DIR = join(ROOT, "work", "voice-previews");
+
+/**
+ * A few seconds of a voice, to hear it before choosing: a cloned voice's own sample, or a built-in
+ * voice saying a line in `language` (made once, then kept in work/voice-previews).
+ */
+export async function previewVoice(voiceId: string, language: VoiceLanguage = "english", log: (m: string) => void = () => {}): Promise<string> {
+  const voice = listVoices().find((v) => v.id === voiceId);
+  if (!voice) throw new Error("That voice no longer exists.");
+  if (voice.kind === "cloned") return voice.file!;
+  const name = voice.id.replace("builtin:", "");
+  const file = join(PREVIEW_DIR, `${name}-${language}.wav`);
+  if (existsSync(file)) return file;
+  const port = await ensureServer(language, log);
+  const form = new FormData();
+  form.append("text", VOICE_LANGUAGES.find((l) => l.id === language)?.sample ?? VOICE_LANGUAGES[0].sample);
+  form.append("voice_url", name);
+  const res = await fetch(`http://127.0.0.1:${port}/tts`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`voice engine error ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  mkdirSync(PREVIEW_DIR, { recursive: true });
+  const raw = `${file}.raw.wav`;
+  writeFileSync(raw, Buffer.from(await res.arrayBuffer()));
+  // As loud as a finished voiceover, so voices compare fairly.
+  await run("ffmpeg", ["-y", "-v", "error", "-i", raw, "-af", `loudnorm=I=${SPEECH_LUFS}:TP=-2`, "-ar", "48000", file]);
+  rmSync(raw, { force: true });
+  return file;
+}
+
 /** Where a voiceover is: engine starting, line `done` of `total` spoken, or joining the lines. */
 export type VoiceProgress = { stage: "starting" | "speaking" | "finishing"; done: number; total: number };
 
 /** Speaks the script in the chosen voice and returns the finished wav (speed applied, pitch kept). */
 export async function generateVoiceover(
-  opts: { text: string; voiceId: string; speed: number },
+  opts: { text: string; voiceId: string; speed: number; language?: VoiceLanguage },
   log: (m: string) => void = () => {},
   progress: (p: VoiceProgress) => void = () => {},
 ): Promise<{ file: string; duration: number }> {
@@ -173,7 +222,7 @@ export async function generateVoiceover(
   const voice = listVoices().find((v) => v.id === opts.voiceId);
   if (!voice) throw new Error("That voice no longer exists.");
   progress({ stage: "starting", done: 0, total: chunks.length });
-  const port = await ensureServer(log);
+  const port = await ensureServer(opts.language ?? "english", log);
 
   const id = randomUUID().slice(0, 8);
   const dir = join(OUT_DIR, id);

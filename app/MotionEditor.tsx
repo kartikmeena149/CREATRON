@@ -1,4 +1,5 @@
 // Inspector section for the selected title / lower third on the M1 track.
+import { SceneEditor } from "./SceneEditor.tsx";
 import { useEditor } from "./store.ts";
 
 const COLORS = ["#facc15", "#22c55e", "#38bdf8", "#f472b6", "#ff5a5a", "#ffffff"];
@@ -7,6 +8,7 @@ export function MotionEditor() {
   const { plan, selectedMotion, updateMotion, deleteMotion, checkpoint } = useEditor();
   const m = plan.motion.find((x) => x.id === selectedMotion);
   if (!m) return null;
+  if (m.template === "scene") return <SceneEditor m={m} />;
   // Typing changes the text live; one undo step per field visit.
   const field = (key: "text" | "subtext", placeholder: string) => (
     <input

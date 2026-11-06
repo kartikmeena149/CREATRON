@@ -39,6 +39,15 @@ export function trackSetting(plan: EditPlan, key: string) {
 }
 
 /** The lowest track of a kind with room from `at` for `length` seconds; a new track when all are busy. */
+/** Whether `at`…`at + length` is empty on track `n` of a kind (where a clip can go without covering another). */
+export function spanFree(plan: EditPlan, kind: TrackKind, n: number, at: number, length: number): boolean {
+  const spans =
+    kind === "video" ? plan.broll.filter((b) => (b.track ?? 2) === n)
+    : kind === "text" ? plan.motion.filter((m) => (m.track ?? 1) === n)
+    : plan.voiceovers.filter((v) => (v.kind ?? "voice") === kind && (v.track ?? 1) === n);
+  return !spans.some((c) => c.at < at + length - 1e-6 && at < c.at + c.duration - 1e-6);
+}
+
 export function freeTrack(plan: EditPlan, kind: TrackKind, at: number, length: number): number {
   const busy = (n: number) => {
     const spans =

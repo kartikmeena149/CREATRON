@@ -12,8 +12,11 @@ export function shortTime(t: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Music and sound-effect files (everything else in the library is video). */
+/** Music and sound-effect files. */
 export const isAudio = (path: string) => /\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
+
+/** Photos and pictures (PNG, JPEG, WebP, GIF): they go on video tracks as stills. Everything else in the library is video. */
+export const isImage = (path: string) => /\.(png|jpe?g|webp|gif|bmp)$/i.test(path);
 
 /** A voiceover made in the Voice page (saved in work/voiceovers). */
 export const isGeneratedVoice = (path: string) => path.includes("/work/voiceovers/");

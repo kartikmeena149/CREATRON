@@ -1,4 +1,5 @@
 import type { Analysis, EditPlan } from "../src/schema.ts";
+import type { Detail, Scene } from "../src/scene.ts";
 import type { AutoEditEvent, AutoEditResult as Result_ } from "../src/autoedit.ts";
 import type { LinkInfo } from "../src/webvideo.ts";
 
@@ -21,14 +22,26 @@ declare global {
       aiEdit(path: string, request: string, current: EditPlan, model?: string, focus?: { clips: number[]; broll?: string; markers?: { n: number; time: number; x: number; y: number; context: string }[]; attachments?: { path: string }[] }): Promise<Result<{ plan: EditPlan; model: string; cost?: number }>>;
       enhancePrompt(request: string, model: string, path?: string): Promise<Result<string>>;
       personCutout(path: string): Promise<Result<{ cutoutUrl: string }>>;
-      linkInfo(url: string): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
+      linkInfo(url: string, audio?: boolean): Promise<Result<Omit<LinkInfo, "captions" | "chapters">>>;
+      linkAudio(opts: { url: string; id: string; site: string; start?: number; end?: number }): Promise<Result<{ file: string; length: number }>>;
       linkDownload(opts: { url: string; id: string; site: string; start?: number; end?: number; purpose: "main" | "broll" }): Promise<Result<{ file: string; length: number }>>;
       onLinkProgress(fn: (f: number) => void): () => void;
       onVoiceProgress(fn: (p: { stage: "starting" | "speaking" | "finishing"; done: number; total: number }) => void): () => void;
       customCode(path: string): Promise<Result<{ version: string; code: Record<string, string>; errors: string[] }>>;
+      pickScene(): Promise<string | undefined>;
+      /** What kind of Claude edit a path is (null: not one). */
+      isScene(path: string): Promise<"hyperframes" | "remotion" | null>;
+      importScene(path: string, detail: Detail): Promise<Result<{ file: string; scene: Scene }>>;
+      loadScene(file: string): Promise<Result<Scene>>;
+      sceneBase(file: string): Promise<Result<string>>;
+      /** Creatron's font library (fonts edits brought in), with a URL for each file. */
+      fontLibrary(): Promise<{ family: string; weight: string; style: string; unicodeRange?: string; file: string; url: string }[]>;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
       exportVideo(path: string, plan: EditPlan): Promise<Result<string | undefined>>;
       reveal(path: string): Promise<void>;
+      fileThumbs(path: string): Promise<Result<Thumbs>>;
+      trashMedia(path: string): Promise<Result<void>>;
+      madeByCreatron(path: string): Promise<boolean>;
       pickMedia(kind: "video" | "any"): Promise<string | undefined>;
       autoEditStart(opts: { video: string; brief: string; reference?: string; model: string }): Promise<Result<void>>;
       autoEditFix(opts: { video: string; session: string; model: string; message: string; markers: { n: number; time: number; x: number; y: number }[] }): Promise<Result<void>>;
@@ -40,7 +53,9 @@ declare global {
       pickAudio(): Promise<string | undefined>;
       cloneVoice(opts: { source: string; start: number; duration: number; name: string; consent: boolean }): Promise<Result<VoiceInfo>>;
       deleteVoice(id: string): Promise<Result<void>>;
-      generateVoiceover(opts: { text: string; voiceId: string; speed: number }): Promise<Result<{ file: string; duration: number; url: string }>>;
+      deleteVoiceoverFile(file: string): Promise<Result<void>>;
+      voicePreview(id: string, language?: string): Promise<Result<string>>;
+      generateVoiceover(opts: { text: string; voiceId: string; speed: number; language?: string }): Promise<Result<{ file: string; duration: number; url: string }>>;
       pathForFile(file: File): string;
       onStatus(fn: (s: string) => void): () => void;
       onExportProgress(fn: (f: number) => void): () => void;

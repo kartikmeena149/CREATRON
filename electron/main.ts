@@ -1,7 +1,7 @@
 import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
 import { analyze } from "../src/analyze.ts";
 import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
@@ -14,17 +14,24 @@ import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { run } from "../src/tools.ts";
 import { personCutout } from "../src/person.ts";
-import { downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
+import { downloadAudio, downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
   cloneVoice,
   deleteVoice,
   generateVoiceover,
   importSkillVoice,
   listVoices,
+  previewVoice,
+  deleteVoiceoverFile,
+  type VoiceLanguage,
   stopStaleVoiceEngine,
   stopVoiceEngine,
 } from "../src/voice.ts";
-import { handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
+import { importScene, loadScene, sceneBase, sceneEntry } from "./sceneImport.ts";
+import { remotionProject } from "./remotionBundle.ts";
+import { libraryFonts } from "../src/fontLibrary.ts";
+import type { Detail } from "../src/scene.ts";
+import { fileThumbnails, handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
 
 registerMediaScheme();
 let win: BrowserWindow;
@@ -77,7 +84,7 @@ ipcMain.handle("pick-video", async () => {
 ipcMain.handle("pick-library", async () => {
   const r = await dialog.showOpenDialog(win, {
     properties: ["openFile", "multiSelections"],
-    filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "m4v", "mkv", "webm", "mp3", "wav", "m4a", "aac", "flac", "ogg"] }],
+    filters: [{ name: "Video, audio or photo", extensions: ["mp4", "mov", "m4v", "mkv", "webm", "mp3", "wav", "m4a", "aac", "flac", "ogg", "png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
   });
   return r.canceled ? [] : r.filePaths;
 });
@@ -165,14 +172,30 @@ ipcMain.handle(
 
 ipcMain.handle("models", safe(async () => listModels()));
 
+// Claude edits (HyperFrames projects) brought in as layers with keyframes.
+ipcMain.handle("pick-scene", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: "Import a Claude edit",
+    message: "Pick the project folder Claude made the video in (HyperFrames or Remotion)",
+    properties: ["openFile", "openDirectory"],
+    filters: [{ name: "Claude edit", extensions: ["html", "htm", "tsx", "ts", "jsx", "js", "json"] }],
+  });
+  return r.canceled ? undefined : r.filePaths[0];
+});
+ipcMain.handle("is-scene", (_e, path: string) => (remotionProject(path) ? "remotion" : sceneEntry(path) ? "hyperframes" : null));
+ipcMain.handle("import-scene", safe(async (path: string, detail: Detail) => importScene(path, detail, status)));
+ipcMain.handle("load-scene", safe(async (file: string) => loadScene(file)));
+ipcMain.handle("scene-base", safe(async (file: string) => sceneBase(file)));
+ipcMain.handle("font-library", () => libraryFonts().map((f) => ({ ...f, url: mediaUrl(f.file) })));
+
 // The project's AI-written animations, compiled for the live preview.
 ipcMain.handle("custom-code", safe(async (path: string) => compileCustom(customDir(path))));
 
 // ---- Video from links (yt-dlp) ----
 ipcMain.handle(
   "link-info",
-  safe(async (url: string) => {
-    const { captions: _, chapters: __, ...info } = await linkInfo(url);
+  safe(async (url: string, audio?: boolean) => {
+    const { captions: _, chapters: __, ...info } = await linkInfo(url, audio);
     return info;
   }),
 );
@@ -184,6 +207,20 @@ ipcMain.handle(
     const file = await downloadLink(
       opts.url,
       { id: opts.id, site: opts.site.toLowerCase(), start: opts.start, end: opts.end, dir: opts.purpose === "broll" ? join(app.getAppPath(), "work", "broll") : undefined },
+      (f) => win.webContents.send("link-progress", f),
+    );
+    const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
+    return { file, length: Number(stdout.trim()) || (opts.end ?? 0) - (opts.start ?? 0) };
+  }),
+);
+
+/** Just the sound of a link, as an mp3 in work/music (music for the Music tracks). */
+ipcMain.handle(
+  "link-audio",
+  safe(async (opts: { url: string; id: string; site: string; start?: number; end?: number }) => {
+    const file = await downloadAudio(
+      opts.url,
+      { id: opts.id, site: opts.site.toLowerCase(), start: opts.start, end: opts.end, dir: join(app.getAppPath(), "work", "music") },
       (f) => win.webContents.send("link-progress", f),
     );
     const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
@@ -263,6 +300,22 @@ ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
 
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
 
+// The frame strip for a video on an upper track (made once per file).
+ipcMain.handle("file-thumbs", safe(async (path: string) => fileThumbnails(path)));
+
+/** True for a file Creatron made itself (downloads, voiceovers, music in work/), never your own files. */
+const madeByCreatron = (path: string) => !relative(join(app.getAppPath(), "work"), resolve(path)).startsWith("..");
+
+// Moves a library file to the Trash (so it can be put back), only one Creatron made itself.
+ipcMain.handle(
+  "trash-media",
+  safe(async (path: string) => {
+    if (!madeByCreatron(path)) throw new Error("Only files Creatron downloaded or made can be moved to the Trash from here.");
+    await shell.trashItem(path);
+  }),
+);
+ipcMain.handle("made-by-creatron", (_e, path: string) => madeByCreatron(path));
+
 // ---- Voice Lab ----
 ipcMain.handle("voices", safe(async () => listVoices().map((v) => ({ ...v, url: v.file ? mediaUrl(v.file) : undefined }))));
 
@@ -280,10 +333,14 @@ ipcMain.handle(
 );
 
 ipcMain.handle("delete-voice", safe(async (id: string) => deleteVoice(id)));
+ipcMain.handle("delete-voiceover-file", safe(async (file: string) => deleteVoiceoverFile(file)));
+
+// A few seconds of a voice to listen to before choosing it (built-in ones are made once, then kept).
+ipcMain.handle("voice-preview", safe(async (id: string, language?: VoiceLanguage) => mediaUrl(await previewVoice(id, language))));
 
 ipcMain.handle(
   "generate-voiceover",
-  safe(async (opts: { text: string; voiceId: string; speed: number }) => {
+  safe(async (opts: { text: string; voiceId: string; speed: number; language?: VoiceLanguage }) => {
     const r = await generateVoiceover(opts, status, (p) => win.webContents.send("voice-progress", p));
     status("");
     return { ...r, url: mediaUrl(r.file) };

@@ -21,9 +21,21 @@ const take = (): Snapshot => {
 // A blank tab: no video, empty chat. Taken when the app starts, before anything is loaded.
 const blank = take();
 
+const KEEP_KEY = "creatron.tabsKeepLibrary";
+const readKeep = () => {
+  try {
+    return localStorage.getItem(KEEP_KEY) !== "no";
+  } catch {
+    return true;
+  }
+};
+
 export const useTabs = create<{
   tabs: Tab[];
   active: number;
+  /** New tabs start with the library of the tab you were in (on unless switched off in the Library). */
+  keepLibrary: boolean;
+  setKeepLibrary(on: boolean): void;
   /** Opens an empty tab (the drop-a-video screen) and switches to it. */
   add(): void;
   switchTo(id: number): void;
@@ -31,12 +43,20 @@ export const useTabs = create<{
 }>((set, get) => ({
   tabs: [{ id: 0 }],
   active: 0,
+  keepLibrary: readKeep(),
+  setKeepLibrary: (on) => {
+    try {
+      localStorage.setItem(KEEP_KEY, on ? "yes" : "no");
+    } catch {}
+    set({ keepLibrary: on });
+  },
 
   add: () => {
     if (!canSwitch()) return;
     const id = nextId++;
+    const library = useEditor.getState().library;
     park(get().active);
-    useEditor.setState({ ...blank, playing: false });
+    useEditor.setState({ ...blank, playing: false, ...(get().keepLibrary ? { library } : {}) });
     set((s) => ({ tabs: [...s.tabs, { id }], active: id }));
   },
 

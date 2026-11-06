@@ -10,6 +10,8 @@ import { run, workDir } from "../src/tools.ts";
 const TYPES: Record<string, string> = {
   ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
   ".mkv": "video/x-matroska", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".jpg": "image/jpeg", ".png": "image/png",
+  ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml", ".avif": "image/avif",
+  ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf", ".ogg": "audio/ogg",
 };
 
 export function registerMediaScheme() {
@@ -53,7 +55,7 @@ export function handleMedia() {
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 
 /** One sprite sheet of small frames across the video, for the video track. Cached per video. */
-export async function thumbnails(a: Analysis): Promise<Thumbs> {
+export async function thumbnails(a: Pick<Analysis, "source" | "width" | "height" | "duration">): Promise<Thumbs> {
   const frameH = 72;
   const frameW = Math.round((frameH * a.width) / a.height / 2) * 2;
   const interval = Math.max(1, a.duration / 150);
@@ -67,6 +69,33 @@ export async function thumbnails(a: Analysis): Promise<Thumbs> {
       "-frames:v", "1", "-q:v", "4", file,
     ]);
   return { url: mediaUrl(file), cols, frameW, frameH, interval, count };
+}
+
+/**
+ * The frame strip for any video file (B-roll on the upper tracks), made once and kept next to the
+ * file's other work. Phone videos stored sideways are measured the way they play.
+ */
+const stripping = new Map<string, Promise<Thumbs>>();
+export function fileThumbnails(path: string): Promise<Thumbs> {
+  let p = stripping.get(path);
+  if (!p) {
+    p = (async () => {
+      const { stdout } = await run("ffprobe", [
+        "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:stream_side_data=rotation:format=duration",
+        "-of", "json", path,
+      ]);
+      const d = JSON.parse(stdout);
+      const s = d.streams?.[0] ?? {};
+      const turned = Math.abs(Number(s.side_data_list?.find((x: any) => "rotation" in x)?.rotation ?? 0)) % 180 === 90;
+      const width = turned ? s.height : s.width;
+      const height = turned ? s.width : s.height;
+      if (!width || !height) throw new Error("No picture in that file.");
+      return thumbnails({ source: path, width, height, duration: Number(d.format?.duration) || 1 });
+    })();
+    p.catch(() => stripping.delete(path));
+    stripping.set(path, p);
+  }
+  return p;
 }
 
 export type Waveform = { rate: number; peaks: number[] };

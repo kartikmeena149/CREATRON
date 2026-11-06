@@ -20,11 +20,18 @@ export function lookBox(look: Look): string {
   return a > 0 ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${a.toFixed(3)})` : "";
 }
 
-export function captionLook(plan: EditPlan, own?: CaptionLook): Look {
+/** Caption animations that colour a word (the one being said, or the caption's key word) with the accent. */
+export function usesAccent(animation: EditPlan["captions"]["animation"]): boolean {
+  return animation === "highlight" || animation === "kinetic" || animation === "doc" || animation === "spec";
+}
+
+export function captionLook(plan: EditPlan, own?: CaptionLook, index = 0): Look {
   const c = plan.captions;
+  const accents = c.accents ?? [];
   const all: Look = {
     font: c.font ?? "Arial",
     size: c.size,
+    wrapAt: c.wrapAt ?? 1,
     color: c.color,
     bold: c.bold ?? true,
     italic: c.italic ?? false,
@@ -32,8 +39,12 @@ export function captionLook(plan: EditPlan, own?: CaptionLook): Look {
     strike: c.strike ?? false,
     outline: c.outline ?? (c.style === "bold" ? "outline" : "box"),
     behind: c.behind ?? false,
-    // The word being said: the highlight colour for highlight captions, otherwise the text colour.
-    highlight: c.animation === "highlight" ? c.highlight : null,
+    align: c.align ?? "center",
+    // The accent (the word being said, or the key word): the next palette colour for this caption
+    // (index = its place among the captions), else the highlight colour; one-word captions only take
+    // a palette. Otherwise the text colour.
+    highlight: accents.length && (usesAccent(c.animation) || c.animation === "word") ? accents[index % accents.length]
+      : usesAccent(c.animation) ? c.highlight : null,
     background: "",
   };
   return { ...all, ...Object.fromEntries(Object.entries(own ?? {}).filter(([, v]) => v !== undefined)) } as Look;
@@ -44,30 +55,54 @@ export function cueFontSize(plan: EditPlan, look: Look, width: number, height: n
   return Math.min(width, height) * (plan.captions.style === "bold" ? 0.075 : 0.05) * look.size;
 }
 
+/**
+ * How wide a caption's lines may run before the next word wraps: 86% of the frame at the size the
+ * look was set at (a preset's size), growing and shrinking with the text from there, so resizing
+ * a caption scales it without moving words between lines.
+ */
+/** CSS for lining a caption's lines up: centred captions fit their words, aligned ones fill their column. */
+export function alignBox(look: Look, width: number): { width?: number; textAlign: "center" | "left" | "right" } {
+  return look.align === "center" ? { textAlign: "center" } : { width: captionWrapWidth(look, width), textAlign: look.align };
+}
+
+export function captionWrapWidth(look: Look, width: number): number {
+  return (width * 0.86 * look.size) / (look.wrapAt || 1);
+}
+
+/** How long a main-track clip plays on the timeline (its speed applied). */
+export const clipLength = (s: EditPlan["segments"][number]) => (s.end - s.start) / s.speed;
+
+/**
+ * Where each main-track clip starts on the output timeline. Clips follow each other, after the
+ * empty gap before a clip when there is one (dragged there with the magnet off).
+ */
+export function clipStarts(plan: EditPlan): number[] {
+  let t = 0;
+  return plan.segments.map((s) => {
+    const at = t + (s.gap ?? 0);
+    t = at + clipLength(s);
+    return at;
+  });
+}
+
 /** Maps a source time into the output timeline, or undefined when that moment was cut. */
 export function toOutputTime(plan: EditPlan, t: number): number | undefined {
-  let offset = 0;
-  for (const s of plan.segments) {
-    if (t >= s.start && t <= s.end) return offset + (t - s.start) / s.speed;
-    offset += (s.end - s.start) / s.speed;
-  }
+  const starts = clipStarts(plan);
+  for (const [i, s] of plan.segments.entries()) if (t >= s.start && t <= s.end) return starts[i] + (t - s.start) / s.speed;
   return undefined;
 }
 
-/** Maps an output time back to the source moment playing then. */
+/** Maps an output time back to the source moment playing then (in a gap: where the next clip starts). */
 export function toSourceTime(plan: EditPlan, t: number): number {
-  let offset = 0;
-  for (const s of plan.segments) {
-    const len = (s.end - s.start) / s.speed;
-    if (t <= offset + len) return s.start + Math.max(0, t - offset) * s.speed;
-    offset += len;
-  }
+  const starts = clipStarts(plan);
+  for (const [i, s] of plan.segments.entries()) if (t <= starts[i] + clipLength(s)) return s.start + Math.max(0, t - starts[i]) * s.speed;
   return plan.segments.at(-1)?.end ?? 0;
 }
 
-/** Length of the main track (Track 1) after cuts and speed changes. */
+/** Length of the main track (Track 1) after cuts, speed changes and gaps. */
 export function outputDuration(plan: EditPlan): number {
-  return plan.segments.reduce((sum, s) => sum + (s.end - s.start) / s.speed, 0);
+  const n = plan.segments.length;
+  return n ? clipStarts(plan)[n - 1] + clipLength(plan.segments[n - 1]) : 0;
 }
 
 /**
@@ -106,18 +141,17 @@ export function captionsOf(plan: EditPlan, words: Word[]): Caption[] {
 /** Places every caption on the output timeline. Parts that were cut out are skipped. */
 export function buildCues(plan: EditPlan, words: Word[]): Cue[] {
   const cues: Cue[] = [];
+  const starts = clipStarts(plan);
   captionsOf(plan, words).forEach((c, index) => {
     let start: number | undefined;
     let end: number | undefined;
-    let offset = 0;
-    for (const s of plan.segments) {
+    for (const [i, s] of plan.segments.entries()) {
       const from = Math.max(c.start, s.start);
       const to = Math.min(c.end, s.end);
       if (to > from) {
-        start ??= offset + (from - s.start) / s.speed;
-        end = offset + (to - s.start) / s.speed;
+        start ??= starts[i] + (from - s.start) / s.speed;
+        end = starts[i] + (to - s.start) / s.speed;
       }
-      offset += (s.end - s.start) / s.speed;
     }
     if (start === undefined || end === undefined || end - start < 0.05) return;
     cues.push({
@@ -127,7 +161,7 @@ export function buildCues(plan: EditPlan, words: Word[]): Cue[] {
       end,
       x: plan.captions.x + (c.x ?? 0),
       y: plan.captions.y + (c.y ?? 0),
-      look: captionLook(plan, c.look),
+      look: captionLook(plan, c.look, index),
     });
   });
   cues.sort((a, b) => a.start - b.start);

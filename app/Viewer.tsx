@@ -3,13 +3,14 @@
 // reframing is object-fit/position (the same crop the renderer does), captions are DOM text,
 // and voice tweaks run through Web Audio.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CaptionOverlay } from "./CaptionOverlay.tsx";
 import { CaptionToolbar } from "./CaptionToolbar.tsx";
-import { pictureSize, placement } from "../src/frame.ts";
-import { buildCues, editDuration, outputDuration } from "../src/timeline.ts";
+import { pictureSize, placeBox, placement } from "../src/frame.ts";
+import { buildCues, clipStarts, editDuration, outputDuration } from "../src/timeline.ts";
 import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
-import { mediaUrl, timecode } from "./format.ts";
+import { isImage, mediaUrl, timecode } from "./format.ts";
 import type { Broll, Voiceover } from "../src/schema.ts";
 import { effectivePlan, trackSetting } from "../src/tracks.ts";
 
@@ -19,6 +20,9 @@ export function Viewer() {
   const stage = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
+  // Where the frame sits in the stage: selection boxes are drawn on a layer there, so their corner
+  // handles aren't cut off at the frame's edge.
+  const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
   const mainEnd = outputDuration(plan);
   const a = project?.analysis;
 
@@ -39,6 +43,8 @@ export function Viewer() {
   // Paused: keep the picture on the frame under the playhead.
   const { index, offset } = locate(plan, time);
   const seg = plan.segments[index];
+  // In the empty gap before a clip (magnet off): black and silent, like the export.
+  const inGap = Boolean(seg) && time < offset - 0.001;
   useEffect(() => {
     const v = video.current;
     if (!v || playing || !seg) return;
@@ -57,6 +63,8 @@ export function Viewer() {
     let raf = 0;
     let i = 0;
     let clock: { t0: number; at: number } | null = null;
+    let until: number | null = null; // while the clock runs over a gap: when the next clip starts
+    const starts = clipStarts(plan);
     const runClock = (at: number) => {
       v.pause();
       clock = { t0: performance.now(), at };
@@ -67,13 +75,26 @@ export function Viewer() {
       const loc = locate(plan, from);
       i = loc.index;
       const s = plan.segments[i];
-      v.currentTime = s.start + (from - loc.offset) * s.speed;
-      v.playbackRate = s.speed;
-      v.play().catch(() => setPlaying(false));
+      if (from < loc.offset) runClock(from), (until = loc.offset);
+      else {
+        v.currentTime = s.start + (from - loc.offset) * s.speed;
+        v.playbackRate = s.speed;
+        v.play().catch(() => setPlaying(false));
+      }
     }
     const tick = () => {
       if (clock) {
         const t = clock.at + (performance.now() - clock.t0) / 1000;
+        // Through a gap: the clip after it starts when the clock reaches it.
+        if (until !== null && t >= until) {
+          clock = null;
+          until = null;
+          v.currentTime = plan.segments[i].start;
+          v.playbackRate = plan.segments[i].speed;
+          v.play().catch(() => setPlaying(false));
+          raf = requestAnimationFrame(tick);
+          return;
+        }
         if (t >= end) return seek(end), setPlaying(false);
         seek(t);
         raf = requestAnimationFrame(tick);
@@ -93,13 +114,18 @@ export function Viewer() {
           return;
         }
         i += 1;
+        // A gap before the next clip: run the clock over it, black and silent.
+        if (plan.segments[i].gap) {
+          runClock(starts[i] - plan.segments[i].gap!);
+          until = starts[i];
+          raf = requestAnimationFrame(tick);
+          return;
+        }
         v.currentTime = plan.segments[i].start;
         v.playbackRate = plan.segments[i].speed;
       }
-      let off = 0;
-      for (let n = 0; n < i; n++) off += (plan.segments[n].end - plan.segments[n].start) / plan.segments[n].speed;
       const cur = plan.segments[i];
-      seek(off + Math.max(0, v.currentTime - cur.start) / cur.speed);
+      seek(starts[i] + Math.max(0, v.currentTime - cur.start) / cur.speed);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -115,7 +141,7 @@ export function Viewer() {
   // While a voiceover plays, dip the original like the export does (music and SFX don't).
   const underVoiceover = shown.voiceovers.some((v) => (v.kind ?? "voice") === "voice" && time >= v.at && time < v.at + v.duration);
   // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted), and Track 1 can be muted.
-  const clipVolume = trackSetting(plan, "video:1").muted ? 0 : (seg?.volume ?? 1);
+  const clipVolume = trackSetting(plan, "video:1").muted || seg?.sound === false || inGap ? 0 : (seg?.volume ?? 1);
   useVoicePreview(video, plan.audio, (underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1) * clipVolume);
   useVoiceoverPlayback(shown.voiceovers, time, playing);
 
@@ -127,6 +153,7 @@ export function Viewer() {
   const anyBehind = cues.some((c) => c.look.behind);
   useEffect(() => void (anyBehind && !cutoutUrl && useEditor.getState().prepareCutout()), [anyBehind, cutoutUrl]);
   const place = placement(plan, a ? pictureSize(a).width : 16, a ? pictureSize(a).height : 9, frameSize.w, frameSize.h);
+  const mainSelected = useEditor((s) => s.selected !== null && s.selectedPart === "picture" && s.selectedBroll === null) && Boolean(a?.width);
 
   // Drag the picture to move it, like in a phone editor. One undo step per drag.
   const [dragging, setDragging] = useState(false);
@@ -179,8 +206,9 @@ export function Viewer() {
           <div
             className="video-box"
             style={{
-              // Past the end of the main track the picture is black, like the export.
-              visibility: time >= mainEnd ? "hidden" : undefined,
+              // Past the end of the main track, or where a clip's picture was deleted, the picture is
+              // black (its sound still plays), like the export.
+              visibility: time >= mainEnd || seg?.picture === false || inGap ? "hidden" : undefined,
               width: place.w,
               height: place.h,
               left: place.cx - place.w / 2,
@@ -196,16 +224,26 @@ export function Viewer() {
               style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
             />
           </div>
-          <BrollLayer broll={shown.broll} time={time} playing={playing} />
-          {/* Animated captions are drawn by the Remotion layer instead of the editable plain caption. */}
-          {cue && frameSize.w > 0 && plan.captions.animation === "none" && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} />}
+          <BrollLayer broll={shown.broll} time={time} playing={playing} frame={frameSize} overlay={overlay} />
+          {/* The main video's box while its clip is selected: corners resize it, dragging moves it. */}
+          {mainSelected && time < mainEnd && frameSize.w > 0 && overlay && (
+            <SizeBox overlay={overlay} place={place} frame={frameSize} t={plan.transform} onStart={() => useEditor.getState().checkpoint()}
+              onChange={(t) => {
+                const s = useEditor.getState();
+                const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+                s.live({ ...s.plan, transform: { ...s.plan.transform, scale: clamp(t.scale, 0.1, 3), x: clamp(t.x, -1, 1), y: clamp(t.y, -1, 1), rotate: t.rotate } });
+              }} />
+          )}
+          {/* Animated captions are drawn by the Remotion layer; the caption here is then an invisible
+              box in the same place, so they can still be picked, dragged and edited. */}
+          {cue && frameSize.w > 0 && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} ghost={plan.captions.animation !== "none"} />}
           <MotionPreview />
           {/* "Behind me": the person, cut out, drawn over the caption (same place and zoom as the video). */}
           {cutoutUrl && (
             <div
               className="video-box cutout-box"
               style={{
-                visibility: behind && time < mainEnd ? "visible" : "hidden",
+                visibility: behind && time < mainEnd && seg?.picture !== false && !inGap ? "visible" : "hidden",
                 width: place.w,
                 height: place.h,
                 left: place.cx - place.w / 2,
@@ -241,6 +279,8 @@ export function Viewer() {
             />
           )}
         </div>
+        <div className="frame-overlay" ref={setOverlay}
+          style={frame.current ? { left: frame.current.offsetLeft, top: frame.current.offsetTop, width: frameSize.w, height: frameSize.h } : undefined} />
         <CaptionToolbar stage={stage} />
       </div>
     </div>
@@ -339,7 +379,7 @@ function useVoiceoverPlayback(voiceovers: Voiceover[], time: number, playing: bo
 }
 
 /** V2 B-roll in the preview: each clip covers the frame during its window, muted, in sync. */
-function BrollLayer({ broll, time, playing }: { broll: Broll[]; time: number; playing: boolean }) {
+function BrollLayer({ broll, time, playing, frame, overlay }: { broll: Broll[]; time: number; playing: boolean; frame: { w: number; h: number }; overlay: HTMLDivElement | null }) {
   const refs = useRef(new Map<string, HTMLVideoElement>());
   useEffect(() => {
     for (const b of broll) {
@@ -363,22 +403,148 @@ function BrollLayer({ broll, time, playing }: { broll: Broll[]; time: number; pl
     }
   }, [broll, time, playing]);
 
+  // Each picture's own shape (known once it loads), so it's placed like the main video.
+  const [shape, setShape] = useState<Record<string, [number, number]>>({});
+  const known = (id: string, w: number, h: number) => w && h && setShape((m) => (m[id]?.[0] === w && m[id]?.[1] === h ? m : { ...m, [id]: [w, h] }));
+  const selectedBroll = useEditor((s) => s.selectedBroll);
+  if (!frame.w) return null;
+  // Higher tracks on top; the clip under the pointer is the one a click picks.
+  const list = broll.filter((b) => b.file).sort((p, q) => (p.track ?? 2) - (q.track ?? 2));
   return (
     <>
-      {broll.filter((b) => b.file).map((b) => (
-        <video
-          key={b.id}
-          className="broll-layer"
-          ref={(el) => {
-            if (el) refs.current.set(b.id, el);
-            else refs.current.delete(b.id);
-          }}
-          src={mediaUrl(b.file!)}
-          muted
-          preload="auto"
-          style={{ visibility: time >= b.at && time < b.at + b.duration ? "visible" : "hidden" }}
-        />
-      ))}
+      {list.map((b) => {
+        const [w, h] = shape[b.id] ?? [frame.w, frame.h];
+        const p = placeBox(b, w, h, frame.w, frame.h);
+        const on = time >= b.at && time < b.at + b.duration;
+        const style: React.CSSProperties = {
+          left: p.cx - p.w / 2, top: p.cy - p.h / 2, width: p.w, height: p.h, visibility: on ? "visible" : "hidden",
+          transform: b.rotate ? `rotate(${b.rotate}deg)` : undefined,
+        };
+        const media = isImage(b.file!) ? (
+          <img src={mediaUrl(b.file!)} alt="" onLoad={(e) => known(b.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} />
+        ) : (
+          <video
+            ref={(el) => {
+              if (el) refs.current.set(b.id, el);
+              else refs.current.delete(b.id);
+            }}
+            src={mediaUrl(b.file!)}
+            muted
+            preload="auto"
+            onLoadedMetadata={(e) => known(b.id, e.currentTarget.videoWidth, e.currentTarget.videoHeight)}
+          />
+        );
+        return (
+          <div key={b.id} className="broll-box" style={style} onPointerDown={(e) => on && moveBroll(e, b, frame)}>
+            {media}
+          </div>
+        );
+      })}
+      {list.filter((b) => b.id === selectedBroll && time >= b.at && time < b.at + b.duration).map((b) => {
+        const [w, h] = shape[b.id] ?? [frame.w, frame.h];
+        return overlay && <SizeBox key={b.id} overlay={overlay} place={placeBox(b, w, h, frame.w, frame.h)} frame={frame} t={b}
+          onStart={() => useEditor.getState().checkpoint()}
+          onChange={(t) => useEditor.getState().updateBroll(b.id, t, false)} />;
+      })}
     </>
+  );
+}
+
+/** Drag a photo or video on an upper track around the frame (it's selected first). One undo step. */
+function moveBroll(e: React.PointerEvent, b: Broll, frame: { w: number; h: number }) {
+  if (e.button !== 0) return;
+  e.stopPropagation(); // not the main video under it
+  const s = useEditor.getState();
+  s.selectBroll(b.id);
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  const start = { x: b.x ?? 0, y: b.y ?? 0 };
+  let moved = false;
+  const clamp = (v: number) => Math.max(-1.5, Math.min(1.5, v));
+  const onMove = (ev: PointerEvent) => {
+    if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
+    if (!moved) (moved = true), useEditor.getState().checkpoint();
+    useEditor.getState().updateBroll(b.id, { x: clamp(start.x + (ev.clientX - x0) / frame.w), y: clamp(start.y + (ev.clientY - y0) / frame.h) }, false);
+  };
+  const up = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", up));
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", up);
+}
+
+/**
+ * The selected picture's box: a square outline with a handle on each corner and a rotate handle
+ * above it. Drag a corner to resize it (its shape kept) while the opposite corner stays put; drag
+ * the rotate handle to turn it (snaps to straight angles, ⇧ for 15° steps); drag the picture
+ * itself to move it.
+ */
+function SizeBox({ overlay, place, frame, t, onStart, onChange }: {
+  overlay: HTMLDivElement;
+  place: { w: number; h: number; cx: number; cy: number };
+  frame: { w: number; h: number };
+  t: { scale?: number; x?: number; y?: number; rotate?: number };
+  onStart: () => void;
+  onChange: (t: { scale: number; x: number; y: number; rotate: number }) => void;
+}) {
+  const [turning, setTurning] = useState<number | null>(null);
+  const deg = t.rotate ?? 0;
+  const rad = (deg * Math.PI) / 180;
+  // A point in the box's own (unrotated) frame, offset from its middle, turned onto the frame.
+  const turn = (dx: number, dy: number) => [dx * Math.cos(rad) - dy * Math.sin(rad), dx * Math.sin(rad) + dy * Math.cos(rad)];
+  const drag = (e: React.PointerEvent, move: (x: number, y: number, ev: PointerEvent) => void, up?: () => void) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const fr = overlay.getBoundingClientRect(); // lined up with the frame
+    let started = false;
+    const onMove = (ev: PointerEvent) => {
+      if (!started) (started = true), onStart();
+      move(ev.clientX - fr.left, ev.clientY - fr.top, ev);
+    };
+    const onUp = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", onUp), up?.());
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return fr;
+  };
+
+  const resize = (corner: "nw" | "ne" | "sw" | "se") => (e: React.PointerEvent) => {
+    const sx = corner.endsWith("e") ? 1 : -1;
+    const sy = corner.startsWith("s") ? 1 : -1;
+    // The opposite corner (on the frame, rotation included) stays where it is.
+    const [ox, oy] = turn((-sx * place.w) / 2, (-sy * place.h) / 2);
+    const ax = place.cx + ox;
+    const ay = place.cy + oy;
+    const s0 = t.scale ?? 1;
+    let d0 = 0;
+    const fr = drag(e, (x, y) => {
+      const k = Math.max(0.05 / s0, Math.min(5 / s0, Math.hypot(x - ax, y - ay) / d0));
+      const [hx, hy] = turn((sx * place.w * k) / 2, (sy * place.h * k) / 2);
+      onChange({ scale: s0 * k, x: (ax + hx - frame.w / 2) / frame.w, y: (ay + hy - frame.h / 2) / frame.h, rotate: deg });
+    });
+    if (fr) d0 = Math.max(4, Math.hypot(e.clientX - fr.left - ax, e.clientY - fr.top - ay));
+  };
+
+  const rotate = (e: React.PointerEvent) => {
+    let a0 = 0;
+    const fr = drag(e, (x, y, ev) => {
+      let next = deg + ((Math.atan2(y - place.cy, x - place.cx) - a0) * 180) / Math.PI;
+      next = ((((next + 180) % 360) + 360) % 360) - 180; // -180…180
+      if (ev.shiftKey) next = Math.round(next / 15) * 15;
+      else for (const straight of [-180, -90, 0, 90, 180]) if (Math.abs(next - straight) < 4) next = straight;
+      setTurning(next);
+      onChange({ scale: t.scale ?? 1, x: t.x ?? 0, y: t.y ?? 0, rotate: Math.round(next * 10) / 10 });
+    }, () => setTurning(null));
+    if (fr) a0 = Math.atan2(e.clientY - fr.top - place.cy, e.clientX - fr.left - place.cx);
+  };
+
+  return createPortal(
+    <div
+      className="size-box"
+      style={{ left: place.cx - place.w / 2, top: place.cy - place.h / 2, width: place.w, height: place.h, transform: deg ? `rotate(${deg}deg)` : undefined }}
+    >
+      {(["nw", "ne", "sw", "se"] as const).map((c) => <i key={c} className={`cap-handle ${c}`} onPointerDown={resize(c)} />)}
+      <i className="rotate-stem" />
+      <i className="rotate-handle" title="Drag to rotate (⇧ for 15° steps)" onPointerDown={rotate} />
+      {turning !== null && <span className="rotate-angle" style={{ transform: `rotate(${-deg}deg)` }}>{Math.round(turning)}°</span>}
+    </div>,
+    overlay,
   );
 }

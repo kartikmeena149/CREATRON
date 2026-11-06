@@ -4,15 +4,16 @@
 // caption isn't on screen right now.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { outputSize } from "../src/frame.ts";
-import { BUNDLED_FONTS } from "../src/fonts.ts";
+import { BUNDLED_FONTS, TEST_FONTS } from "../src/fonts.ts";
 import { CAPTION_FONTS, type CaptionLook } from "../src/schema.ts";
-import { captionLook, captionsOf, cueFontSize, DEFAULT_BOX } from "../src/timeline.ts";
+import { captionLook, captionsOf, cueFontSize, DEFAULT_BOX, usesAccent } from "../src/timeline.ts";
 import { Icon } from "./icons.tsx";
 import { useEditor } from "./store.ts";
 
 const SWATCHES = ["#ffffff", "#ffe14d", "#ffd600", "#a3e635", "#5ee1ff", "#ff7ac6", "#ff5a5a", "#111111"];
 const OUTLINES = { outline: "Black edge", box: "Box", none: "Plain" } as const;
 const BUNDLED = new Set<string>(BUNDLED_FONTS.map((f) => f.family));
+const TEST = new Set<string>(TEST_FONTS.map((f) => f.family));
 
 export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElement | null> }) {
   const { project, plan, selectedCue, setCaptionLook, applyLookToAll, checkpoint } = useEditor();
@@ -32,8 +33,8 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
     if (el) {
       const c = el.getBoundingClientRect();
       const left = Math.round(Math.max(8, Math.min(h.width - b.width - 8, c.left + c.width / 2 - h.left - b.width / 2)));
-      const below = Math.round(c.bottom - h.top + 10);
-      next = { left, top: below + b.height > h.height - 8 ? Math.round(Math.max(8, c.top - h.top - b.height - 10)) : below };
+      const below = Math.round(c.bottom - h.top + 22); // clear of the resize handles
+      next = { left, top: below + b.height > h.height - 8 ? Math.round(Math.max(8, c.top - h.top - b.height - 22)) : below };
     }
     // Only when it moved, or this would re-render forever.
     if (next?.left !== pos?.left || next?.top !== pos?.top) setPos(next);
@@ -44,7 +45,7 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
   if (!project || selectedCue === null || !plan.captions.enabled) return null;
   const own = captionsOf(plan, project.analysis.words)[selectedCue];
   if (!own) return null;
-  const look = captionLook(plan, own.look);
+  const look = captionLook(plan, own.look, selectedCue);
   const set = (patch: CaptionLook) => setCaptionLook(selectedCue, patch);
   // Live changes while dragging a colour picker or slider: one undo step for the whole drag.
   const live = (patch: CaptionLook) => setCaptionLook(selectedCue, patch, false);
@@ -54,7 +55,7 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
   const pxPerUnit = cueFontSize(plan, { ...look, size: 1 }, out.width, out.height);
   const setPx = (v: number) => Number.isFinite(v) && v > 0 && set({ size: Math.max(0.3, Math.min(4, v / pxPerUnit)) });
   const picture = project.analysis.width > 0;
-  const spokenShown = plan.captions.animation === "highlight" || plan.captions.animation === "word";
+  const spokenShown = usesAccent(plan.captions.animation) || plan.captions.animation === "word";
 
   const toggle = (key: "bold" | "italic" | "underline" | "strike", label: string, title: string) => (
     <button className={`ctb-btn ${look[key] ? "on" : ""}`} title={title} onClick={() => set({ [key]: !look[key] })}>
@@ -93,23 +94,13 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
       <div className="ctb-pop-anchor">
         <button className={`ctb-btn ctb-colors ${open === "color" ? "on" : ""}`} title="Colours" onClick={() => setOpen(open === "color" ? "" : "color")}>
           <i className="ctb-dot" style={{ background: look.color }} />
-          {spokenShown && <i className="ctb-dot small" style={{ background: look.highlight ?? look.color }} />}
+          {spokenShown && accentsOf(plan.captions).map((c, i) => <i key={i} className="ctb-dot small" style={{ background: c }} />)}
           <i className="ctb-dot small" style={{ background: look.background ? `#${look.background.slice(1, 7)}` : "transparent", boxShadow: "0 0 0 1.5px #777 inset" }} />
         </button>
         {open === "color" && (
           <div className="ctb-panel" onPointerDown={(e) => e.stopPropagation()}>
             <ColorRow label="Text" value={look.color} onPick={(color) => set({ color })} onStart={checkpoint} onLive={(color) => live({ color })} />
-            {spokenShown && (
-              <ColorRow
-                label="Spoken word"
-                note={look.highlight === null ? "same as text" : undefined}
-                value={look.highlight ?? look.color}
-                onPick={(highlight) => set({ highlight })}
-                onStart={checkpoint}
-                onLive={(highlight) => live({ highlight })}
-                reset={look.highlight !== null ? { label: "Same as text", run: () => set({ highlight: null }) } : undefined}
-              />
-            )}
+            {spokenShown && <AccentPalette value={look.highlight ?? look.color} own={own.look?.highlight} onSet={set} onLive={live} />}
             <BackgroundRow look={look} onSet={set} onStart={checkpoint} onLive={live} />
           </div>
         )}
@@ -133,19 +124,24 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
         <Icon name="person" size={15} />
         {look.behind && <span>Behind</span>}
       </button>
-      <button className="ctb-apply" title="Give every caption this look" onClick={() => applyLookToAll(selectedCue)}>Apply to all</button>
+      <button className="ctb-apply" title="Give every caption this look and position" onClick={() => applyLookToAll(selectedCue)}>Apply to all</button>
       {preparing && <span className="ctb-status"><span className="mini-spin" /> {preparing}</span>}
     </div>
   );
 }
 
-/** Fonts, each drawn in itself, with a search box. Creatron's own fonts first, then the Mac's. */
+/** Fonts, each drawn in itself, with a search box: ones Claude edits brought in, Creatron's own, then the Mac's. */
 function FontList({ value, onPick }: { value: string; onPick: (font: string) => void }) {
   const [q, setQ] = useState("");
-  const shown = CAPTION_FONTS.filter((f) => f.toLowerCase().includes(q.trim().toLowerCase()));
+  // Fonts edits brought in come first, then Creatron's own.
+  const library = useEditor((s) => s.libraryFonts);
+  const shown = [...new Set([...library, ...CAPTION_FONTS])].filter((f) => f.toLowerCase().includes(q.trim().toLowerCase()));
+  const mine = new Set(library);
   const groups: [string, string[]][] = [
-    ["Creatron fonts", shown.filter((f) => BUNDLED.has(f))],
-    ["On this Mac", shown.filter((f) => !BUNDLED.has(f))],
+    ["From your Claude edits", shown.filter((f) => mine.has(f))],
+    ["Creatron fonts", shown.filter((f) => BUNDLED.has(f) && !mine.has(f))],
+    ["Font pack (testing)", shown.filter((f) => TEST.has(f) && !mine.has(f))],
+    ["On this Mac", shown.filter((f) => !BUNDLED.has(f) && !TEST.has(f) && !mine.has(f))],
   ];
   return (
     <div className="ctb-panel ctb-fonts" onPointerDown={(e) => e.stopPropagation()}>
@@ -173,12 +169,48 @@ function FontList({ value, onPick }: { value: string; onPick: (font: string) => 
   );
 }
 
+/**
+ * A hex code box: the colour applies as soon as the code is complete (no Enter needed), with or
+ * without "#", 3-digit shorthand allowed. `digits` is 6 for a colour, 8 for colour + see-through.
+ */
+function HexInput({ value, digits, onStart, onLive }: { value: string; digits: 6 | 8; onStart: () => void; onLive: (hex: string) => void }) {
+  const shown = value.replace("#", "").toUpperCase();
+  const [text, setText] = useState(shown);
+  const [typing, setTyping] = useState(false);
+  useEffect(() => void (!typing && setText(shown)), [shown, typing]);
+  const parse = (t: string) => {
+    if (t.length === 3) return t.split("").map((c) => c + c).join("") + (digits === 8 ? "FF" : "");
+    if (t.length === 6) return t + (digits === 8 ? (shown.slice(6, 8) || "FF") : "");
+    if (t.length === 8 && digits === 8) return t;
+    return undefined;
+  };
+  return (
+    <input
+      value={text}
+      maxLength={digits + 1}
+      spellCheck={false}
+      onFocus={(e) => (setTyping(true), onStart(), e.currentTarget.select())}
+      onChange={(e) => {
+        const t = e.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase().slice(0, digits);
+        setText(t);
+        const full = parse(t);
+        if (full && t.length !== 3) onLive(`#${full.toLowerCase()}`);
+      }}
+      onBlur={() => {
+        setTyping(false);
+        const full = parse(text);
+        if (full) onLive(`#${full.toLowerCase()}`);
+        else setText(shown);
+      }}
+      onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+    />
+  );
+}
+
 function ColorRow(p: {
   label: string; value: string; note?: string; onPick: (c: string) => void; onStart: () => void; onLive: (c: string) => void;
   reset?: { label: string; run: () => void };
 }) {
-  const [hex, setHex] = useState(p.value.slice(1).toUpperCase());
-  useEffect(() => setHex(p.value.slice(1).toUpperCase()), [p.value]);
   return (
     <div className="ctb-row">
       <div className="ctb-row-head">
@@ -189,19 +221,62 @@ function ColorRow(p: {
         <label className="ctb-chip" style={{ background: p.value }}>
           <input type="color" value={p.value} onPointerDown={p.onStart} onChange={(e) => p.onLive(e.target.value)} />
         </label>
-        <input
-          value={hex}
-          maxLength={6}
-          spellCheck={false}
-          onChange={(e) => setHex(e.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase())}
-          onBlur={() => /^[0-9A-F]{6}$/.test(hex) ? p.onPick(`#${hex.toLowerCase()}`) : setHex(p.value.slice(1).toUpperCase())}
-          onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
-        />
+        <HexInput value={p.value} digits={6} onStart={p.onStart} onLive={p.onLive} />
       </div>
       <div className="ctb-swatch-row">
         {SWATCHES.map((c) => <button key={c} className={`swatch ${p.value.toLowerCase() === c ? "on" : ""}`} style={{ background: c }} onClick={() => p.onPick(c)} />)}
       </div>
     </div>
+  );
+}
+
+/** The accent palette as edited: the captions' accents, or the one highlight colour before there's a palette. */
+const accentsOf = (c: { accents?: string[]; highlight: string }) => (c.accents?.length ? c.accents : [c.highlight]);
+
+/**
+ * The accent (the word being said, or the key word). The colour row changes only this caption,
+ * like the rest of the bar ("Apply to all" passes it on). Under it, the palette all captions take
+ * their accent from in turn, so neighbouring captions never share one: up to four, click a colour
+ * to change it, + to add one.
+ */
+function AccentPalette({ value, own, onSet, onLive }: {
+  value: string; own: string | null | undefined; onSet: (p: CaptionLook) => void; onLive: (p: CaptionLook) => void;
+}) {
+  const { plan, setCaptionStyle, checkpoint } = useEditor();
+  const colors = accentsOf(plan.captions);
+  const save = (next: string[], record = true) => setCaptionStyle({ accents: next }, record);
+  const change = (i: number, c: string) => save(colors.map((x, n) => (n === i ? c : x)), false);
+  const add = () => save([...colors, SWATCHES.find((s) => !colors.includes(s)) ?? "#ffffff"]);
+  const remove = (i: number) => save(colors.filter((_, n) => n !== i));
+  return (
+    <>
+      <ColorRow
+        label="Accent"
+        note={own === undefined ? "from palette" : undefined}
+        value={value}
+        onPick={(highlight) => onSet({ highlight })}
+        onStart={checkpoint}
+        onLive={(highlight) => onLive({ highlight })}
+        reset={own !== undefined ? { label: "Use palette", run: () => onSet({ highlight: undefined }) } : undefined}
+      />
+      <div className="ctb-row">
+        <div className="ctb-row-head">
+          <span>Palette</span>
+          <span className="dim">all captions, in turn</span>
+        </div>
+        <div className="ctb-palette">
+          {colors.map((c, i) => (
+            <span key={i} className="ctb-accent">
+              <label style={{ background: c }} title={`Palette colour ${i + 1}: ${c.toUpperCase()} (changes every caption that takes it)`}>
+                <input type="color" value={c} onPointerDown={checkpoint} onChange={(e) => change(i, e.target.value)} />
+              </label>
+              {colors.length > 1 && <i title="Remove this colour" onClick={() => remove(i)}>×</i>}
+            </span>
+          ))}
+          {colors.length < 4 && <button className="ctb-accent-add" title="Add a colour" onClick={add}><Icon name="plus" size={13} /></button>}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -222,6 +297,10 @@ function BackgroundRow({ look, onSet, onStart, onLive }: { look: ReturnType<type
           <i style={{ background: alpha ? `${rgb}${current.slice(7, 9)}` : "transparent" }} />
           <input type="color" value={rgb} onPointerDown={onStart} onChange={(e) => onLive({ background: withAlpha(e.target.value, alpha || 140) })} />
         </label>
+        <HexInput value={current || "#00000000"} digits={8} onStart={onStart} onLive={(background) => onLive({ background })} />
+      </div>
+      <div className="ctb-hex ctb-alpha">
+        <span className="dim">See-through</span>
         <input
           type="range" min={0} max={255} value={alpha} title="How solid the box is"
           onPointerDown={onStart} onChange={(e) => onLive({ background: withAlpha(rgb, Number(e.target.value)) })}
