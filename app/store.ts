@@ -420,7 +420,7 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedMotion: null,
   selectMotion: (selectedMotion) =>
-    set(selectedMotion === null ? { selectedMotion, pickedIds: [] } : { selectedMotion, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
+    set(selectedMotion === null ? { selectedMotion, selectedLayer: null, pickedIds: [] } : { selectedMotion, selectedLayer: null, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
   addMotion: (template, track) => {
     const { plan, time } = get();
     const id = `m${Math.random().toString(36).slice(2, 10)}`;

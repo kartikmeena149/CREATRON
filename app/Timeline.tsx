@@ -18,7 +18,8 @@ import { magnetDone, magnetMove, magnetTrim, useMagnet } from "./magnet.ts";
 import { useFileWave } from "./fileWave.ts";
 import { type Thumbs, type Wave, selectionOf, useEditor } from "./store.ts";
 import { SceneBar, SceneLabels, SceneRows } from "./SceneLayers.tsx";
-import { flatLayers } from "../src/scene.ts";
+import { ShotLane } from "./SceneShots.tsx";
+import { flatLayers, sceneShots } from "../src/scene.ts";
 
 const LABEL_W = 150;
 
@@ -66,7 +67,9 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
   }, [plan.segments, pxPerSec]);
 
   const cues = useMemo(() => (project ? buildCues(plan, project.analysis.words) : []), [project, plan]);
-  const lanes = useMemo(() => buildLanes(plan, project?.analysis.hasAudio ?? false, (project?.analysis.width ?? 0) > 0), [plan, project]);
+  const scenes = useEditor((s) => s.scenes);
+  const shotScenes = useMemo(() => plan.motion.filter((m) => m.template === "scene" && m.scene && scenes[m.scene] && sceneShots(scenes[m.scene]).length).map((m) => m.id), [plan.motion, scenes]);
+  const lanes = useMemo(() => buildLanes(plan, project?.analysis.hasAudio ?? false, (project?.analysis.width ?? 0) > 0, shotScenes), [plan, project, shotScenes]);
 
   // Scrub: click or drag on the ruler or empty track space moves the playhead.
   const scrub = (e: React.PointerEvent) => {
@@ -279,6 +282,7 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
               return (
                 <div key={l.key} className={`track ${l.kind} ${off ? "off" : ""}`} data-lane={l.key} style={{ height: l.height }} onPointerDown={boxSelect}>
                   {l.kind === "text" && plan.motion.filter((m) => (m.track ?? 1) === l.n).map((m) => <MotionBlock key={m.id} m={m} />)}
+                  {l.kind === "shots" && plan.motion.filter((m) => m.id === l.scene).map((m) => <ShotLane key={m.id} m={m} pxPerSec={pxPerSec} />)}
                   {l.kind === "video" && l.n! > 1 && plan.broll.filter((b) => (b.track ?? 2) === l.n).map((b) => <BrollBlock key={b.id} b={b} />)}
                   {/* A clip whose picture (or sound) was deleted leaves a gap on that lane, like any editor. */}
                   {l.kind === "video" && l.n === 1 && <ReorderMark />}
@@ -350,14 +354,14 @@ function laneAt(x: number, y: number): { kind: string; n: number } | null {
 }
 
 /** `soundOnly`: Track 1 when the main track is a voice recording (no picture), its wave drawn in the clips. */
-type Lane = { key: string; kind: TrackKind | "captions" | "audio"; n?: number; height: number; soundOnly?: boolean };
+type Lane = { key: string; kind: TrackKind | "captions" | "audio" | "shots"; n?: number; height: number; soundOnly?: boolean; scene?: string };
 
 /**
  * Top to bottom: Text N…1, Track N…1, Captions, the main audio, Voiceover / Music / SFX 1…N.
  * Only tracks with something on them are listed (captions while they're on). A main track with no
  * picture (a voice recording) is one lane, Track 1 showing its wave, not a picture lane and a sound lane.
  */
-function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean): Lane[] {
+function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean, shotScenes: string[] = []): Lane[] {
   const lanes: Lane[] = [];
   const range = (kind: TrackKind, from: number, down: boolean) => {
     const n = trackCount(plan, kind);
@@ -365,6 +369,8 @@ function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean): Lan
     return down ? list.reverse() : list;
   };
   for (const n of range("text", 1, true)) lanes.push({ key: trackKey("text", n), kind: "text", n, height: 40 });
+  // The footage of each imported Claude edit, under the text tracks.
+  for (const id of shotScenes) lanes.push({ key: `shots:${id}`, kind: "shots", scene: id, height: 58 });
   const soundOnly = !hasPicture && hasAudio;
   for (const n of range("video", plan.segments.length ? 1 : 2, true))
     lanes.push({ key: trackKey("video", n), kind: "video", n, height: 58, ...(n === 1 && soundOnly ? { soundOnly } : {}) });
@@ -374,8 +380,21 @@ function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean): Lan
   return lanes;
 }
 
+/** The Clips track of an imported edit: named after it. */
+function ShotsLabel({ lane }: { lane: Lane }) {
+  const name = useEditor((s) => s.plan.motion.find((m) => m.id === lane.scene)?.text ?? "");
+  return (
+    <div className="track-label shots" style={{ height: lane.height }} title={`The clips in ${name}: trim them, swap them, take them out`}>
+      <Icon name="video" size={13} />
+      <span className="track-name">Clips</span>
+      <em className="small">{name}</em>
+    </div>
+  );
+}
+
 /** Whether a lane is switched off (hidden or muted), so it shows dimmed. */
 function laneOff(plan: EditPlan, l: Lane): boolean {
+  if (l.kind === "shots") return false;
   if (l.kind === "captions") return !plan.captions.enabled;
   if (l.kind === "audio") return Boolean(trackSetting(plan, "video:1").muted);
   const t = trackSetting(plan, l.key);
@@ -383,9 +402,10 @@ function laneOff(plan: EditPlan, l: Lane): boolean {
   return Boolean(t.hidden || ((l.kind !== "video" || l.soundOnly) && t.muted));
 }
 
-const LANE_ICON: Record<Lane["kind"], IconName> = { text: "type", video: "video", captions: "cc", audio: "mic", voice: "mic", music: "music", sfx: "bolt" };
+const LANE_ICON: Record<Lane["kind"], IconName> = { text: "type", video: "video", captions: "cc", audio: "mic", voice: "mic", music: "music", sfx: "bolt", shots: "video" };
 
 function TrackLabel({ lane }: { lane: Lane }) {
+  if (lane.kind === "shots") return <ShotsLabel lane={lane} />;
   const plan = useEditor((s) => s.plan);
   const commit = useEditor((s) => s.commit);
   const setCaptionStyle = useEditor((s) => s.setCaptionStyle);
@@ -456,7 +476,7 @@ function Ruler({ lane, from, to, pxPerSec, onPointerDown }: { lane: string; from
 }
 
 /** A clip's frames side by side, each the source frame at its place in the clip (trims and speed included). */
-function FilmStrip({ thumbs, from, speed, w }: { thumbs: Thumbs; from: number; speed: number; w: number }) {
+export function FilmStrip({ thumbs, from, speed, w }: { thumbs: Thumbs; from: number; speed: number; w: number }) {
   const pxPerSec = useEditor((s) => s.pxPerSec);
   const scale = 40 / thumbs.frameH;
   const tileW = thumbs.frameW * scale;

@@ -2,7 +2,7 @@
 // layers with keyframes, so its text, colours and movement can be changed here. Pick how closely
 // keyframes follow the motion and where it goes, then Creatron records it and builds it.
 import { useEffect, useState } from "react";
-import { type Detail, type Scene, captionLayers, sceneStats } from "../src/scene.ts";
+import { type Detail, type Scene, captionLayers, sceneShots, sceneStats } from "../src/scene.ts";
 import { useEditor } from "./store.ts";
 
 const DETAILS: [Detail, string, string][] = [
@@ -75,6 +75,9 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
     }
     const id = useEditor.getState().addScene(file, scene, at, { withoutVoice: into === "new" });
     const captions = into === "new" ? switchToCreatronCaptions(id, scene) : 0;
+    // Its clips and pictures go into the project's library, like any media.
+    const dir = file.replace(/\/[^/]*$/, "");
+    for (const shot of sceneShots(scene)) useEditor.getState().addToLibrary(`${dir}/${shot.src}`);
     const stats = sceneStats(scene);
     setBusy(false);
     setDone({ seconds: (performance.now() - t0) / 1000, layers: stats.layers, keyframes: stats.keyframes, sounds: scene.audio.length, id, captions });

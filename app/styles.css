@@ -1148,3 +1148,8 @@ img.broll-layer { object-fit: cover; }
 .key-btn.has { color: #a3a3a3; }
 .key-btn.on { color: #fbbf24; }
 .key-btn:hover:not(:disabled) { background: none; color: #fbbf24; }
+
+.track-label.shots em { margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-clip { top: 4px; height: 50px; }
+.clip-file { display: flex; align-items: center; gap: 8px; }
+.clip-file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -73,6 +73,8 @@ export const LayerEdit = z.object({
   style: z.record(z.string(), z.string()).optional().describe('CSS changes, e.g. {"color": "#ff0000", "font-size": "60px"}'),
   anim: z.record(z.string(), Channel).optional().describe("Channels replaced: a number, or keyframes [[seconds, value], …]"),
   hidden: z.boolean().optional(),
+  src: z.string().optional().describe("A picture or video layer's file swapped for another (absolute path)"),
+  offset: z.number().min(0).optional().describe("A video layer: seconds into its file it plays from"),
 });
 export type LayerEdit = z.infer<typeof LayerEdit>;
 
@@ -219,6 +221,48 @@ export function videoSpans(l: SceneLayer, duration: number): [number, number][] 
     spans.set(l, out);
   }
   return out;
+}
+
+// ---------- shots ----------
+
+/** A shot of the edit: a video (or a big picture) shown for a while, maybe drawn twice (a blurred copy behind). */
+export type Shot = { key: string; ids: string[]; main: string; kind: "video" | "image"; src: string; start: number; end: number; offset: number };
+
+/** When a layer first shows and when it's next switched off (scene seconds), or undefined if it never shows. */
+export function showSpan(l: SceneLayer, duration: number): [number, number] | undefined {
+  const show = l.anim.show;
+  if (!Array.isArray(show)) return show === 0 ? undefined : [0, duration];
+  const on = show.find(([, v]) => v === 1);
+  if (!on) return undefined;
+  return [on[0], show.find(([t, v]) => t > on[0] && v === 0)?.[0] ?? duration];
+}
+
+/** The show channel for a layer on from `start` to `end`. */
+export const spanShow = (start: number, end: number): Channel =>
+  start <= 0 ? [[0, 1], [round(end, 3), 0]] : [[0, 0], [round(start, 3), 1], [round(end, 3), 0]];
+
+/** The edit's shots in time order: its videos, and pictures that fill a good part of the frame (not overlays running through it). */
+export function sceneShots(scene: Scene): Shot[] {
+  const shots = new Map<string, Shot>();
+  for (const { layer: l } of flatLayers(scene.layers)) {
+    if ((l.kind !== "video" && l.kind !== "image") || !l.src) continue;
+    const span = l.kind === "video" ? videoSpan(l, scene.duration) : showSpan(l, scene.duration);
+    if (!span) continue;
+    const area = channelAt("w", l.anim.w, span[0]) * channelAt("h", l.anim.h, span[0]);
+    if (l.kind === "image" && area < scene.width * scene.height * 0.15) continue;
+    // A texture laid over most of the edit (film grain, a light leak) isn't a shot.
+    if (span[1] - span[0] > scene.duration * 0.6) continue;
+    const key = `${l.src}|${round(span[0], 2)}`;
+    const hit = shots.get(key);
+    // Drawn twice (a blurred copy behind the card): one shot; the sharp one on top is the one to edit.
+    if (hit) {
+      hit.ids.push(l.id);
+      if (!l.style.filter?.includes("blur")) hit.main = l.id;
+      continue;
+    }
+    shots.set(key, { key, ids: [l.id], main: l.id, kind: l.kind, src: l.src, start: span[0], end: span[1], offset: l.media?.offset ?? 0 });
+  }
+  return [...shots.values()].sort((a, b) => a.start - b.start);
 }
 
 // ---------- fonts ----------
@@ -402,6 +446,8 @@ export function applyEdits(scene: Scene, edits: Record<string, LayerEdit> | unde
       anim: e.anim ? { ...l.anim, ...(e.anim as SceneLayer["anim"]) } : l.anim,
       paint,
       ...(e.text !== undefined ? { text: e.text, html: escapeHtml(e.text) } : {}),
+      ...(e.src !== undefined ? { src: e.src } : {}),
+      ...(e.offset !== undefined && l.media ? { media: { ...l.media, offset: e.offset } } : {}),
     };
   };
   return { ...scene, layers: scene.layers.map(one).filter((c): c is SceneLayer => c !== null) };

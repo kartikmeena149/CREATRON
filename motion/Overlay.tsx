@@ -63,7 +63,8 @@ function Custom({ component, props, text, subtext, color, at, duration, W, H }: 
 function SceneItem({ scene, at, duration, prefix, W, H }: OverlayProps["motion"][number] & { prefix: string; W: number; H: number }) {
   const { fps } = useVideoConfig();
   const { data, dir, offset } = scene!;
-  const url = (file: string) => (/^[a-z]+:/i.test(file) ? file : `${prefix}${encodeURIComponent(`${dir}/${file}`)}`);
+  // A scene's own files are relative to its folder; a file swapped in by the user is a full path.
+  const url = (file: string) => (/^[a-z]+:/i.test(file) ? file : `${prefix}${encodeURIComponent(file.startsWith("/") ? file : `${dir}/${file}`)}`);
   // Frames wait for the edit's fonts, so no frame is drawn in a stand-in font.
   const [fonts] = useState(() => delayRender(`fonts of ${data.name}`));
   useEffect(() => void Promise.all(data.fonts.map((rule) => loadFace(rule, url))).finally(() => continueRender(fonts)), [fonts]);

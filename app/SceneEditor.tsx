@@ -7,6 +7,7 @@ import { CAPTION_FONTS } from "../src/schema.ts";
 import type { Motion } from "../src/schema.ts";
 import { type ChannelName, type SceneLayer, addKey, applyEdits, channelAt, deleteKeys, findLayer, keyCount, sceneStats, setChannelAt } from "../src/scene.ts";
 import { useEditor } from "./store.ts";
+import { replaceShot, sceneFile, shotOf } from "./SceneShots.tsx";
 
 /** "rgb(12, 34, 56)" / "rgba(…)" / "#abc" → "#0c2238" for a colour input (alpha dropped). */
 function toHex(c: string | undefined): string {
@@ -117,6 +118,8 @@ function LayerPanel({ m, layer, t, fps, hidden, edit, checkpoint }: {
         </div>
       )}
 
+      {(layer.kind === "video" || layer.kind === "image") && <ClipFields m={m} layer={layer} edit={edit} checkpoint={checkpoint} />}
+
       <div className="field-label">At the playhead {inClip ? <span className="dim">({t.toFixed(2)} s into the edit)</span> : <span className="dim">(move the playhead into the clip)</span>}</div>
       <div className="field-grid props">
         <Prop label="X" name="tx" layer={layer} t={t} fps={fps} edit={edit} checkpoint={checkpoint} enabled={inClip} />
@@ -127,6 +130,36 @@ function LayerPanel({ m, layer, t, fps, hidden, edit, checkpoint }: {
         <Prop label="Blur px" name="blur" min={0} layer={layer} t={t} fps={fps} edit={edit} checkpoint={checkpoint} enabled={inClip} />
       </div>
     </section>
+  );
+}
+
+/** A video or picture layer: what it shows, swapped for another file, and where in the video it plays from. */
+function ClipFields({ m, layer, edit, checkpoint }: { m: Motion; layer: SceneLayer; edit: (fn: Edit, record?: boolean) => void; checkpoint: () => void }) {
+  const file = sceneFile(m, layer.src ?? "");
+  const replace = async () => {
+    const path = await window.creatron.pickMedia(layer.kind === "video" ? "video" : "any");
+    if (!path) return;
+    const shot = shotOf(m, layer.id);
+    if (shot) replaceShot(m, shot, path);
+    else edit((x) => ({ ...x, src: path, offset: 0 }));
+    useEditor.getState().addToLibrary(path);
+  };
+  return (
+    <>
+      <div className="field-label">Clip</div>
+      <div className="clip-file">
+        <span className="dim small" title={file}>{file.split("/").pop()}</span>
+        <button onClick={replace}>Replace…</button>
+      </div>
+      {layer.kind === "video" && (
+        <label className="prop">
+          <span className="field-label">Plays from (s into the file)</span>
+          <input className="vl-input" type="number" min={0} step={0.1} value={Math.round((layer.media?.offset ?? 0) * 100) / 100}
+            onFocus={checkpoint} onKeyDown={(e) => e.stopPropagation()}
+            onChange={(e) => e.target.value !== "" && edit((x) => ({ ...x, offset: Math.max(0, Number(e.target.value)) }), false)} />
+        </label>
+      )}
+    </>
   );
 }
 

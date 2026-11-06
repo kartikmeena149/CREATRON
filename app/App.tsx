@@ -15,6 +15,7 @@ import { isAudio, isImage } from "./format.ts";
 import { Splitter, defaultSize, useLayoutSizes } from "./Splitter.tsx";
 import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
 import { deleteSceneKey } from "./SceneLayers.tsx";
+import { hideShot, shotOf } from "./SceneShots.tsx";
 
 export function App() {
   const { project, status, set, load } = useEditor();
@@ -280,7 +281,13 @@ function useShortcuts() {
         else if (clip && act.canMute(clip)) act.toggleMute(clip);
       } else if ((e.key === "Backspace" || e.key === "Delete") && act.groupRefs().length) s.deleteSelection();
       else if ((e.key === "Backspace" || e.key === "Delete") && s.openScene && s.sceneKey) deleteSceneKey();
-      else if ((e.key === "Backspace" || e.key === "Delete") && s.openScene && s.selectedLayer) s.editLayer(s.openScene, s.selectedLayer, (x) => ({ ...x, hidden: true }));
+      else if ((e.key === "Backspace" || e.key === "Delete") && s.selectedMotion && s.selectedLayer) {
+        // A layer of a Claude edit: a shot goes whole (its card and blurred copy), anything else on its own.
+        const m = s.plan.motion.find((x) => x.id === s.selectedMotion)!;
+        const shot = shotOf(m, s.selectedLayer);
+        if (shot) hideShot(m, shot);
+        else s.editLayer(m.id, s.selectedLayer, (x) => ({ ...x, hidden: true }));
+      }
       else if (e.key === "Backspace" || e.key === "Delete") s.selectedMotion !== null ? s.deleteMotion(s.selectedMotion) : s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));
       else if (e.key === "ArrowRight") s.seek(s.time + (e.shiftKey ? 1 : frame));

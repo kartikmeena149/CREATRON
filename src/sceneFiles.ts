@@ -14,5 +14,7 @@ export async function sceneLibrary(plan: EditPlan): Promise<SceneLibrary | undef
   const fonts = libraryFonts();
   if (!files.length && !fonts.length) return undefined;
   const scenes = Object.fromEntries(files.map((f) => [f, JSON.parse(readFileSync(f, "utf8")) as Scene]));
-  return { scenes, fonts, prefix: await assetPrefix([...files.map(dirname), fontsDir()]) };
+  // Files the user swapped into a scene (a replaced clip) are served too.
+  const swapped = plan.motion.flatMap((m) => Object.values(m.layers ?? {}).flatMap((e) => (e.src?.startsWith("/") ? [dirname(e.src)] : [])));
+  return { scenes, fonts, prefix: await assetPrefix([...files.map(dirname), fontsDir(), ...swapped]) };
 }
