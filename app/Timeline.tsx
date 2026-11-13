@@ -695,7 +695,7 @@ function Clip({ index, seg, x, w, selected, thumbs, wave }: { index: number; seg
       }}
     >
       {!noPicture && <FilmStrip thumbs={thumbs} from={seg.start} speed={seg.speed} w={w} />}
-      {wave && <SegWave seg={seg} w={w} wave={wave} height={32} color={selected ? "#5eead4" : "#2dd4bf"} className="clip-wave" />}
+      {wave && <SegWave seg={seg} w={w} wave={wave} height={32} color={selected ? "#ffffff" : "#bdbdbd"} className="clip-wave" />}
       <div className="clip-label">
         <span>Take {index + 1}{noPicture && " · picture deleted"}</span>
         {badges.map((b) => <span key={String(b)} className="badge">{b}</span>)}
@@ -722,7 +722,7 @@ function WaveClip({ index, seg, x, w, wave, selected }: { index: number; seg: Se
       onContextMenu={(e) => (useEditor.getState().select(index, "sound"), openClipMenu(e, { kind: "segment", index }))}
       onDoubleClick={(e) => (useEditor.getState().select(index, "sound"), openClipMenu(e, { kind: "segment", index }))}
     >
-      <SegWave seg={seg} w={w} wave={wave} height={44} color={selected ? "#5eead4" : "#2dd4bf"} />
+      <SegWave seg={seg} w={w} wave={wave} height={44} color={selected ? "#ffffff" : "#bdbdbd"} />
     </div>
   );
 }

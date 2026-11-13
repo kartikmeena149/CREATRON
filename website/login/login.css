@@ -1,0 +1,56 @@
+/* The sign-in page: the form on paper, the editor recording on ink. Rules: docs/DESIGN.md. */
+body.login { min-height: 100vh; }
+.split { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+.form-side { display: flex; flex-direction: column; padding: 20px 40px 28px; }
+.form-side .logo img { height: 44px; margin-left: -12px; }
+.form-box { width: min(400px, 100%); margin: auto 0; padding: 48px 0; }
+.form-box h1 { font-size: clamp(40px, 5vw, 64px); margin: 18px 0 12px; }
+.form-box > p.muted { margin-bottom: 36px; }
+
+form { display: grid; gap: 10px; }
+label { margin-bottom: 2px; }
+input {
+  font: 400 16px var(--font-text); color: var(--ink); background: var(--white);
+  border: 1px solid var(--line); border-radius: var(--r-control); height: 44px; padding: 0 14px; width: 100%;
+}
+input::placeholder { color: #a6a6a6; }
+input:focus-visible { border-color: var(--ink); outline: none; }
+.form-box .btn { width: 100%; justify-content: center; height: 44px; }
+.btn.google { gap: 10px; }
+.or { display: flex; align-items: center; gap: 14px; margin: 18px 0; color: var(--grey-2); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+.status { min-height: 22px; margin-top: 16px; font-size: 14px; color: var(--ink); }
+.status.bad { color: var(--red); }
+.switch { margin-top: 12px; }
+.switch a, button.link { color: var(--ink); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.switch a:hover, button.link:hover { color: var(--red); }
+.foot { margin-top: auto; }
+
+/* The picture: a viewfinder recording the demo clip, and the frames it has used so far. */
+.show-side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 48px 32px; }
+.viewfinder { position: relative; height: min(66vh, 620px); aspect-ratio: 9 / 16; border-radius: var(--r-card); overflow: hidden; background: #000; }
+.viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hud { position: absolute; inset: 14px 14px auto; display: flex; justify-content: space-between; z-index: 1; color: var(--white); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.recdot { display: flex; align-items: center; gap: 7px; }
+.recdot i { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: rec 2.4s steps(1) infinite; }
+.corner { position: absolute; width: 18px; height: 18px; border: 0 solid rgba(255, 255, 255, 0.8); }
+.corner.tl { top: 8px; left: 8px; border-top-width: 1px; border-left-width: 1px; }
+.corner.tr { top: 8px; right: 8px; border-top-width: 1px; border-right-width: 1px; }
+.corner.bl { bottom: 8px; left: 8px; border-bottom-width: 1px; border-left-width: 1px; }
+.corner.br { bottom: 8px; right: 8px; border-bottom-width: 1px; border-right-width: 1px; }
+.chip { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); white-space: nowrap; font: 500 15px var(--font-text); text-transform: uppercase; letter-spacing: 0.02em; color: #fff; text-shadow: 0 1px 0 #000, 0 0 10px rgba(0, 0, 0, 0.7); }
+.chip b { font-weight: 500; color: var(--white); background: var(--red); padding: 0 4px; text-shadow: none; }
+.frames { display: flex; gap: 6px; }
+.frames i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); transition: background 0.2s; }
+.frames i.on { background: var(--white); }
+.said { color: var(--grey-2); }
+
+@media (max-width: 900px) {
+  .split { grid-template-columns: 1fr; }
+  .form-side { padding: 16px 20px 24px; min-height: 100vh; }
+  .form-box { padding: 32px 0; }
+  .viewfinder { height: 460px; }
+  .frames i { width: 6px; height: 6px; }
+}

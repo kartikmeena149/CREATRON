@@ -1,8 +1,13 @@
-// Auto Edit: raw footage in, finished video out, made the way Claude Code edits a video by hand.
-// Creatron prepares a folder (work/<video>/autoedit) with the recording, its transcript, an
-// optional reference video's frames and a playbook, then runs Claude Code headless there (claude -p
-// on this Mac's Claude plan) with real tools: ffmpeg, its own Remotion project for the whole video,
-// B-roll search and download, frames and loudness to check its own work.
+// Auto Edit: raw footage in, an open editable project out (and its exported video), made the way
+// Claude Code edits a video by hand. Three parts (docs/WORKFLOW.md):
+//   1. The brain: Claude (claude -p on this Mac's Claude plan) makes every editing decision.
+//   2. The hands: tools behind the toolchain wall (toolchain.ts). Their health is checked before
+//      every job and written to notes/TOOLS.md; a broken tool means a fallback, never a dead job.
+//   3. The output: always an editable project (project.ts): source/ untouched, assets/ as separate
+//      files, project/ with cuts, captions, music and colours as plain values, Export/ the MP4.
+//      validateProject is the rule in code; Claude is sent back until it passes.
+// Creatron prepares the folder (work/<video>/autoedit) from the project scaffold, adds the
+// transcript, an optional reference video's frames and a playbook, then runs Claude there.
 //
 // Fenced in: file tools only reach the folder (--restricted), and every command runs in Claude Code's
 // macOS sandbox, which can only write inside the folder, has no network and can't read .env or keys.
@@ -17,12 +22,15 @@ import { ensureBrowser } from "@remotion/renderer";
 import { analyze } from "./analyze.ts";
 import { startBroker } from "./autoedit-broll.ts";
 import { describe } from "./plan.ts";
+import { finalFile, projectName, projectPaths, scaffoldProject, validateProject } from "./project.ts";
 import { chromeOutsideProtectedFolders } from "./remotion.ts";
+import { find, health, healthProblems, healthReport } from "./toolchain.ts";
 import { ROOT, round, run, workDir } from "./tools.ts";
 
 export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string };
 export type AutoEditMarker = { n: number; time: number; x: number; y: number };
-export type AutoEditResult = { dir: string; final: string; session: string; notes: string; version: number };
+/** dir is the open project folder; project is the part to import into the timeline; final is the exported video. */
+export type AutoEditResult = { dir: string; project: string; final: string; session: string; notes: string; version: number };
 
 /** What the progress view shows. remainingMs is the current guess of the time left. */
 export type AutoEditEvent =
@@ -38,7 +46,6 @@ const STAGES: [string, number][] = [
 const FIX_STAGES: [string, number][] = [["fix", 0.4], ["render", 0.45], ["check", 0.15]];
 
 const TOOLS = join(ROOT, "src", "autoedit-tools.ts");
-const EARSHOT_PY = join(homedir(), "Developer", "earshot", ".venv", "bin", "python");
 const HISTORY = join(ROOT, "work", "autoedit-history.json");
 const TIME_LIMIT = 75 * 60_000;
 
@@ -58,31 +65,40 @@ export async function autoEdit(req: AutoEditRequest, emit: (e: AutoEditEvent) =>
   cancelled = false;
   const started = Date.now();
   const info = (text: string) => emit({ type: "log", text, kind: "info" });
+  // Before every job: which tools work. A broken one is said in one line and its fallback is used.
+  const tools = health(true);
+  for (const line of healthProblems(tools)) info(`Tools: ${line}`);
   info("Reading the recording (transcript and pauses)");
   const analysis = await analyze(req.video, (m) => info(m.replace(/^analyze: /, "")));
   const dir = autoEditDir(req.video);
-  prepare(dir, req, analysis);
+  prepare(dir, req, analysis, healthReport(tools));
   if (req.reference) {
     info("Looking at the reference video");
     await prepareReference(dir, req.reference);
   }
   info("Getting the renderer ready");
-  const browser = await ensureBrowser();
-  if ("path" in browser) chromeOutsideProtectedFolders(browser.path); // made now, so the agent's renders find it
+  try {
+    const browser = await ensureBrowser();
+    if ("path" in browser) chromeOutsideProtectedFolders(browser.path); // made now, so the agent's renders find it
+  } catch (e) {
+    // No Remotion browser: the playbook's fallback engines still make the video.
+    info(`Tools: Remotion's browser isn't ready (${String(e instanceof Error ? e.message : e).split("\n")[0].slice(0, 100)}). Using a fallback engine.`);
+    appendFileSync(join(projectPaths(dir).notes, "TOOLS.md"), "\nBROKEN  remotion browser  -> build the video as a HyperFrames project (project/index.html) if hyperframes is OK above.\n");
+  }
 
   const estimate = new Estimate(STAGES, firstEstimate(analysis.duration), started, dir, emit);
   const broker = await startBroker(dir);
   const ask = (prompt: string, session?: string) => claude(dir, req.model, prompt, session, emit, estimate, broker.url);
   try {
     let turn = await ask([
-      "Read PLAYBOOK.md and follow it to make the finished video. The user's brief is in brief.md.",
-      req.reference ? "A reference video's frames are in reference/: copy its style." : "",
+      "Read notes/PLAYBOOK.md and follow it to make the finished video as an editable project. The user's brief is in notes/brief.md.",
+      req.reference ? "A reference video's frames are in notes/reference/: copy its style." : "",
     ].join("\n"));
     turn = await ensureRendered(dir, turn, started, emit, ask);
     // A first version is rarely the best one: one review round against a professional bar (and the reference).
     emit({ type: "log", text: "Reviewing the first version like a director", kind: "info" });
     const reviewStart = Date.now();
-    await contactSheet(join(dir, "out", "final.mp4"), join(dir, "checks", "review-sheet.jpg"));
+    await contactSheet(finalFile(dir), join(projectPaths(dir).checks, "review-sheet.jpg"));
     turn = await ask(review(Boolean(req.reference)), turn.session);
     turn = await ensureRendered(dir, turn, reviewStart, emit, ask);
     const result = keepVersion(dir, turn);
@@ -106,7 +122,7 @@ export async function autoEditFix(
   cancelled = false;
   const started = Date.now();
   const dir = autoEditDir(video);
-  const final = join(dir, "out", "final.mp4");
+  const final = finalFile(dir);
   const pictures = markers.length ? await markerFrames(dir, final, markers) : [];
   const estimate = new Estimate(FIX_STAGES, fixEstimate(), started, dir, emit);
   estimate.stage("fix");
@@ -114,9 +130,9 @@ export async function autoEditFix(
   const ask = (prompt: string, s?: string) => claude(dir, model, prompt, s, emit, estimate, broker.url);
   try {
     let turn = await ask([
-      `The user watched out/final.mp4 and asks: ${message}`,
+      `The user watched the exported video (${relative(dir, final)}) and asks: ${message}`,
       pictures.length ? `\nWhat they're pointing at (Read each image; the red box is the spot they clicked):\n${pictures.join("\n")}` : "",
-      "\nMake the change, re-render with the render command, check what you changed, and reply in 1-2 plain sentences.",
+      "\nMake the change in the editable project (values in project/timeline.json, looks in project/src), re-render with the render command, check what you changed, and reply in 1-2 plain sentences.",
       "Call `stage render` before rendering and `stage check` before checking.",
     ].join("\n"), session);
     turn = await ensureRendered(dir, turn, started, emit, ask);
@@ -130,8 +146,8 @@ export async function autoEditFix(
 /** The review prompt: score the video honestly, then fix the biggest gaps. */
 function review(withReference: boolean): string {
   return [
-    "Creatron's review. Read checks/review-sheet.jpg (16 frames of your out/final.mp4, left to right, top to bottom)" +
-      (withReference ? " and reference/sheet.jpg (16 frames of the reference)." : "."),
+    "Creatron's review. Read notes/checks/review-sheet.jpg (16 frames of your exported video, left to right, top to bottom)" +
+      (withReference ? " and notes/reference/sheet.jpg (16 frames of the reference)." : "."),
     "Be a demanding director. Score 1-10: layout variety, motion and transitions, B-roll (relevant, enough, well framed),",
     "captions, graphics and annotations, sound design (music level, number and timing of sound effects), pacing" +
       (withReference ? ", and how closely it matches the reference's style." : "."),
@@ -148,47 +164,82 @@ async function contactSheet(video: string, out: string) {
   await run("ffmpeg", ["-y", "-v", "error", "-i", video, "-vf", `fps=1/${every.toFixed(3)},scale=-2:480,tile=4x4:padding=6:color=white`, "-frames:v", "1", out]);
 }
 
-/** If Claude stopped without a fresh out/final.mp4, ask it once to finish. */
+/**
+ * If Claude stopped without a fresh export, ask it once to finish. Then the editable-output rule:
+ * whatever validateProject finds (a baked cut, captions outside timeline.json, a changed source,
+ * media from the internet, a missing README...) goes back to Claude to fix, once.
+ */
 async function ensureRendered(dir: string, turn: Turn, since: number, emit: (e: AutoEditEvent) => void, ask: (prompt: string, session?: string) => Promise<Turn>): Promise<Turn> {
-  const final = join(dir, "out", "final.mp4");
-  if (existsSync(final) && statSync(final).mtimeMs > since) return turn;
-  emit({ type: "log", text: "No finished video yet: asking Claude to finish", kind: "info" });
-  turn = await ask("out/final.mp4 hasn't been rendered (or wasn't updated). Finish the work: render it, check it, and reply with your summary.", turn.session);
-  if (!existsSync(final) || statSync(final).mtimeMs <= since) throw new Error(`Claude stopped without rendering the video. Its last words: ${turn.text.slice(0, 400)}`);
+  const final = finalFile(dir);
+  const fresh = () => existsSync(final) && statSync(final).mtimeMs > since;
+  if (!fresh()) {
+    emit({ type: "log", text: "No finished video yet: asking Claude to finish", kind: "info" });
+    turn = await ask(`${relative(dir, final)} hasn't been rendered (or wasn't updated). Finish the work: render it with the render command, check it, and reply with your summary.`, turn.session);
+    if (!fresh()) throw new Error(`Claude stopped without rendering the video. Its last words: ${turn.text.slice(0, 400)}`);
+  }
+  const problems = validateProject(dir, { needExport: true });
+  if (problems.length) {
+    emit({ type: "log", text: `Keeping the result editable: ${problems.length} thing${problems.length > 1 ? "s" : ""} to fix`, kind: "info" });
+    turn = await ask(
+      ["The video must stay an open project the user can edit by hand (notes/PLAYBOOK.md, \"Editable, always\"). These break that:", ...problems.map((p) => `- ${p}`),
+        "Fix every one of them, render again with the render command, and reply with your summary for the user."].join("\n"),
+      turn.session,
+    );
+    const left = validateProject(dir, { needExport: true });
+    if (left.length) emit({ type: "log", text: `Still not fully editable: ${left[0]}`, kind: "info" });
+  }
   return turn;
 }
 
-/** Copies the new out/final.mp4 to versions/vN.mp4 so every result stays playable and comparable. */
+/** Copies the new export to Export/versions/vN.mp4 so every result stays playable and comparable. */
 function keepVersion(dir: string, turn: Turn): AutoEditResult {
-  mkdirSync(join(dir, "versions"), { recursive: true });
-  const version = readdirSync(join(dir, "versions")).filter((f) => /^v\d+\.mp4$/.test(f)).length + 1;
-  const final = join(dir, "versions", `v${version}.mp4`);
-  copyFileSync(join(dir, "out", "final.mp4"), final);
-  writeFileSync(join(dir, "session.json"), JSON.stringify({ session: turn.session, version }));
-  return { dir, final, session: turn.session, notes: turn.text, version };
+  const p = projectPaths(dir);
+  mkdirSync(p.versions, { recursive: true });
+  const version = readdirSync(p.versions).filter((f) => /^v\d+\.mp4$/.test(f)).length + 1;
+  const final = join(p.versions, `v${version}.mp4`);
+  copyFileSync(finalFile(dir), final);
+  writeFileSync(join(p.internal, "session.json"), JSON.stringify({ session: turn.session, version }));
+  return { dir, project: join(dir, "project"), final, session: turn.session, notes: turn.text, version };
 }
 
-/** The folder Claude works in. A previous Auto Edit of this video is kept as autoedit-<time>. */
-function prepare(dir: string, req: AutoEditRequest, analysis: Awaited<ReturnType<typeof analyze>>) {
+/**
+ * The folder Claude works in: the editable project scaffold (it already renders: the whole
+ * recording with captions from the transcript), plus the working notes. A previous Auto Edit
+ * of this video is kept as autoedit-<time>.
+ */
+function prepare(dir: string, req: AutoEditRequest, analysis: Awaited<ReturnType<typeof analyze>>, tools: string) {
   if (existsSync(dir)) renameSync(dir, `${dir}-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`);
-  for (const d of ["public", "checks", "out", "src"]) mkdirSync(join(dir, d), { recursive: true });
+  scaffoldProject(dir, { name: projectName(req.video), video: req.video, analysis });
+  const { notes, internal } = projectPaths(dir);
   const hasVideo = analysis.width > 0;
-  const media = join(dir, "public", `source${extname(req.video).toLowerCase()}`);
-  linkOrCopy(req.video, media);
-  writeFileSync(
-    join(dir, "autoedit.json"),
-    JSON.stringify({ source: analysis.source, media, hasVideo, width: analysis.width, height: analysis.height, fps: hasVideo ? analysis.fps : 30, duration: analysis.duration }, null, 1),
-  );
-  writeFileSync(join(dir, "transcript.json"), JSON.stringify({ note: "SOURCE seconds", words: analysis.words, pauses: analysis.silences }, null, 1));
-  writeFileSync(join(dir, "transcript.md"), describe(analysis));
-  writeFileSync(join(dir, "brief.md"), `# What the user wants\n\n${req.brief.trim() || "(nothing specific: make a strong 9:16 social edit of the whole idea)"}\n`);
-  if (!hasVideo) appendFileSync(join(dir, "brief.md"), "\nThe recording is AUDIO ONLY: build every picture yourself (B-roll, graphics, captions).\n");
-  writeFileSync(join(dir, "PLAYBOOK.md"), playbook());
-  writeFileSync(join(dir, "agent-log.jsonl"), "");
+  writeFileSync(join(notes, "source.json"), JSON.stringify({ hasVideo, width: analysis.width, height: analysis.height, fps: hasVideo ? analysis.fps : 30, duration: analysis.duration }, null, 1));
+  writeFileSync(join(notes, "transcript.md"), describe(analysis));
+  writeFileSync(join(notes, "brief.md"), `# What the user wants\n\n${req.brief.trim() || "(nothing specific: make a strong 9:16 social edit of the whole idea)"}\n`);
+  if (!hasVideo) appendFileSync(join(notes, "brief.md"), "\nThe recording is AUDIO ONLY: build every picture yourself (B-roll, graphics, captions).\n");
+  if (!analysis.words.length) appendFileSync(join(notes, "brief.md"), "\nThere is NO TRANSCRIPT (no speech, or the transcriber isn't working): cut on the pauses and type any captions yourself into project/timeline.json.\n");
+  writeFileSync(join(notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${tools}\n\`\`\`\n\nBROKEN or FALLBACK lines: don't try that tool, use what the line says instead and carry on. Mention it in one sentence of your summary.\n`);
+  writeFileSync(join(notes, "PLAYBOOK.md"), playbook());
+  writeFileSync(join(internal, "agent-log.jsonl"), "");
+  writeShims(dir);
+}
+
+/**
+ * The wall, on Claude's side: `ffmpeg` and `ffprobe` in its shell are thin wrappers in
+ * .creatron/bin (first on its PATH) that start whatever the toolchain found, backup included.
+ */
+function writeShims(dir: string) {
+  const bin = join(projectPaths(dir).internal, "bin");
+  mkdirSync(bin, { recursive: true });
+  for (const tool of ["ffmpeg", "ffprobe"] as const) {
+    const f = find(tool);
+    if (!f) continue;
+    const env = Object.entries(f.env ?? {}).map(([k, v]) => `export ${k}="${v}"\n`).join("");
+    writeFileSync(join(bin, tool), `#!/bin/bash\n# ${tool} through Creatron's toolchain (${f.via})\n${env}exec "${f.cmd}" "$@"\n`, { mode: 0o755 });
+  }
 }
 
 async function prepareReference(dir: string, reference: string) {
-  const out = join(dir, "reference");
+  const out = join(projectPaths(dir).notes, "reference");
   mkdirSync(out, { recursive: true });
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=width,height", "-of", "json", reference]);
   const probe = JSON.parse(stdout);
@@ -206,7 +257,7 @@ async function prepareReference(dir: string, reference: string) {
     [
       `# Reference video (copy its style, not its content)`,
       `${v ? `${v.width}x${v.height}, ` : ""}${round(duration, 1)} s. ${count} frames, evenly spaced: ref-01.jpg ... ref-${count}.jpg, and all of them in one picture: sheet.jpg.`,
-      `The full file is reference/${basename(join(out, `reference${extname(reference).toLowerCase()}`))}: extract more frames or listen-measure its audio with ffmpeg if useful.`,
+      `The full file is notes/reference/${basename(join(out, `reference${extname(reference).toLowerCase()}`))}: extract more frames or listen-measure its audio with ffmpeg if useful.`,
     ].join("\n"),
   );
 }
@@ -221,19 +272,19 @@ function linkOrCopy(from: string, to: string) {
 
 function playbook(): string {
   const text = readFileSync(join(ROOT, "src", "autoedit-playbook.md"), "utf8");
-  const earshot = existsSync(EARSHOT_PY) ? `${EARSHOT_PY} -m earshot` : "earshot-not-installed";
+  const earshot = find("earshot") ? `${find("earshot")!.cmd} -m earshot` : "earshot-not-installed";
   return text.replaceAll("$T", `node ${TOOLS}`).replaceAll("$EARSHOT", earshot);
 }
 
 /** The edited frame at each marker with a red box where the user clicked, for Claude to look at. */
 async function markerFrames(dir: string, video: string, markers: AutoEditMarker[]): Promise<string[]> {
-  mkdirSync(join(dir, "markers"), { recursive: true });
+  mkdirSync(join(dir, "notes", "markers"), { recursive: true });
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-select_streams", "v:0", "-of", "csv=p=0", video]);
   const [w, h] = stdout.trim().split(",").map(Number);
   const out: string[] = [];
   for (const m of markers) {
     const box = Math.round(Math.min(w, h) * 0.14);
-    const file = join("markers", `marker-${m.n}.png`);
+    const file = join("notes", "markers", `marker-${m.n}.png`);
     await run("ffmpeg", [
       "-y", "-v", "error", "-ss", Math.max(0, m.time).toFixed(3), "-i", video,
       "-vf", `drawbox=x=${Math.round(m.x * w - box / 2)}:y=${Math.round(m.y * h - box / 2)}:w=${box}:h=${box}:color=red@0.95:t=${Math.max(4, Math.round(box / 18))},scale=-2:'min(960,ih)'`,
@@ -261,7 +312,7 @@ function claude(
   // A clean environment: no API key (that would bill the API instead of the plan) and none of a
   // parent Claude session's settings.
   const env = {
-    HOME: homedir(), USER: process.env.USER ?? "", PATH: process.env.PATH ?? "", LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: tmpdir(),
+    HOME: homedir(), USER: process.env.USER ?? "", PATH: `${join(projectPaths(dir).internal, "bin")}:${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin`, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: tmpdir(),
     CREATRON_AUTOEDIT_DIR: dir, CREATRON_ROOT: ROOT, CREATRON_BROKER: broker,
     NUMBA_CACHE_DIR: join(dir, ".cache", "numba"), // earshot's compiled DSP, cached where the sandbox may write
   };
@@ -273,7 +324,7 @@ function claude(
   const allowed = [
     "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", `Bash(${tools})`, `Bash(${tools} *)`,
     ...everyday.flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]),
-    ...(existsSync(EARSHOT_PY) ? [`Bash(${EARSHOT_PY} -m earshot *)`] : []),
+    ...(find("earshot") ? [`Bash(${find("earshot")!.cmd} -m earshot *)`] : []),
   ];
   const settings = {
     permissions: {
@@ -298,7 +349,7 @@ function claude(
     "--settings", JSON.stringify(settings),
     ...(session ? ["--resume", session] : []),
   ];
-  const log = join(dir, "agent-log.jsonl");
+  const log = join(projectPaths(dir).internal, "agent-log.jsonl");
   return new Promise((ok, fail) => {
     if (cancelled) return fail(new Error("Stopped."));
     const child = spawn("claude", args, { env, cwd: dir, stdio: ["pipe", "pipe", "pipe"] });

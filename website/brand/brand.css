@@ -1,0 +1,46 @@
+/* The brand page. Rules: docs/DESIGN.md. */
+.hero-mark { min-height: 92vh; display: grid; place-items: center; text-align: center; padding-top: 140px; }
+.hero-mark img { width: min(260px, 50vw); height: auto; margin: 0 auto 44px; }
+.hero-mark h1 { font-size: clamp(40px, 6vw, 84px); margin-top: 22px; }
+
+.grid.four { grid-template-columns: repeat(4, 1fr); }
+.grid.two { grid-template-columns: repeat(2, 1fr); }
+.step { margin: 0; min-height: 0; gap: 26px; }
+.step svg, .step img { width: 120px; height: 120px; margin: 12px auto 0; display: block; }
+.step figcaption { color: var(--grey); font-size: 15px; }
+.step figcaption .dot { display: block; margin-bottom: 12px; padding: 0; color: var(--grey); }
+.step b { color: var(--ink); font-weight: 400; }
+
+.swatch { border-radius: var(--r-card); display: grid; place-items: center; padding: 44px 20px; }
+.swatch img { width: min(420px, 100%); height: auto; }
+.swatch.paper { background: var(--paper); }
+.swatch.ink { background: var(--ink); }
+#type .card { background: var(--paper); }
+.rules { margin: 28px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 32px; color: var(--grey); font-size: 15px; }
+.rules .dot { margin-right: 10px; font-size: 14px; color: var(--ink); }
+
+.sizes { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 26px; }
+.sizes .gap { width: 40px; }
+
+.specimen { margin: 0 0 18px; color: var(--ink) !important; }
+.specimen.text { font-size: 36px; letter-spacing: -0.02em; line-height: 1.1; }
+.specimen.dots { font: 900 44px/1 var(--font-dot); }
+.specimen.mono-s { font: 400 22px/1.2 var(--font-mono); text-transform: uppercase; }
+#type .card { min-height: 240px; }
+#type .card .dot { padding-bottom: 36px; }
+
+.colours { display: grid; grid-template-columns: repeat(4, 1fr) 1.4fr; gap: 12px; }
+.colours div { border-radius: var(--r-card); min-height: 160px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between; }
+.colours .redbox { background: var(--paper); position: relative; }
+.colours .redbox::after { content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border-radius: 50%; background: var(--red); }
+
+code.inline { font: 400 0.85em var(--font-mono); background: var(--white); border: 1px solid var(--line); border-radius: 3px; padding: 1px 6px; color: var(--ink); }
+.files { display: flex; flex-wrap: wrap; gap: 8px; }
+.files a { height: 36px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: var(--r-control); background: var(--white); }
+.files a:hover { background: var(--ink); color: var(--white); }
+footer.band { padding: 32px 24px; }
+
+@media (max-width: 860px) {
+  .grid.four, .grid.two, .rules, .colours { grid-template-columns: 1fr; }
+  .colours div { min-height: 96px; }
+}

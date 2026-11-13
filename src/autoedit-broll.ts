@@ -44,7 +44,7 @@ function inside(dir: string, ...parts: string[]): string {
   return p;
 }
 
-const resultsFile = (dir: string) => inside(dir, ".broll-results.json");
+const resultsFile = (dir: string) => inside(dir, ".creatron", "broll-results.json");
 
 /** search "<words>" [--landscape|--portrait|--square|--web]: stock first, the web when asked or short of results. */
 async function search(dir: string, args: string[]): Promise<string> {
@@ -67,7 +67,7 @@ async function search(dir: string, args: string[]): Promise<string> {
   return [...(lines.length ? lines : ["nothing found; try other words"]), ...problems].join("\n");
 }
 
-/** get <id> <name> [--from s --to s | --find "what it must show"] [--audio] -> public/broll/<name>.mp4 or public/audio/<name>.m4a */
+/** get <id> <name> [--from s --to s | --find "what it must show"] [--audio] -> assets/broll/<name>.mp4 or assets/audio/<name>.m4a */
 async function get(dir: string, args: string[]): Promise<string> {
   const [id, name] = plain(args);
   if (!id || !name) throw new Error('usage: broll get <id> <name> [--from s --to s | --find "what"] [--audio]');
@@ -94,7 +94,7 @@ async function get(dir: string, args: string[]): Promise<string> {
     file = await downloadLink(clip.download, { id: vid ?? clip.id, site: site ?? "web", start, end, height: 1080, dir: join(ROOT, "work", "broll") });
   }
   const audio = flag(args, "audio");
-  const folder = inside(dir, "public", audio ? "audio" : "broll");
+  const folder = inside(dir, "assets", audio ? "audio" : "broll");
   mkdirSync(folder, { recursive: true });
   const out = join(folder, `${basename(name).replace(/\.\w+$/, "").replace(/[^\w-]+/g, "-")}.${audio ? "m4a" : "mp4"}`);
   const range = stock && from !== undefined ? ["-ss", String(from), ...(to !== undefined ? ["-to", String(to)] : [])] : [];
@@ -103,7 +103,7 @@ async function get(dir: string, args: string[]): Promise<string> {
   else copyFileSync(file, out);
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=width,height", "-of", "csv=p=0", out]);
   const credit = `${relative(dir, out)}: ${clip.page} by ${clip.author}${clip.license ? ` (${clip.license})` : ""}`;
-  const credits = inside(dir, "credits.txt");
+  const credits = inside(dir, "notes", "credits.txt");
   writeFileSync(credits, `${existsSync(credits) ? readFileSync(credits, "utf8") : ""}${credit}\n`);
   return [...notes, `${relative(dir, out)} (${stdout.trim().replace(/\n/g, ", ")}) from ${clip.page}${clip.license ? ` (${clip.license})` : ""} by ${clip.author}`].join("\n");
 }

@@ -11,6 +11,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "site:dev": "vite --config website/vite.config.ts",
+    "site:build": "vite build --config website/vite.config.ts",
     "creatron": "node src/cli.ts",
     "typecheck": "tsc --noEmit"
   },

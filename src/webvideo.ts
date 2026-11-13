@@ -9,12 +9,13 @@ import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { cached, type StockClip } from "./stock.ts";
+import { find } from "./toolchain.ts";
 import { ROOT, round, run } from "./tools.ts";
 
 const VISION_MODEL = process.env.CREATRON_VISION_MODEL || "nvidia/nemotron-3.5-super-vl:free";
 
 let available: boolean | undefined;
-export const ytdlpAvailable = () => (available ??= spawnSync("yt-dlp", ["--version"]).status === 0);
+export const ytdlpAvailable = () => (available ??= Boolean(find("yt-dlp")) && spawnSync(find("yt-dlp")!.cmd, ["--version"]).status === 0);
 
 /** What a link points to, read before anything is downloaded. */
 export type LinkInfo = {

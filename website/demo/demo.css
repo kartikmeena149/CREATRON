@@ -1,0 +1,22 @@
+/* The strip above the editor that says what this page is. The editor takes the rest of the tab. */
+.demo-bar {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: #0b0b0b;
+  border-bottom: 1px solid #2a2a2a;
+  color: #9a9a9a;
+  font: 400 11px/1 "SF Mono", ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.demo-bar b { color: #ececec; font-weight: 600; }
+.demo-bar span { overflow: hidden; text-overflow: ellipsis; }
+.demo-bar a { color: #f2f2f2; text-decoration: none; margin-left: auto; flex: none; }
+.demo-bar a:hover { text-decoration: underline; }
+.demo-bar + #root { height: calc(100% - 30px); }
+/* Inside the site's frame the page around it already says it. */
+.framed .demo-bar { display: none; }
+.framed .demo-bar + #root { height: 100%; }

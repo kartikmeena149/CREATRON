@@ -11,7 +11,7 @@ import { Icon } from "./icons.tsx";
 import { useEditor } from "./store.ts";
 
 const SWATCHES = ["#ffffff", "#ffe14d", "#ffd600", "#a3e635", "#5ee1ff", "#ff7ac6", "#ff5a5a", "#111111"];
-const OUTLINES = { outline: "Black edge", box: "Box", none: "Plain" } as const;
+const OUTLINES = { outline: "Black edge", box: "Box", none: "Plain", ransom: "Paper cut-outs" } as const;
 const BUNDLED = new Set<string>(BUNDLED_FONTS.map((f) => f.family));
 const TEST = new Set<string>(TEST_FONTS.map((f) => f.family));
 
@@ -108,7 +108,7 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
       <button
         className="ctb-btn"
         title={`Outline: ${OUTLINES[look.outline]} (click to change)`}
-        onClick={() => set({ outline: look.outline === "outline" ? "box" : look.outline === "box" ? "none" : "outline" })}
+        onClick={() => set({ outline: look.outline === "outline" ? "box" : look.outline === "box" ? "none" : look.outline === "none" ? "ransom" : "outline" })}
       >
         <Icon name="contrast" size={15} />
       </button>

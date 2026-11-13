@@ -1,8 +1,10 @@
 import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
+import { isDocument, readDocument } from "../src/documents.ts";
+import { type ChatEvent, chat, stop as stopChat } from "../src/chat.ts";
 import { analyze } from "../src/analyze.ts";
 import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
@@ -10,8 +12,10 @@ import { freeFallbacks, listModels } from "../src/models.ts";
 import { type Attachment, type Focus, enhancePrompt, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
+import type { ExportOptions } from "../src/exportOptions.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
+import { type Sfx, downloadSfx, searchSfx } from "../src/sfx.ts";
 import { run } from "../src/tools.ts";
 import { personCutout } from "../src/person.ts";
 import { downloadAudio, downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
@@ -53,14 +57,37 @@ function createWindow() {
       additionalArguments: process.argv.includes("--creatron-debug") ? ["--creatron-debug"] : [],
     },
   });
+  // In full screen macOS hides the window buttons: the top bar gives their space back to the logo.
+  win.on("enter-full-screen", () => send("full-screen", true));
+  win.on("leave-full-screen", () => send("full-screen", false));
+  win.webContents.on("did-finish-load", () => send("full-screen", win.isFullScreen()));
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
   // A video passed on the command line (or via Open With) opens straight away.
   const video = process.argv.slice(1).find((a) => /\.(mp4|mov|m4v|mkv|webm)$/i.test(a) && existsSync(a));
-  if (video) win.webContents.once("did-finish-load", () => win.webContents.send("open-path", video));
+  if (video) win.webContents.once("did-finish-load", () => send("open-path", video));
+  // Closing the window quits Creatron: while an export runs, ask first (it would stop the export).
+  win.on("close", (e) => {
+    if (!exportsRunning) return;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "warning",
+      buttons: ["Keep exporting", "Quit and stop the export"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "Your video is still exporting",
+      detail: "Quitting now stops the export and the video won't be saved.",
+    });
+    if (choice === 0) e.preventDefault();
+  });
 }
 
-const status = (text: string) => win.webContents.send("status", text);
+/** Exports in progress (closing the window asks first while one runs). */
+let exportsRunning = 0;
+/** A message to the window. Work that outlives it (an export, Claude) mustn't crash when it's gone. */
+function send(channel: string, value: unknown) {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(channel, value);
+}
+const status = (text: string) => send("status", text);
 // Errors go back as values so the UI can show them instead of crashing the call.
 const safe =
   <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
@@ -81,6 +108,17 @@ ipcMain.handle("pick-video", async () => {
 });
 
 // Library: videos, music and sound effects, several at once.
+/** Files for the AI: media to use, or a storyboard, script or notes to follow. */
+ipcMain.handle("pick-attachments", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Media, storyboards and notes", extensions: ["mp4", "mov", "m4v", "mkv", "webm", "mp3", "wav", "m4a", "aac", "flac", "ogg", "png", "jpg", "jpeg", "webp", "gif", "xlsx", "csv", "tsv", "txt", "md", "json", "docx", "doc", "rtf", "pages", "pdf"] },
+    ],
+  });
+  return r.canceled ? [] : r.filePaths;
+});
+
 ipcMain.handle("pick-library", async () => {
   const r = await dialog.showOpenDialog(win, {
     properties: ["openFile", "multiSelections"],
@@ -103,6 +141,8 @@ ipcMain.handle(
 
 /** A file attached to an AI request: video or sound, and its length. */
 async function describeAttachment(path: string): Promise<Attachment> {
+  // Storyboards, scripts and notes go to the AI as text.
+  if (isDocument(path)) return { path, name: path.split("/").pop() ?? path, kind: "document", seconds: 0, text: await readDocument(path) };
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", path]);
   const info = JSON.parse(stdout);
   const video = (info.streams ?? []).some((s: { codec_type: string }) => s.codec_type === "video") && !/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(path);
@@ -122,6 +162,29 @@ ipcMain.handle(
   "enhance-prompt",
   safe(async (request: string, model: string, path?: string) => enhancePrompt(request, model, path ? await analyze(path, () => {}) : undefined)),
 );
+
+/** The live chat with Claude (src/chat.ts): events stream to the window as "chat-event". */
+ipcMain.handle(
+  "chat-send",
+  safe(async (path: string, message: string, current: EditPlan, model: string, focus?: Focus, answer?: boolean) => {
+    const analysis = await analyze(path, () => {});
+    if (focus?.attachments?.length) focus.attachments = await Promise.all(focus.attachments.map((a) => describeAttachment(a.path)));
+    const emit = (event: ChatEvent) => {
+      // Like any AI edit, only cuts Claude just made snap onto quiet spots.
+      if (event.type === "done" && event.plan) event = { ...event, plan: keepEdges(snapEdges(event.plan, analysis), event.plan, current) };
+      send("chat-event", { path, event });
+    };
+    await chat(analysis, message, current, model, emit, { focus, answer });
+  }),
+);
+ipcMain.handle("chat-stop", (_e, path: string) => stopChat(path));
+
+/** Snapped cuts, except edges that were already on the timeline before (they stay put). */
+function keepEdges(snapped: EditPlan, raw: EditPlan, before: EditPlan): EditPlan {
+  const starts = new Set(before.segments.map((s) => s.start));
+  const ends = new Set(before.segments.map((s) => s.end));
+  return { ...snapped, segments: snapped.segments.map((s, i) => ({ ...s, start: starts.has(raw.segments[i].start) ? raw.segments[i].start : s.start, end: ends.has(raw.segments[i].end) ? raw.segments[i].end : s.end })) };
+}
 
 ipcMain.handle(
   "ai-edit",
@@ -207,7 +270,7 @@ ipcMain.handle(
     const file = await downloadLink(
       opts.url,
       { id: opts.id, site: opts.site.toLowerCase(), start: opts.start, end: opts.end, dir: opts.purpose === "broll" ? join(app.getAppPath(), "work", "broll") : undefined },
-      (f) => win.webContents.send("link-progress", f),
+      (f) => send("link-progress", f),
     );
     const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
     return { file, length: Number(stdout.trim()) || (opts.end ?? 0) - (opts.start ?? 0) };
@@ -221,31 +284,51 @@ ipcMain.handle(
     const file = await downloadAudio(
       opts.url,
       { id: opts.id, site: opts.site.toLowerCase(), start: opts.start, end: opts.end, dir: join(app.getAppPath(), "work", "music") },
-      (f) => win.webContents.send("link-progress", f),
+      (f) => send("link-progress", f),
     );
     const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
     return { file, length: Number(stdout.trim()) || (opts.end ?? 0) - (opts.start ?? 0) };
   }),
 );
 
+/** Sound effects from Openverse: search, then download the chosen one to work/sfx. */
+ipcMain.handle("sfx-search", safe(async (query: string, page?: number, short?: boolean) => searchSfx(query, page, short)));
+ipcMain.handle(
+  "sfx-download",
+  safe(async (s: Sfx) => {
+    const file = await downloadSfx(s);
+    const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
+    return { file, length: Number(stdout.trim()) || s.duration };
+  }),
+);
+
 ipcMain.handle(
   "export",
-  safe(async (path: string, plan: EditPlan) => {
+  safe(async (path: string, plan: EditPlan, options?: ExportOptions & { dir: string; name: string }) => {
     // Automated tests (--creatron-debug) can't click the save dialog, so they name the file instead.
     const testPath = process.argv.includes("--creatron-debug") ? process.env.CREATRON_EXPORT_PATH : undefined;
+    // The export window names the file and folder; without it, ask with a save dialog.
     const r = testPath
       ? { canceled: false, filePath: testPath }
-      : await dialog.showSaveDialog(win, {
-          defaultPath: `${basename(path, extname(path))}-creatron.mp4`,
-          filters: [{ name: "MP4 video", extensions: ["mp4"] }],
-        });
+      : options
+        ? { canceled: false, filePath: freeName(options.dir, options.name) }
+        : await dialog.showSaveDialog(win, {
+            defaultPath: `${basename(path, extname(path))}-creatron.mp4`,
+            filters: [{ name: "MP4 video", extensions: ["mp4"] }],
+          });
     if (r.canceled || !r.filePath) return undefined;
-    const analysis = await analyze(path, () => {});
-    const out = await render(plan, analysis, r.filePath, (m) => status(m.replace(/^(render|loudness): /, "")), (f) =>
-      win.webContents.send("export-progress", f),
-    );
-    status("");
-    return out;
+    exportsRunning++;
+    try {
+      const analysis = await analyze(path, () => {});
+      const out = await render(plan, analysis, r.filePath, (m) => status(m.replace(/^(render|loudness): /, "")), (f) =>
+        send("export-progress", f),
+        options,
+      );
+      status("");
+      return out;
+    } finally {
+      exportsRunning--;
+    }
   }),
 );
 
@@ -255,13 +338,13 @@ type AutoJob = { running: boolean; fixing: boolean; video: string; model: string
 let autoJob: AutoJob | undefined;
 const autoEvent = (e: AutoEditEvent) => {
   if (autoJob) e.type === "progress" ? (autoJob.progress = e) : (autoJob.log = [...autoJob.log.slice(-300), e]);
-  win.webContents.send("autoedit-event", e);
+  send("autoedit-event", e);
 };
 const withUrl = <T extends { final: string }>(r: T) => ({ ...r, url: `${mediaUrl(r.final)}&v=${Date.now()}` });
 async function runAutoJob(job: Omit<AutoJob, "running" | "log">, work: () => Promise<{ final: string }>) {
   if (autoJob?.running) throw new Error("An Auto Edit is already running.");
   autoJob = { ...job, result: job.fixing ? autoJob?.result : undefined, running: true, log: [], error: undefined };
-  win.webContents.send("autoedit-state", autoJob);
+  send("autoedit-state", autoJob);
   try {
     autoJob.result = withUrl(await work());
   } catch (e) {
@@ -269,7 +352,7 @@ async function runAutoJob(job: Omit<AutoJob, "running" | "log">, work: () => Pro
   }
   autoJob.running = false;
   autoJob.progress = undefined;
-  win.webContents.send("autoedit-state", autoJob);
+  send("autoedit-state", autoJob);
 }
 
 ipcMain.handle("autoedit-state", () => autoJob);
@@ -299,6 +382,22 @@ ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
 });
 
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
+ipcMain.handle("open-file", (_e, path: string) => shell.openPath(path));
+ipcMain.handle("file-size", (_e, path: string) => (existsSync(path) ? statSync(path).size : 0));
+/** Where exports go until a folder is picked: the Mac's Movies folder ("videos" to Electron). */
+ipcMain.handle("export-dir", () => app.getPath("videos"));
+ipcMain.handle("pick-folder", async (_e, start?: string) => {
+  const r = await dialog.showOpenDialog(win, { defaultPath: start, properties: ["openDirectory", "createDirectory"] });
+  return r.canceled ? undefined : r.filePaths[0];
+});
+
+/** dir/name.mp4, or name 2.mp4, name 3.mp4… so an export never overwrites an earlier one. */
+function freeName(dir: string, name: string): string {
+  const clean = name.replace(/[/:]/g, "-").replace(/\.mp4$/i, "").trim() || "Creatron export";
+  let file = join(dir, `${clean}.mp4`);
+  for (let n = 2; existsSync(file); n++) file = join(dir, `${clean} ${n}.mp4`);
+  return file;
+}
 
 // The frame strip for a video on an upper track (made once per file).
 ipcMain.handle("file-thumbs", safe(async (path: string) => fileThumbnails(path)));
@@ -341,7 +440,7 @@ ipcMain.handle("voice-preview", safe(async (id: string, language?: VoiceLanguage
 ipcMain.handle(
   "generate-voiceover",
   safe(async (opts: { text: string; voiceId: string; speed: number; language?: VoiceLanguage }) => {
-    const r = await generateVoiceover(opts, status, (p) => win.webContents.send("voice-progress", p));
+    const r = await generateVoiceover(opts, status, (p) => send("voice-progress", p));
     status("");
     return { ...r, url: mediaUrl(r.file) };
   }),

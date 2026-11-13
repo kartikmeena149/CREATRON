@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { captionsOf, captionWrapWidth, cueFontSize, lookBox, type Cue } from "../src/timeline.ts";
 import { useEditor } from "./store.ts";
+import { RansomText } from "../motion/Ransom.tsx";
 
 /** How close (screen pixels) the caption's middle must come to the frame's centre line to snap onto it. */
 const SNAP = 6;
@@ -193,7 +194,8 @@ export function CaptionOverlay({ cue, frame, ghost = false }: { cue: Cue; frame:
           if (e.key === "Escape") finish(false);
         }}
       >
-        {cue.text}
+        {/* Paper cut-outs: each letter on its own scrap (plain text while typing). */}
+        {look.outline === "ransom" && !editing && !ghost ? <RansomText text={caps.uppercase ? cue.text.toUpperCase() : cue.text} align={look.align} /> : cue.text}
       </span>
     </div>
     </>

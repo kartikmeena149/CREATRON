@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in to Creatron</title>
+    <link rel="icon" href="../brand/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../site.css" />
+    <link rel="stylesheet" href="./login.css" />
+  </head>
+  <body class="login">
+    <main class="split">
+      <section class="form-side band">
+        <a class="logo" href="../"><img src="../brand/logo.svg" alt="Creatron" /></a>
+
+        <div class="form-box">
+          <p class="dot muted" id="label">( Sign in )</p>
+          <h1 id="title">Welcome back.</h1>
+          <p class="muted" id="sub">Pick up your edit where you left it.</p>
+
+          <form id="form" novalidate>
+            <label class="mono muted" for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+            <button class="btn" type="submit">Continue with email</button>
+          </form>
+
+          <div class="or mono"><span>Or</span></div>
+
+          <button class="btn line plain google" type="button" id="google">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true">
+              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z" />
+              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" />
+              <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z" />
+              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" />
+            </svg>
+            Continue with Google
+          </button>
+
+          <p class="status" id="status" role="status" aria-live="polite"></p>
+
+          <p class="switch mono"><span id="ask" class="muted">New to Creatron?</span> <button type="button" class="link" id="swap">Create an account</button></p>
+          <p class="switch mono"><a href="../demo/">Try the editor without an account &gt;</a></p>
+        </div>
+
+        <p class="mono muted foot">Your footage stays on your Mac.</p>
+      </section>
+
+      <!-- What you sign in to: the demo clip, recording, with the timeline under it. -->
+      <section class="show-side band ink" aria-hidden="true">
+        <div class="viewfinder">
+          <div class="hud mono"><span class="recdot"><i></i>Rec</span><span id="tc">00:00:00:00</span></div>
+          <video id="clip" src="../sample/video.mp4" muted loop autoplay playsinline preload="metadata"></video>
+          <span class="chip">fruit fly's <b>entire</b> brain</span>
+          <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        </div>
+        <div class="frames" id="frames"></div>
+        <p class="mono muted said">&gt; Make it a tight reel with captions</p>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let creating = new URLSearchParams(location.search).has("signup");
+      const words = () => {
+        $("label").textContent = creating ? "( New account )" : "( Sign in )";
+        $("title").textContent = creating ? "Start editing." : "Welcome back.";
+        $("sub").textContent = creating ? "Describe the edit. Creatron does the rest." : "Pick up your edit where you left it.";
+        $("ask").textContent = creating ? "Have an account?" : "New to Creatron?";
+        $("swap").textContent = creating ? "Sign in" : "Create an account";
+        document.title = creating ? "Create your Creatron account" : "Sign in to Creatron";
+        $("status").textContent = "";
+      };
+      words();
+      $("swap").addEventListener("click", () => ((creating = !creating), words()));
+
+      const say = (text, bad) => {
+        $("status").textContent = text;
+        $("status").classList.toggle("bad", Boolean(bad));
+      };
+
+      // Accounts are not connected yet: this is where the sign-in service gets called once one is chosen.
+      // Until then the page says so, instead of pretending to sign anyone in.
+      const signIn = () => say("Accounts aren't switched on yet. You can use the editor without one.");
+
+      $("form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = $("email");
+        if (!email.value.trim()) return say("Type your email address first.", true), email.focus();
+        if (!email.checkValidity()) return say("That doesn't look like an email address. Check it and try again.", true), email.focus();
+        signIn();
+      });
+      $("google").addEventListener("click", signIn);
+
+      // The timecode runs with the clip, and a strip of frames under it fills as it plays.
+      const clip = $("clip");
+      const frames = $("frames");
+      const N = 24;
+      for (let i = 0; i < N; i++) frames.appendChild(document.createElement("i"));
+      const pad = (n) => String(Math.floor(n)).padStart(2, "0");
+      const tick = () => {
+        const t = clip.currentTime || 0;
+        $("tc").textContent = `00:${pad(t / 60)}:${pad(t % 60)}:${pad((t % 1) * 30)}`;
+        const at = clip.duration ? Math.floor((t / clip.duration) * N) : 0;
+        [...frames.children].forEach((f, i) => f.classList.toggle("on", i <= at));
+        requestAnimationFrame(tick);
+      };
+      tick();
+    </script>
+  </body>
+</html>

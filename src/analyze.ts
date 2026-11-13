@@ -1,9 +1,10 @@
 // Step 1: learn what is in the video, locally. Metadata from ffprobe, word-timed transcript
 // from whisper.cpp, pauses from ffmpeg's silencedetect. Results are cached per video.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Analysis, Word } from "./schema.ts";
-import { round, run, whisperModel, workDir } from "./tools.ts";
+import { find } from "./toolchain.ts";
+import { round, run, workDir } from "./tools.ts";
 
 export async function analyze(video: string, log = console.error): Promise<Analysis> {
   const source = resolve(video);
@@ -21,7 +22,7 @@ export async function analyze(video: string, log = console.error): Promise<Analy
   let silences: Analysis["silences"] = [];
   if (meta.hasAudio) {
     log("analyze: transcribing with Whisper");
-    words = await transcribe(source, dir);
+    words = await transcribe(source, dir, log);
     log(`analyze: ${words.length} words; finding pauses`);
     silences = await findSilences(source);
   }
@@ -52,11 +53,41 @@ async function probe(source: string) {
   };
 }
 
-async function transcribe(source: string, dir: string): Promise<Word[]> {
+/**
+ * Words with times. First choice whisper.cpp; if it's missing or fails, HyperFrames' transcriber;
+ * if that fails too, no words (the edit goes on without a transcript: toolchain.ts FALLBACK).
+ */
+async function transcribe(source: string, dir: string, log: (m: string) => void): Promise<Word[]> {
   const wav = join(dir, "audio.wav");
   await run("ffmpeg", ["-y", "-v", "error", "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-  const outBase = join(dir, "transcript");
-  await run("whisper-cli", ["-m", whisperModel(), "-f", wav, "-ml", "1", "-sow", "-oj", "-of", outBase, "-np"]);
+  const whisper = find("whisper");
+  if (whisper) {
+    try {
+      return await whisperWords(wav, join(dir, "transcript"), whisper.model!);
+    } catch (e) {
+      log(`analyze: Whisper failed (${String(e instanceof Error ? e.message : e).split("\n")[0].slice(0, 120)})`);
+    }
+  }
+  const hyperframes = find("hyperframes");
+  if (hyperframes) {
+    log("analyze: Whisper isn't working, transcribing with HyperFrames instead");
+    try {
+      // It writes assets/transcript.json ([{ text, start, end }]) into the folder it runs on.
+      const folder = join(dir, "hf-transcribe");
+      mkdirSync(folder, { recursive: true });
+      await run(hyperframes.cmd, [...hyperframes.pre, "transcribe", wav, "--dir", folder, "--model", "small.en"]);
+      const list = JSON.parse(readFileSync(join(folder, "assets", "transcript.json"), "utf8")) as Word[];
+      return list.filter((w) => w.text?.trim()).map((w) => ({ text: w.text.trim(), start: w.start, end: w.end }));
+    } catch (e) {
+      log(`analyze: HyperFrames' transcriber failed too (${String(e instanceof Error ? e.message : e).split("\n")[0].slice(0, 120)})`);
+    }
+  }
+  log("analyze: no transcript (no working transcriber): captions are typed by hand and cuts follow the pauses");
+  return [];
+}
+
+async function whisperWords(wav: string, outBase: string, model: string): Promise<Word[]> {
+  await run("whisper-cli", ["-m", model, "-f", wav, "-ml", "1", "-sow", "-oj", "-of", outBase, "-np"]);
   const json = JSON.parse(readFileSync(`${outBase}.json`, "utf8"));
 
   // With -ml 1 each entry is roughly one word; pieces without a leading space continue the previous word.

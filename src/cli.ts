@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 // creatron: chat-to-edit video from the terminal.
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { analyze } from "./analyze.ts";
 import { outputDuration } from "./timeline.ts";
 import { DEFAULT_MODEL, describe, makePlan } from "./plan.ts";
+import { projectName, scaffoldProject } from "./project.ts";
 import { render } from "./render.ts";
 import { EditPlan } from "./schema.ts";
 import { snapEdges } from "./snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "./stock.ts";
+import { health, healthReport } from "./toolchain.ts";
 import { ROOT } from "./tools.ts";
 
 const USAGE = `creatron - edit video by describing what you want
@@ -19,6 +23,13 @@ const USAGE = `creatron - edit video by describing what you want
   creatron plan <video> "<request>" [-m model]               write an edit plan, no render
   creatron render <video> <plan.json> [-o out.mp4]           render a plan you wrote or tweaked
   creatron prompt <video>                                    show exactly what text the AI would see
+  creatron doctor                                            which tools work now, and what each job will use
+  creatron project new <Name> <footage> [-o folder]          an open, editable project (default ~/Movies/Creatron/<Name>)
+  creatron project render <folder> [draft]                   re-export it -> <folder>/Export/<Name>.mp4
+  creatron project check <folder>                            is it still hand-editable? + loudness and frames
+  creatron project still <folder> <seconds> <name>           one frame -> <folder>/notes/checks/<name>.png
+  creatron project cut <folder> <keep.json>                  set the cuts (and captions) from a list of ranges
+  creatron project cutout <folder>                           the speaker without background -> assets/cutouts/
 
 Default model: ${DEFAULT_MODEL} (any OpenRouter model id works). Needs OPENROUTER_API_KEY in .env.`;
 
@@ -43,6 +54,28 @@ function fail(message: string): never {
 
 try {
   if (values.help || !command) console.log(USAGE);
+  else if (command === "doctor") console.log(healthReport(health(true)));
+  else if (command === "project") {
+    const [, sub, a, b, c] = positionals;
+    if (sub === "new") {
+      const footage = resolve(need(b, "footage"));
+      const name = projectName(need(a, "project name"));
+      const dir = resolve(values.out ?? join(homedir(), "Movies", "Creatron", name));
+      if (existsSync(join(dir, "project", "timeline.json"))) fail(`${dir} is already a project`);
+      // The health check comes first: a broken tool is said in one line and the backup is used.
+      for (const h of health(true)) if (!h.ok || h.backup) console.error(`tools: ${h.tool} ${h.ok ? h.note : "isn't working"}`);
+      const t = scaffoldProject(dir, { name, video: footage, analysis: await analyze(footage) });
+      console.log(`project made: ${dir}\n${t.cuts.length} cut, ${t.captions.length} captions. Edit project/timeline.json, then: creatron project render "${dir}"`);
+    } else if (["render", "check", "still", "cut", "cutout", "tools"].includes(sub ?? "")) {
+      // The project tool belt does the work, on that folder only.
+      const dir = resolve(need(a, "project folder"));
+      const r = spawnSync(process.execPath, [join(ROOT, "src", "autoedit-tools.ts"), sub!, ...[b, c].filter((x): x is string => Boolean(x))], {
+        stdio: "inherit",
+        env: { ...process.env, CREATRON_AUTOEDIT_DIR: dir, CREATRON_ROOT: ROOT },
+      });
+      process.exitCode = r.status ?? 1;
+    } else fail(`unknown project command "${sub ?? ""}"\n\n${USAGE}`);
+  }
   else if (command === "analyze") {
     const a = await analyze(need(video, "video"));
     console.log(`${a.words.length} words, ${a.silences.length} pauses, ${a.duration}s. Saved next to the cache.`);

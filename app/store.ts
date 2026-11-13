@@ -8,18 +8,39 @@ import { captionLook, captionsOf, clipLength, clipStarts, editDuration, outputDu
 import { compactTracks, freeTrack, spanFree, userClip } from "../src/tracks.ts";
 import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
 import { loadFont } from "../motion/Overlay.tsx";
+import type { ChatEvent, Question, Step } from "../src/chatTypes.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 /** A generated voiceover; voiceId and speed say how it was made (older takes don't have them). */
 export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number; language?: string; voiceId?: string; speed?: number };
-export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice";
+export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice" | "sfx";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
 
 export type Message =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; before?: EditPlan; meta?: string }
-  | { role: "error"; text: string };
+  | { role: "error"; text: string }
+  | AgentMessage;
+
+/** A live Claude turn in the chat: its words and its steps in the order they happened. */
+export type AgentMessage = {
+  role: "agent";
+  items: ({ kind: "text"; text: string } | { kind: "steps"; steps: Step[] })[];
+  status: "working" | "waiting" | "done" | "error" | "stopped";
+  started: number;
+  ended?: number;
+  question?: Question;
+  /** What the user picked or typed for the question. */
+  answer?: string;
+  /** The timeline before and after this turn changed it (for Compare and Revert). */
+  before?: EditPlan;
+  after?: EditPlan;
+  /** Reverted by the user (Restore brings the change back). */
+  reverted?: boolean;
+  model: string;
+  error?: string;
+};
 
 type State = {
   project?: Project;
@@ -45,6 +66,7 @@ type State = {
   messages: Message[];
   exporting: number | null; // 0..1 while exporting
   exported?: string;
+  exportError?: string;
 
   load(p: Project): void;
   /** Replace the plan and record the previous one for undo. */
@@ -148,6 +170,10 @@ type State = {
 
   set(partial: Partial<State>): void;
   say(m: Message): void;
+  /** One event from the live chat with Claude, applied to its message (and the timeline). */
+  agentEvent(e: ChatEvent, model: string): void;
+  /** Records the answer to the open question. */
+  answerQuestion(answer: string): void;
 };
 
 const placeholder: EditPlan = {
@@ -535,4 +561,41 @@ export const useEditor = create<State>((set, get) => ({
 
   set: (partial) => set(partial),
   say: (m) => set((s) => ({ messages: [...s.messages, m] })),
+  agentEvent: (e, model) => {
+    const s = get();
+    const msgs = [...s.messages];
+    if (e.type === "start") return set({ busy: true, messages: [...msgs, { role: "agent", items: [], status: "working", started: Date.now(), model }] });
+    const i = msgs.findLastIndex((m) => m.role === "agent");
+    if (i < 0) return;
+    const m = { ...(msgs[i] as AgentMessage) };
+    m.items = [...m.items];
+    const last = m.items.at(-1);
+    if (e.type === "text") {
+      if (last?.kind === "text") m.items[m.items.length - 1] = { kind: "text", text: last.text + e.delta };
+      else if (e.delta.trim()) m.items.push({ kind: "text", text: e.delta.trimStart() });
+    } else if (e.type === "step") {
+      const at = m.items.findIndex((it) => it.kind === "steps" && it.steps.some((x) => x.id === e.step.id));
+      if (at >= 0) {
+        const it = m.items[at] as { kind: "steps"; steps: Step[] };
+        m.items[at] = { kind: "steps", steps: it.steps.map((x) => (x.id === e.step.id ? e.step : x)) };
+      } else if (last?.kind === "steps") m.items[m.items.length - 1] = { kind: "steps", steps: [...last.steps, e.step] };
+      else m.items.push({ kind: "steps", steps: [e.step] });
+    } else if (e.type === "plan") {
+      // The first change of a turn is one undo step; after that the timeline follows Claude live.
+      if (!m.before) (m.before = s.plan), get().checkpoint();
+      get().live(e.plan);
+    } else if (e.type === "done") {
+      if (e.plan) get().live(e.plan);
+      Object.assign(m, { status: e.question ? "waiting" : "done", question: e.question, ended: Date.now(), after: m.before ? get().plan : undefined });
+    } else if (e.type === "error") Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
+    msgs[i] = m;
+    set({ messages: msgs, busy: e.type === "done" || e.type === "error" ? false : s.busy });
+  },
+  answerQuestion: (answer) =>
+    set((s) => {
+      const msgs = [...s.messages];
+      const i = msgs.findLastIndex((m) => m.role === "agent");
+      if (i >= 0) msgs[i] = { ...(msgs[i] as AgentMessage), answer, status: "done" };
+      return { messages: msgs };
+    }),
 }));

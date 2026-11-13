@@ -515,7 +515,7 @@ function TakeWave({ wave, progress, onSeek }: { wave?: Wave; progress: number; o
       const to = Math.max(from + 1, Math.floor(((i + 1) / bars) * peaks.length));
       for (let k = from; k < to; k++) peak = Math.max(peak, peaks[k] ?? 0);
       const bh = Math.max(2, (peaks.length ? peak / top : 0.15) * (h - 2));
-      ctx.fillStyle = i / bars < progress ? "#9a8cff" : "#4a4a4a";
+      ctx.fillStyle = i / bars < progress ? "#f2f2f2" : "#3a3a3a";
       ctx.fillRect(i * 3, (h - bh) / 2, 2, bh);
     }
   }, [wave, progress]);

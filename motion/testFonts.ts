@@ -100,6 +100,17 @@ import fAutography from "./fonts/test/Autography.otf";
 import fSignericaFat from "./fonts/test/SignericaFat.ttf";
 import fKaufmann from "./fonts/test/Kaufmann.ttf";
 import fInkFree from "./fonts/test/InkFree.ttf";
+import fRansomNote from "./fonts/test/RansomNote.ttf";
+import fFjallaOne from "./fonts/test/FjallaOne-Regular.ttf";
+import fMichroma from "./fonts/test/Michroma-Regular.ttf";
+import fDMSerifDisplay from "./fonts/test/DMSerifDisplay-Regular.ttf";
+import fSacramento from "./fonts/test/Sacramento-Regular.ttf";
+import fSnigletExtraBold from "./fonts/test/Sniglet-ExtraBold.ttf";
+import fGochiHand from "./fonts/test/GochiHand-Regular.ttf";
+import fSilkscreen from "./fonts/test/Silkscreen-Regular.ttf";
+import fAudiowide from "./fonts/test/Audiowide-Regular.ttf";
+import fBarlowCondensedBlackItalic from "./fonts/test/BarlowCondensed-BlackItalic.ttf";
+import fTitanOne from "./fonts/test/TitanOne-Regular.ttf";
 
 export const TEST_FILES: [family: string, weight: number, url: string][] = [
   ["Montserrat", 400, fMontserrat],
@@ -202,4 +213,15 @@ export const TEST_FILES: [family: string, weight: number, url: string][] = [
   ["Signerica Fat", 400, fSignericaFat],
   ["Kaufmann", 400, fKaufmann],
   ["Ink Free", 400, fInkFree],
+  ["Ransom Note", 400, fRansomNote],
+  ["Fjalla One", 400, fFjallaOne],
+  ["Michroma", 400, fMichroma],
+  ["DM Serif Display", 400, fDMSerifDisplay],
+  ["Sacramento", 400, fSacramento],
+  ["Sniglet", 400, fSnigletExtraBold],
+  ["Gochi Hand", 400, fGochiHand],
+  ["Silkscreen", 400, fSilkscreen],
+  ["Audiowide", 400, fAudiowide],
+  ["Barlow Condensed Black Italic", 400, fBarlowCondensedBlackItalic],
+  ["Titan One", 400, fTitanOne],
 ];

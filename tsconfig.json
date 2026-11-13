@@ -24,6 +24,7 @@
     "motion",
     "app",
     "electron",
+    "website",
     "electron.vite.config.ts"
   ]
 }

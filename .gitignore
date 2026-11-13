@@ -38,3 +38,6 @@ out/
 
 # Cloned voices (personal recordings)
 voices/
+
+# Claude Code session lock
+.claude/scheduled_tasks.lock

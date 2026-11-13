@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { AbsoluteFill, continueRender, delayRender, interpolate, OffthreadVideo, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { alignBox, captionWrapWidth, lookBox } from "../src/timeline.ts";
 import { loadBundledFonts } from "./fonts.ts";
+import { RansomText } from "./Ransom.tsx";
 import type { OverlayCue, OverlayProps } from "../src/motion.ts";
 import { customComponent } from "./custom.ts";
 import { SceneView } from "./Scene.tsx";
@@ -184,7 +185,7 @@ function Cue({ cue, ...c }: { cue: OverlayCue } & NonNullable<OverlayProps["capt
   const scale = c.animation === "pop" ? interpolate(s, [0, 1], [0.55, 1]) : interpolate(s, [0, 1], [0.9, 1]);
   return (
     <div style={{ ...box, transform: `translate(-50%, -50%) scale(${scale})`, opacity: Math.min(1, s * 1.6) }}>
-      {cue.words.map((w, i) => (
+      {look?.outline === "ransom" ? <RansomText text={caseOf(cue.words.map((w) => w.text).join(" "), c.uppercase)} align={look.align} /> : cue.words.map((w, i) => (
         <span key={i}>
           {c.animation === "highlight" ? <Lit on={i === current} at={w.start} color={spoken} text={w.text} /> : w.text}
           {i < cue.words.length - 1 ? " " : ""}
@@ -193,6 +194,8 @@ function Cue({ cue, ...c }: { cue: OverlayCue } & NonNullable<OverlayProps["capt
     </div>
   );
 }
+
+const caseOf = (text: string, upper: boolean) => (upper ? text.toUpperCase() : text);
 
 /** One word of a highlight caption: lights up and grows a little while it's being said. */
 function Lit({ on, at, color, text }: { on: boolean; at: number; color: string; text: string }) {

@@ -1,0 +1,166 @@
+/* Creatron's website. The rules behind every value here are in docs/DESIGN.md. */
+@import url("https://fonts.googleapis.com/css2?family=Doto:wght@700;900&family=Geist+Mono:wght@400;500&family=Geist:wght@300;400;500&display=swap");
+
+:root {
+  --paper: #f2f2f2;
+  --white: #ffffff;
+  --ink: #0a0a0a;
+  --ink-2: #161616;
+  --grey: #5c5c5c;
+  --grey-2: #9a9a9a;
+  --line: #d9d9d9;
+  --line-2: #2a2a2a;
+  --red: #e5231b;
+
+  --r-control: 4px;
+  --r-card: 8px;
+  --h-control: 40px;
+  --grid: 32px;
+
+  --font-text: "Geist", system-ui, -apple-system, sans-serif;
+  --font-dot: "Doto", ui-monospace, monospace;
+  --font-mono: "Geist Mono", ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.5 var(--font-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+h1, h2, h3 { font-weight: 400; margin: 0; text-wrap: balance; }
+p { margin: 0; text-wrap: pretty; }
+img { display: block; }
+
+/* Bands: full-width sections, paper or ink, each with the dot grid of frames behind it. */
+.band { position: relative; padding: 112px 24px; }
+.band::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle, currentColor 1px, transparent 1.6px) 0 0 / var(--grid) var(--grid);
+  opacity: 0.12;
+}
+.band > * { position: relative; }
+.band.ink { background: var(--ink); color: var(--white); }
+.band.white { background: var(--white); }
+.wrap { max-width: 1200px; margin: 0 auto; }
+
+/* The three voices. */
+.dot { font: 700 18px/1 var(--font-dot); text-transform: uppercase; letter-spacing: 0.04em; }
+.mono { font: 400 12px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.02em; }
+.muted { color: var(--grey); }
+.ink .muted { color: var(--grey-2); }
+
+h1 { font-size: clamp(48px, 8vw, 112px); line-height: 0.92; letter-spacing: -0.035em; }
+h2 { font-size: clamp(32px, 4.2vw, 52px); line-height: 1; letter-spacing: -0.025em; }
+h3 { font-size: 22px; line-height: 1.15; letter-spacing: -0.01em; }
+.lead { font-size: 18px; line-height: 1.5; max-width: 560px; }
+
+/* Buttons: exact, small, square-ish. The red one appears once per page. */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px; height: var(--h-control); padding: 0 16px;
+  border-radius: var(--r-control); border: 1px solid transparent; cursor: pointer;
+  font: 400 12px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap;
+  background: var(--ink); color: var(--white); transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.btn::after { content: ">"; font-size: 13px; transition: transform 0.2s; }
+.btn:hover::after { transform: translateX(3px); }
+.btn:hover { background: #2a2a2a; }
+.btn.light { background: var(--white); color: var(--ink); }
+.btn.light:hover { background: #e6e6e6; }
+.btn.line { background: transparent; color: inherit; border-color: currentColor; }
+.btn.line:hover { background: rgba(127, 127, 127, 0.12); }
+.btn.signal { background: var(--red); color: var(--white); }
+.btn.signal:hover { background: #c81d16; }
+.btn.plain::after { content: none; }
+.btn:focus-visible, a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.ctas { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Nav: one frosted bar floating over the page. */
+.nav {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+  width: min(720px, calc(100% - 24px)); height: 48px; padding: 0 6px 0 4px;
+  display: flex; align-items: center; gap: 24px;
+  background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
+  border-radius: var(--r-card); color: var(--ink);
+}
+/* The logo file carries its own clear space; the bar's padding is that space. */
+.nav .brand img { height: 40px; width: auto; }
+.nav .links { display: flex; gap: 20px; margin-left: auto; color: var(--grey); }
+.nav .links a:hover { color: var(--ink); }
+.nav .btn { height: 36px; }
+
+/* Hero: the ink band, the reel's light blinking like a camera that's recording. */
+.hero { min-height: 100vh; display: grid; place-items: center; text-align: center; padding-top: 140px; }
+.hero .reel { width: 128px; height: 128px; margin: 0 auto 44px; display: block; }
+.hero h1 { margin: 22px 0 24px; }
+.hero .lead { margin: 0 auto 36px; }
+.hero .ctas { justify-content: center; }
+.rec { animation: rec 2.4s steps(1) infinite; }
+@keyframes rec { 50% { opacity: 0.15; } }
+@media (prefers-reduced-motion: reduce) { .rec { animation: none; } }
+.timecode { margin-top: 72px; display: flex; justify-content: center; gap: 28px; color: var(--grey-2); }
+
+/* Section heads: a dot label, then the headline. */
+.head { display: grid; grid-template-columns: 220px 1fr; gap: 24px; margin-bottom: 56px; align-items: start; }
+.head .dot { padding-top: 10px; }
+.head p.lead { margin-top: 18px; }
+
+/* The demo window. */
+.window { border-radius: var(--r-card); overflow: hidden; background: var(--ink); border: 1px solid var(--line-2); }
+.chrome { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; color: var(--grey-2); border-bottom: 1px solid var(--line-2); }
+.chrome a:hover { color: var(--white); }
+.chrome .live { display: flex; align-items: center; gap: 8px; }
+.chrome .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+.stage { height: min(760px, 80vh); min-height: 440px; }
+.stage iframe { width: 100%; height: 100%; border: 0; display: block; }
+.cover { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; text-align: center; padding: 24px; color: var(--white); position: relative; }
+.cover::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, #fff 1px, transparent 1.6px) 0 0 / var(--grid) var(--grid); opacity: 0.08; }
+.cover > * { position: relative; }
+.cover img { width: 72px; height: 72px; }
+.cover p { color: var(--grey-2); max-width: 440px; }
+.note.narrow { display: none; }
+
+/* Cards: flat, numbered like a spec sheet. */
+.grid { display: grid; gap: 12px; }
+.grid.three { grid-template-columns: repeat(3, 1fr); }
+.card { background: var(--white); border-radius: var(--r-card); padding: 28px; min-height: 260px; display: flex; flex-direction: column; }
+.ink .card { background: var(--ink-2); }
+.card .dot { margin-bottom: auto; padding-bottom: 48px; color: var(--grey); }
+.ink .card .dot { color: var(--grey-2); }
+.card h3 { margin-bottom: 10px; }
+.card p { color: var(--grey); font-size: 15px; }
+.ink .card p { color: var(--grey-2); }
+kbd { font: 400 11px/1 var(--font-mono); border: 1px solid currentColor; border-radius: 3px; padding: 2px 5px; }
+
+/* Get it. */
+.get { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+pre { margin: 0; padding: 22px 24px; border-radius: var(--r-card); background: var(--ink-2); overflow-x: auto; }
+code { font: 400 13px/1.8 var(--font-mono); color: var(--white); }
+pre .muted { color: var(--grey-2); }
+
+/* Footer: big dot words, a narrow list, one line of small links. */
+footer.band { padding: 120px 24px 32px; text-align: center; }
+.foot-words { display: grid; gap: 6px; margin-bottom: 72px; }
+.foot-words a { font: 900 clamp(32px, 4.6vw, 52px)/1.1 var(--font-dot); text-transform: uppercase; letter-spacing: 0.02em; }
+.foot-words a:hover { color: var(--red); }
+.foot-list { width: min(360px, 100%); margin: 0 auto 96px; display: grid; gap: 4px; text-align: left; }
+.foot-list a { display: flex; justify-content: space-between; align-items: center; height: 44px; padding: 0 14px; border-radius: var(--r-control); background: var(--ink-2); color: var(--grey-2); }
+.foot-list a:hover { color: var(--white); }
+.foot-line { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; color: var(--grey-2); }
+
+@media (max-width: 860px) {
+  .band { padding: 80px 16px; }
+  .nav .links { display: none; }
+  .nav .btn { margin-left: auto; }
+  .head { grid-template-columns: 1fr; gap: 14px; margin-bottom: 36px; }
+  .grid.three, .get { grid-template-columns: 1fr; }
+  .card { min-height: 0; }
+  .card .dot { padding-bottom: 28px; }
+  .timecode { gap: 14px; flex-wrap: wrap; }
+  .note.narrow { display: block; }
+  .stage { min-height: 380px; }
+}

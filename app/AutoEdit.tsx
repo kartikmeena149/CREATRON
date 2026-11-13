@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AutoEditEvent } from "../src/autoedit.ts";
 import type { AutoEditResult, AutoJob } from "./env.d.ts";
+import { useEditor } from "./store.ts";
 
 type Marker = { n: number; time: number; x: number; y: number };
 type Progress = Extract<AutoEditEvent, { type: "progress" }> & { at: number };
@@ -110,6 +111,11 @@ export function AutoEdit({ initialVideo, onClose }: { initialVideo?: string; onC
           result={result}
           error={error}
           onFix={fix}
+          onTimeline={() => {
+            // The import dialog (SceneImport) turns the project into editable layers on the timeline.
+            useEditor.setState({ sceneImport: result.project });
+            onClose();
+          }}
           onNew={() => {
             setResult(undefined);
             setError("");
@@ -201,7 +207,7 @@ function Running({ progress, log, fixing, onStop }: { progress?: Progress; log: 
   );
 }
 
-function Done({ result, error, onFix, onNew }: { result: AutoEditResult; error: string; onFix: (m: string, markers: Marker[]) => void; onNew: () => void }) {
+function Done({ result, error, onFix, onNew, onTimeline }: { result: AutoEditResult; error: string; onFix: (m: string, markers: Marker[]) => void; onNew: () => void; onTimeline: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [message, setMessage] = useState("");
   const [markers, setMarkers] = useState<Marker[]>([]);
@@ -230,9 +236,14 @@ function Done({ result, error, onFix, onNew }: { result: AutoEditResult; error: 
       <div className="side">
         <div className="notes">{plainText(result.notes) || "Done."}</div>
         <div className="row">
-          <button className="primary" onClick={() => window.creatron.reveal(result.final)}>Show in Finder</button>
+          <button className="primary" onClick={onTimeline} title="Bring this edit into the timeline as layers you can move, trim and retype">Open in timeline</button>
+          <button onClick={() => window.creatron.reveal(result.final)}>Show in Finder</button>
           <span className="dim small">Version {result.version}</span>
         </div>
+        <p className="dim small">
+          It's an open project: cuts, captions, music and colours are in <b>project/timeline.json</b>, and README.md in the folder says how to change them and re-export.{" "}
+          <a onClick={() => window.creatron.reveal(`${result.dir}/README.md`)}>Show the project</a>
+        </p>
         <label>Want something changed?</label>
         <textarea rows={4} value={message} placeholder="e.g. Make the captions bigger, and the B-roll at the marker shows the wrong plant" onChange={(e) => setMessage(e.target.value)} />
         <div className="row">

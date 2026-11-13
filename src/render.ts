@@ -13,6 +13,7 @@ import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
 import { run, workDir } from "./tools.ts";
 import { effectivePlan } from "./tracks.ts";
+import { DEFAULT_EXPORT, type ExportOptions, encoderArgs, exportSize } from "./exportOptions.ts";
 import { personCutout } from "./person.ts";
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
@@ -23,6 +24,7 @@ export async function render(
   out: string,
   log = console.error,
   onProgress?: (fraction: number) => void,
+  options: ExportOptions = DEFAULT_EXPORT,
 ): Promise<string> {
   // Hidden and muted tracks stay out of the video; higher video tracks go on top.
   plan = effectivePlan(plan);
@@ -35,8 +37,9 @@ export async function render(
   const picture = analysis.width > 0;
   const W = even(pictureSize(analysis).width);
   const H = even(pictureSize(analysis).height);
-  const fps = analysis.fps;
-  const size = outputSize(plan, analysis);
+  // The chosen frame rate and size: captions, text and B-roll are drawn at that size, not scaled up.
+  const fps = options.fps;
+  const size = exportSize(outputSize(plan, analysis), options.resolution);
   // The edit runs to the end of its last clip: past the main track the picture is black and its
   // sound silent, under whatever B-roll, text or audio is still going.
   const total = editDuration(plan);
@@ -77,10 +80,14 @@ export async function render(
 
   // "Behind me" captions: the person is cut out of the framed main video (Apple Vision mask, sent
   // through the same cuts, speed, zoom and framing) and laid back over the captions while they show.
-  const behind = picture && plan.captions.enabled ? buildCues(plan, analysis.words).filter((c) => c.look.behind) : [];
+  // Animations set to go behind the person use the same cut-out, while they show.
+  const behind = !picture ? [] : [
+    ...(plan.captions.enabled ? buildCues(plan, analysis.words).filter((c) => c.look.behind) : []),
+    ...plan.motion.filter((m) => m.behind && !m.hidden).map((m) => ({ start: m.at, end: m.at + m.duration })),
+  ];
   let videoOut = "[framed]";
   if (behind.length) {
-    log("render: cutting you out for the captions behind you");
+    log("render: cutting you out for the text behind you");
     const { mask } = await personCutout(analysis.source, log);
     filters.push("[framed]split[framedmain][framedperson]");
     videoOut = "[framedmain]";
@@ -99,9 +106,13 @@ export async function render(
   // B-roll on V2: each clip fills the frame for its window; the main video shows again after.
   plan.broll.filter((b) => b.file && existsSync(b.file)).forEach((b, k) => {
     const input = args.filter((a) => a === "-i").length;
-    // A photo is held as a still for the clip's length; a video plays from its offset.
-    if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(b.file!)) args.push("-loop", "1", "-framerate", String(fps), "-t", b.duration.toFixed(3), "-i", b.file!);
-    else args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), "-i", b.file!);
+    // A photo is held as a still for the clip's length; a video plays from its offset. -itsoffset
+    // tells ffmpeg when the clip starts, so it reads the inputs in time order: without it every clip
+    // looks like it starts at 0, gets read up front, and with many clips the queues fill and the
+    // render freezes.
+    const offset = ["-itsoffset", b.at.toFixed(3)];
+    if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(b.file!)) args.push("-loop", "1", "-framerate", String(fps), "-t", b.duration.toFixed(3), ...offset, "-i", b.file!);
+    else args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), ...offset, "-i", b.file!);
     // Its size and place in the frame (placeBox): the frame-covering size times its scale, its middle
     // shifted by x / y; whatever falls outside the frame is cut off by the overlay.
     const s = b.scale ?? 1;
@@ -140,14 +151,19 @@ export async function render(
       const pct = Math.floor(f * 20) * 5;
       if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
     }, customDir(analysis.source));
+    // The frames become one video (with its see-through parts) before the render. Read as a PNG
+    // sequence inside the big render, ffmpeg froze partway through edits with many cuts, B-roll and
+    // sounds; as a video it doesn't, and the render runs about 10× faster.
+    const layer = join(dir, "motion.mov");
+    await run("ffmpeg", ["-y", "-v", "error", "-framerate", String(fps), "-pattern_type", "glob", "-i", frames, "-c:v", "qtrle", layer]);
     const input = args.filter((a) => a === "-i").length;
-    args.push("-framerate", String(fps), "-pattern_type", "glob", "-i", frames);
+    args.push("-i", layer);
     filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[motion]`);
     filters.push(`${videoOut}[motion]overlay=format=auto:shortest=0:eof_action=pass,format=yuv420p[moved]`);
     videoOut = "[moved]";
   }
   if (behind.length) {
-    // The person on top of the captions (and the text layer), only while a "behind me" caption shows.
+    // The person on top of the captions and the text layer, only while something "behind me" shows.
     const when = behind.map((c) => `between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})`).join("+");
     filters.push(`${videoOut}[person]overlay=format=auto:enable='${when}',format=yuv420p[behindout]`);
     videoOut = "[behindout]";
@@ -165,7 +181,7 @@ export async function render(
   if (analysis.hasAudio) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
   args.push(
     "-t", total.toFixed(3),
-    "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", String(fps),
+    ...encoderArgs(options), "-r", String(fps),
     "-movflags", "+faststart", resolve(out),
   );
 
@@ -175,6 +191,11 @@ export async function render(
     const m = chunk.match(/time=(\d+):(\d+):([\d.]+)/g)?.at(-1)?.match(/(\d+):(\d+):([\d.]+)/);
     if (m && onProgress) onProgress(Math.min(1, (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / total));
   });
+  // The sound on its own as well, next to the video.
+  if (options.mp3 && analysis.hasAudio) {
+    log("render: saving the sound as mp3");
+    await run("ffmpeg", ["-y", "-v", "error", "-i", resolve(out), "-vn", "-c:a", "libmp3lame", "-b:a", "192k", resolve(out).replace(/\.mp4$/i, "") + ".mp3"]);
+  }
   return resolve(out);
 }
 

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { EditPlan } from "./schema.ts";
 import { type Cue, captionWrapWidth, cueFontSize, lookBox } from "./timeline.ts";
 import { BUNDLED_FONTS, TEST_FONTS } from "./fonts.ts";
+import { GAP, GRID_COLOR, TILE, type Tile, ransomWords } from "./ransom.ts";
 import { ROOT } from "./tools.ts";
 
 // Fallback so emoji in captions draw in colour instead of as empty boxes. Caption fonts are the Mac's
@@ -49,6 +50,16 @@ export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: num
     const centerY = height * (0.5 + cue.y);
     const top = centerY - ((wrapped.length - 1) * lineHeight) / 2;
     const lineLeft = (w: number) => (look.align === "left" ? textX : look.align === "right" ? textX - w : textX - w / 2);
+
+    if (look.outline === "ransom") {
+      drawRansom(ctx, text, size, captionWrapWidth(look, width), centerX, centerY, look.align);
+      const file = join(dir, `cap-${String(i).padStart(4, "0")}.png`);
+      writeFileSync(file, canvas.toBuffer("image/png"));
+      show(blank, cue.start - t);
+      show(file, cue.end - Math.max(cue.start, t));
+      t = Math.max(t, cue.end);
+      return;
+    }
 
     const box = lookBox(look);
     if (box) {
@@ -102,4 +113,85 @@ function wrap(ctx: { measureText(t: string): { width: number } }, text: string, 
   }
   if (line) lines.push(line);
   return lines;
+}
+
+type Ctx = ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
+
+/** The ransom-note look (src/ransom.ts): each letter on its own torn paper scrap, laid out like the
+ *  preview's wrapping rows and centred on (cx, cy). */
+function drawRansom(ctx: Ctx, text: string, size: number, maxWidth: number, cx: number, cy: number, align: "center" | "left" | "right") {
+  const fontOf = (t: Tile) => `${t.weight} ${Math.round(size * t.scale)}px "${t.font}", Arial, CaptionEmoji`;
+  const tileW = (t: Tile) => {
+    ctx.font = fontOf(t);
+    const fs = size * t.scale;
+    return Math.max(TILE.minWidth * fs, ctx.measureText(t.ch).width + 2 * TILE.padX * fs);
+  };
+  // Words keep together; rows wrap at the caption's width.
+  const words = ransomWords(text).map((tiles) => {
+    const widths = tiles.map(tileW);
+    return { tiles, widths, width: widths.reduce((a, b) => a + b, 0) + (tiles.length - 1) * GAP.letter * size };
+  });
+  const rows: (typeof words)[] = [];
+  let row: typeof words = [];
+  let rowW = 0;
+  for (const w of words) {
+    const next = row.length ? rowW + GAP.word * size + w.width : w.width;
+    if (row.length && next > maxWidth) {
+      rows.push(row);
+      row = [w];
+      rowW = w.width;
+    } else {
+      row.push(w);
+      rowW = next;
+    }
+  }
+  if (row.length) rows.push(row);
+
+  const rowH = TILE.height * size * 1.12;
+  const pitch = rowH + GAP.line * size;
+  let y = cy - ((rows.length - 1) * pitch) / 2;
+  for (const r of rows) {
+    const w = r.reduce((a, b) => a + b.width, 0) + (r.length - 1) * GAP.word * size;
+    let x = align === "left" ? cx - maxWidth / 2 : align === "right" ? cx + maxWidth / 2 - w : cx - w / 2;
+    for (const word of r) {
+      word.tiles.forEach((t, i) => {
+        const tw = word.widths[i];
+        const fs = size * t.scale;
+        const th = TILE.height * fs;
+        ctx.save();
+        ctx.translate(x + tw / 2, y + t.lift * size);
+        ctx.rotate((t.rotate * Math.PI) / 180);
+        ctx.beginPath();
+        t.shape.forEach(([px, py], k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, -tw / 2 + px * tw, -th / 2 + py * th));
+        ctx.closePath();
+        ctx.shadowColor = "rgba(0,0,0,0.45)";
+        ctx.shadowBlur = size * 0.05;
+        ctx.shadowOffsetY = size * 0.04;
+        ctx.fillStyle = t.paper;
+        ctx.fill();
+        ctx.shadowColor = "transparent";
+        if (t.grid) {
+          ctx.save();
+          ctx.clip();
+          ctx.strokeStyle = GRID_COLOR;
+          ctx.lineWidth = Math.max(1, size / 60);
+          const step = fs * 0.25;
+          ctx.beginPath();
+          for (let gx = -tw / 2; gx < tw / 2; gx += step) (ctx.moveTo(gx, -th / 2), ctx.lineTo(gx, th / 2));
+          for (let gy = -th / 2; gy < th / 2; gy += step) (ctx.moveTo(-tw / 2, gy), ctx.lineTo(tw / 2, gy));
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.font = fontOf(t);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = t.ink;
+        ctx.fillText(t.ch, 0, 0);
+        ctx.restore();
+        x += tw + GAP.letter * size;
+      });
+      x += GAP.word * size - GAP.letter * size;
+    }
+    y += pitch;
+  }
 }

@@ -238,3 +238,41 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
+
+/**
+ * B-roll the agent asked for by description ("source": "stock:walking feet sunrise POV"): each is
+ * searched in the stock library, given the best clip no other entry uses, and downloaded. Ones
+ * with no match are left out (named in `missing`). step reports each search as it starts and ends.
+ */
+export async function resolveStockBroll(
+  plan: import("./schema.ts").EditPlan,
+  orientation: Orientation,
+  step: (id: string, what: string, done: boolean, found: boolean) => void,
+): Promise<{ plan: import("./schema.ts").EditPlan; missing: string[] }> {
+  const wanted = plan.broll.filter((b) => b.source.startsWith("stock:") && !b.file);
+  if (!wanted.length) return { plan, missing: [] };
+  const clips = new Map<string, StockClip>();
+  const used = new Set(plan.broll.map((b) => b.source));
+  const missing: string[] = [];
+  const broll: Broll[] = [];
+  for (const b of plan.broll) {
+    if (!b.source.startsWith("stock:") || b.file) {
+      broll.push(b);
+      continue;
+    }
+    const what = b.source.slice(6).trim();
+    const id = `stock-${what}`;
+    step(id, what, false, false);
+    const found = await searchStock(what, orientation, Math.min(b.duration, 4)).catch(() => [] as StockClip[]);
+    const clip = found.find((c) => !used.has(c.id));
+    step(id, what, true, Boolean(clip));
+    if (!clip) {
+      missing.push(what);
+      continue;
+    }
+    used.add(clip.id);
+    clips.set(clip.id, clip);
+    broll.push({ ...b, source: clip.id, query: b.query ?? what, duration: Math.min(b.duration, clip.duration - b.offset) });
+  }
+  return { plan: await fetchBroll({ ...plan, broll }, clips), missing };
+}

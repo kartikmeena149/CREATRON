@@ -6,6 +6,7 @@ import { EditPlan, type Segment, checkPlan } from "./schema.ts";
 import { round } from "./round.ts";
 import type { Orientation, StockClip } from "./stock.ts";
 import { outputDuration, toOutputTime } from "./timeline.ts";
+import { outputSize } from "./frame.ts";
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
@@ -54,7 +55,8 @@ Editing rules:
 export type Focus = { clips: number[]; broll?: string; markers?: Marker[]; attachments?: Attachment[] };
 
 /** A file the user attached to the request (it's in the project library): a video or a sound. */
-export type Attachment = { path: string; name: string; kind: "video" | "audio"; seconds: number };
+/** A file attached to a request: media to use in the edit, or a document to follow (its text). */
+export type Attachment = { path: string; name: string; kind: "video" | "audio" | "document"; seconds: number; text?: string };
 
 /**
  * A spot the user pointed at on the video: time on the edited timeline, place in the frame
@@ -148,8 +150,8 @@ export async function makePlan(
 
   const totals = { inputTokens: 0, outputTokens: 0, cost: 0 };
   const clips = new Map<string, StockClip>();
-  const shape = (current?.aspect ?? "source") === "9:16" || (current?.aspect === "source" && analysis.height > analysis.width)
-    ? "portrait" : current?.aspect === "1:1" ? "square" : "landscape";
+  const frame = outputSize({ aspect: current?.aspect ?? "source" }, analysis);
+  const shape = frame.height > frame.width ? "portrait" : frame.height === frame.width ? "square" : "landscape";
   let invalid = 0;
   let searches = 0;
   // A few rounds: the model may search for B-roll several times, then submits the plan.
@@ -259,7 +261,9 @@ export function describeFocus(plan: EditPlan, focus: Focus): string {
     parts.push(
       `\nATTACHED FILES (the user added these to the project for this request; use them as the request says):\n${focus.attachments
         .map((a) =>
-          a.kind === "video"
+          a.kind === "document"
+            ? `- document "${a.name}" (a storyboard, script or notes from the user: follow it closely, it says how the video should be edited). Its content:\n<<<\n${a.text}\n>>>`
+            : a.kind === "video"
             ? `- video "${a.name}", ${a.seconds.toFixed(1)}s: put it on screen with a broll entry {"source": "library:${a.path}", "at" or "atSource", "duration" (at most ${a.seconds.toFixed(1)}), "offset" (seconds into the file, default 0), "track" 2+}`
             : `- sound "${a.name}", ${a.seconds.toFixed(1)}s: add a voiceovers entry {"id", "kind": "music" | "sfx" | "voice", "file": "${a.path}", "at", "offset": 0, "duration" (at most ${a.seconds.toFixed(1)}), "volumeDb" (music about -12), "track": 1}`,
         )
@@ -298,7 +302,10 @@ export function useAttachments(plan: EditPlan, focus?: Focus): EditPlan {
 /** Audio clips may only use files already on the timeline or attached to this request. */
 export function unknownAudio(plan: EditPlan, current: EditPlan | undefined, focus?: Focus): string[] {
   const ok = new Set([...(current?.voiceovers ?? []).map((v) => v.file), ...(focus?.attachments ?? []).filter((a) => a.kind === "audio").map((a) => a.path)]);
-  return plan.voiceovers.filter((v) => !ok.has(v.file)).map((v) => `voiceovers ${v.id}: "${v.file}" is not a file on the timeline or attached to this request`);
+  // "sfx:<sound>" and "music:<style>" are found in the free sound library after the edit (src/sfx.ts).
+  return plan.voiceovers
+    .filter((v) => !ok.has(v.file) && !/^(sfx|music|earshot):\s*\S/.test(v.file))
+    .map((v) => `voiceovers ${v.id}: "${v.file}" is not a file on the timeline or attached to this request. For a new sound use "file": "sfx:<the sound>" or "music:<the style>"`);
 }
 
 /** "upper left", "center", "lower right"... */

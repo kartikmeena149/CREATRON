@@ -148,9 +148,11 @@ export function Viewer() {
   const cues = useMemo(() => (a && plan.captions.enabled ? buildCues(plan, a.words) : []), [a, plan]);
   const cue = cues.find((c) => time >= c.start && time < c.end);
   const cutoutUrl = useEditor((s) => s.cutoutUrl);
-  const behind = Boolean(cue?.look.behind);
-  // A caption set to "behind me": make (or load the cached) person cutout once.
-  const anyBehind = cues.some((c) => c.look.behind);
+  // Text behind me: a caption, or an animation, set to go behind the person.
+  const behindMotion = shown.motion.filter((m) => m.behind && !m.hidden);
+  const behind = Boolean(cue?.look.behind) || behindMotion.some((m) => time >= m.at && time < m.at + m.duration);
+  // Make (or load the cached) person cutout once.
+  const anyBehind = cues.some((c) => c.look.behind) || behindMotion.length > 0;
   useEffect(() => void (anyBehind && !cutoutUrl && useEditor.getState().prepareCutout()), [anyBehind, cutoutUrl]);
   const place = placement(plan, a ? pictureSize(a).width : 16, a ? pictureSize(a).height : 9, frameSize.w, frameSize.h);
   const mainSelected = useEditor((s) => s.selected !== null && s.selectedPart === "picture" && s.selectedBroll === null) && Boolean(a?.width);

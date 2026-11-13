@@ -1,19 +1,35 @@
 // Small helpers for running the local tools (ffmpeg, ffprobe, whisper.cpp) and for working files.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
+import { need, toolOf, whisperModelFile } from "./toolchain.ts";
 
 // The app sets CREATRON_ROOT because its bundled code runs from out/, not src/.
 export const ROOT = process.env.CREATRON_ROOT || resolve(import.meta.dirname, "..");
 
 export type RunResult = { stdout: string; stderr: string };
 
-/** Runs a command and resolves with its output; rejects with the tail of stderr on failure. */
+/**
+ * Runs a command and resolves with its output; rejects with the tail of stderr on failure.
+ * A tool Creatron knows (ffmpeg, ffprobe, whisper-cli, yt-dlp, swiftc) is started through the
+ * toolchain wall (toolchain.ts), which finds it or its backup; a missing one rejects in one line.
+ */
 export function run(cmd: string, args: string[], onStderr?: (chunk: string) => void, onStdout?: (chunk: string) => void): Promise<RunResult> {
   return new Promise((ok, fail) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const tool = toolOf(cmd);
+    let env: NodeJS.ProcessEnv | undefined;
+    if (tool) {
+      try {
+        const found = need(tool);
+        cmd = found.cmd;
+        args = [...found.pre, ...args];
+        if (found.env) env = { ...process.env, ...found.env };
+      } catch (e) {
+        return fail(e);
+      }
+    }
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
@@ -44,18 +60,13 @@ export function workDir(video: string): string {
 }
 
 export function whisperModel(): string {
-  const candidates = [
-    process.env.CREATRON_WHISPER_MODEL,
-    join(ROOT, "models", "ggml-small.en.bin"),
-    join(homedir(), ".cache", "hyperframes", "whisper", "models", "ggml-small.en.bin"),
-  ].filter((p): p is string => Boolean(p));
-  const found = candidates.find((p) => existsSync(p));
+  const found = whisperModelFile();
   if (!found)
     throw new Error(
       "No Whisper model found. Download ggml-small.en.bin from https://huggingface.co/ggerganov/whisper.cpp " +
         "into models/, or set CREATRON_WHISPER_MODEL.",
     );
-  return found;
+  return found.file;
 }
 
 export { round } from "./round.ts";

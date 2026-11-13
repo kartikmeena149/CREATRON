@@ -39,11 +39,23 @@ export const isIdentity = (t: EditPlan["transform"]) => t.scale === 1 && t.x ===
 export const pictureSize = (a: Pick<Analysis, "width" | "height">) =>
   a.width && a.height ? { width: a.width, height: a.height } : { width: 1080, height: 1920 };
 
-/** Output frame size for an aspect, capped so the long side is at most 1920. */
-export function outputSize(plan: EditPlan, source: Pick<Analysis, "width" | "height">): { width: number; height: number } {
-  if (plan.aspect === "9:16") return { width: 1080, height: 1920 };
-  if (plan.aspect === "1:1") return { width: 1080, height: 1080 };
-  if (plan.aspect === "16:9") return { width: 1920, height: 1080 };
+/** The frame shapes, in the order the app shows them, with what each is for. */
+export const ASPECTS: { id: EditPlan["aspect"]; name: string; use: string }[] = [
+  { id: "source", name: "Original", use: "As filmed" },
+  { id: "9:16", name: "9:16", use: "Reels" },
+  { id: "4:5", name: "4:5", use: "Feed post" },
+  { id: "1:1", name: "1:1", use: "Square" },
+  { id: "4:3", name: "4:3", use: "Classic" },
+  { id: "16:9", name: "16:9", use: "YouTube" },
+  { id: "21:9", name: "21:9", use: "Cinema" },
+];
+
+/** Output frame size for an aspect: the short side 1080 (the original is capped at 1920 on its long side). */
+export function outputSize(plan: Pick<EditPlan, "aspect">, source: Pick<Analysis, "width" | "height">): { width: number; height: number } {
+  if (plan.aspect !== "source") {
+    const [w, h] = plan.aspect.split(":").map(Number);
+    return w >= h ? { width: even((1080 * w) / h), height: 1080 } : { width: 1080, height: even((1080 * h) / w) };
+  }
   const a = pictureSize(source);
   const scale = Math.min(1, 1920 / Math.max(a.width, a.height));
   return { width: even(a.width * scale), height: even(a.height * scale) };

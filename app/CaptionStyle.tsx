@@ -1,12 +1,13 @@
 // Captions in the inspector, in two tabs: Presets (one click gives every caption a whole look)
 // and Transcript (the words themselves). Fine-tuning a look happens in the caption style bar.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EditPlan } from "../src/schema.ts";
 import { buildCues, captionsOf } from "../src/timeline.ts";
 import { CaptionList } from "./CaptionList.tsx";
 import { timecode } from "./format.ts";
 import { Icon } from "./icons.tsx";
 import { useEditor } from "./store.ts";
+import { RansomText } from "../motion/Ransom.tsx";
 
 type Preset = {
   name: string;
@@ -49,6 +50,7 @@ const GROUPS: { title: string; ai?: boolean; presets: Preset[] }[] = [
       { name: "Karaoke", sample: "Say it out loud", look: { ...base, font: "Poppins", color: "#ffffff", animation: "highlight", highlight: "#ffe14d" } },
       { name: "One word", sample: "Boom", look: { ...base, font: "Luckiest Guy", size: 1.6, color: "#ffffff", animation: "word", highlight: "#5ee1ff" } },
       { name: "Pop", sample: "Pop it in", look: { ...base, font: "Lilita One", size: 1.2, color: "#ffffff", animation: "pop" } },
+      { name: "Ransom note", sample: "Ransom note", look: { ...base, font: "DM Serif Display", size: 1.2, color: "#141414", uppercase: false, outline: "ransom" } },
       { name: "Boxed", sample: "Clean and clear", look: { ...base, style: "minimal", font: "Poppins", color: "#ffffff", uppercase: false, outline: "box" } },
       { name: "Subtle", sample: "Just the words", look: { ...base, style: "minimal", font: "Helvetica Neue", size: 0.9, color: "#ffffff", uppercase: false, bold: false, outline: "none" } },
     ],
@@ -117,6 +119,7 @@ function Presets() {
 }
 
 function PresetSample({ preset: { sample, look } }: { preset: Preset }) {
+  if (look.outline === "ransom") return <span className="cap-sample ransom"><RansomText text={look.uppercase ? sample.toUpperCase() : sample} /></span>;
   const words = sample.split(" ");
   // The coloured word: the one being said (highlight), or the key word in Kartik's styles.
   const spoken = look.animation === "highlight" ? 1 : ["kinetic", "doc", "spec"].includes(look.animation) ? words.length - 1 : -1;
@@ -140,9 +143,20 @@ function PresetSample({ preset: { sample, look } }: { preset: Preset }) {
 function Transcript() {
   const { plan, checkpoint, setCaptionStyle, selectedCue, addCaption, resetCaptions } = useEditor();
   const caps = plan.captions;
+  // Re-splitting by word count re-captions from your speech, so edited captions are reset first (after asking).
+  // Asked once per press: a cancelled drag mustn't ask again on every step.
+  const asked = useRef(false);
+  const keepEdits = () => {
+    if (!useEditor.getState().plan.captions.cues) return false;
+    if (asked.current) return true;
+    asked.current = true;
+    if (!confirm("Change words per caption?\n\nThis resets your edited captions (wording, timing and per-caption looks) and re-captions from your speech. ⌘Z undoes it.")) return true;
+    resetCaptions();
+    return false;
+  };
   return (
     <>
-      {caps.cues ? (
+      {caps.cues && (
         <div className="row">
           <div>
             <div>Edited captions</div>
@@ -152,13 +166,16 @@ function Transcript() {
             Regenerate
           </button>
         </div>
-      ) : (
-        <label className="slider">
-          <span className="slider-head"><span>Words per caption</span><span className="value">{caps.wordsPerCaption}</span></span>
-          <input type="range" min={1} max={8} step={1} value={caps.wordsPerCaption}
-            onPointerDown={checkpoint} onChange={(e) => setCaptionStyle({ wordsPerCaption: Number(e.target.value) }, false)} />
-        </label>
       )}
+      <label className="slider">
+        <span className="slider-head"><span>Words per caption</span><span className="value">{caps.wordsPerCaption}</span></span>
+        <input type="range" min={1} max={8} step={1} value={caps.wordsPerCaption}
+          onPointerDown={(e) => (keepEdits() ? e.preventDefault() : checkpoint())}
+          onPointerUp={() => (asked.current = false)}
+          onKeyDown={(e) => e.stopPropagation()}
+          onKeyUp={() => (asked.current = false)}
+          onChange={(e) => !keepEdits() && setCaptionStyle({ wordsPerCaption: Number(e.target.value) }, false)} />
+      </label>
 
       <button className="wide-btn" onClick={addCaption}>＋ Add caption at playhead</button>
 

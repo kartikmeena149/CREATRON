@@ -1,4 +1,8 @@
 import { Component, type ReactNode, useEffect, useState } from "react";
+import { ExportDialog } from "./ExportDialog.tsx";
+import { FramePicker } from "./FramePicker.tsx";
+import { Orb } from "./Orb.tsx";
+import { CreatorQuote } from "./Quotes.tsx";
 import { AIPanel } from "./AIPanel.tsx";
 import { AutoEdit } from "./AutoEdit.tsx";
 import { Inspector } from "./Inspector.tsx";
@@ -35,6 +39,8 @@ export function App() {
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
   useEffect(() => window.creatron.onOpenPath((p: string) => open(p)), []);
+  // No window buttons in full screen: the top bar drops the space it keeps for them.
+  useEffect(() => window.creatron.onFullScreen((on) => document.documentElement.classList.toggle("no-window-buttons", on)), []);
 
   /**
    * Adds videos, music or sound effects to the library. An empty tab takes the first video as its
@@ -130,14 +136,12 @@ export function App() {
 }
 
 function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
-  const { project, plan, exporting, exported, set, commit } = useEditor();
-  const doExport = async () => {
+  const { project, plan, exporting, exported, commit } = useEditor();
+  // ⌘E or the Export button opens the export window (it shows the progress while one runs).
+  const [exportOpen, setExportOpen] = useState(false);
+  const doExport = () => {
     const s = useEditor.getState();
-    if (!s.project || !s.plan.segments.length || s.exporting !== null) return;
-    set({ exporting: 0, exported: undefined });
-    const r = await window.creatron.exportVideo(s.project.path, s.plan);
-    set({ exporting: null, exported: r.ok ? r.value : undefined });
-    if (!r.ok) alert(`Export failed:\n${r.error}`);
+    if (s.project && (s.plan.segments.length || s.exporting !== null)) setExportOpen(true);
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -149,25 +153,17 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   }, []);
   return (
     <header className="topbar">
-      <div className="brand" title="Creatron"><Icon name="grid" size={14} /> Creatron</div>
+      <div className="brand" title="Creatron"><Orb size={16} still /> Creatron</div>
       <ProjectTabs />
       <div className="grow" />
       {project && (
-        <label className="aspect-pick" title="Frame">
-          <Icon name="phone" size={14} />
-          <select value={plan.aspect} onChange={(e) => commit({ ...plan, aspect: e.target.value as typeof plan.aspect })}>
-            <option value="source">Original</option>
-            <option value="9:16">9:16</option>
-            <option value="1:1">1:1</option>
-            <option value="16:9">16:9</option>
-          </select>
-          <Icon name="chevronDown" size={12} />
-        </label>
+        <FramePicker />
       )}
       {exported && (
         <button className="icon-btn" title="Show export in Finder" onClick={() => window.creatron.reveal(exported)}><Icon name="download" /></button>
       )}
-      <button className="export-btn" disabled={!project || !plan.segments.length || exporting !== null} onClick={doExport}
+      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      <button className="export-btn" disabled={!project || (!plan.segments.length && exporting === null)} onClick={doExport}
         title={project && !plan.segments.length ? "The timeline is empty" : undefined}>
         {exporting !== null ? `Exporting ${Math.round(exporting * 100)}%` : <>Export <kbd>⌘E</kbd></>}
         {exporting !== null && <i className="progress" style={{ width: `${exporting * 100}%` }} />}
@@ -208,10 +204,12 @@ function ProjectTabs() {
   );
 }
 
-const RAIL: [LeftView, IconName, string][] = [
+// An icon, or a short word where no icon says it clearly ("SFX").
+const RAIL: [LeftView, IconName | "SFX", string][] = [
   ["media", "folder", "Library"],
   ["clip", "sliders", "Clip & frame"],
   ["audio", "music", "Audio"],
+  ["sfx", "SFX", "Sound effects"],
   ["voice", "mic", "Voice Studio"],
   ["captions", "cc", "Captions"],
   ["text", "type", "Text"],
@@ -223,7 +221,7 @@ function Rail() {
     <nav className="rail">
       {RAIL.map(([v, icon, label]) => (
         <button key={v} className={leftView === v ? "on" : ""} title={label} onClick={() => set({ leftView: leftView === v ? null : v })}>
-          <Icon name={icon} size={18} />
+          {icon === "SFX" ? <span className="rail-word">sfx</span> : <Icon name={icon} size={18} />}
         </button>
       ))}
     </nav>
@@ -234,17 +232,20 @@ function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => 
   return (
     <div className="welcome">
       <div className="drop">
-        <div className="drop-icon">⬆</div>
+        <div className="drop-icon"><Orb size={68} calm /></div>
         <h2>Drop a video here</h2>
         <p className="dim">Your footage stays on this Mac. Only the transcript goes to the AI.</p>
         <button className="primary" onClick={onOpen}>Choose video</button>
-        <p className="dim small auto-hint">
-          or <button className="link" onClick={onAuto}>✨ Auto Edit</button>: Claude makes the whole finished video for you
-        </p>
-        <p className="dim small auto-hint">
-          or <button className="link" onClick={pickClaudeEdit}>Import a Claude edit</button>: a HyperFrames video, with every layer and keyframe editable
-        </p>
+        <div className="drop-more">
+          <button onClick={onAuto} title="Give Claude your footage and a brief; it makes the whole finished video">
+            <Icon name="sparkle" size={13} /> Claude edits it all
+          </button>
+          <button onClick={pickClaudeEdit} title="Open a HyperFrames video Claude made, with every layer and keyframe editable">
+            <Icon name="layers" size={13} /> Open a Claude edit
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
+        <CreatorQuote />
       </div>
     </div>
   );

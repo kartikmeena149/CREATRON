@@ -15,7 +15,7 @@ import { sceneLibrary } from "./sceneFiles.ts";
 import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll, unknownAudio, useAttachments } from "./plan.ts";
 import { renderOverlayStill } from "./remotion.ts";
 import { type Analysis, EditPlan, checkPlan } from "./schema.ts";
-import { outputDuration, toSourceTime } from "./timeline.ts";
+import { outputDuration, toOutputTime, toSourceTime } from "./timeline.ts";
 import { run } from "./tools.ts";
 
 export type AgentResult = { plan: EditPlan; notes: string; model: string };
@@ -75,7 +75,7 @@ export async function runAgent(
 }
 
 /** Writes the folder Claude works in: guide, video description, schema, and the current edit. */
-function prepare(dir: string, analysis: Analysis, current: EditPlan) {
+export function prepare(dir: string, analysis: Analysis, current: EditPlan) {
   mkdirSync(join(dir, "custom"), { recursive: true });
   rmSync(join(dir, "checks"), { recursive: true, force: true });
   mkdirSync(join(dir, "checks"), { recursive: true });
@@ -93,10 +93,21 @@ function prepare(dir: string, analysis: Analysis, current: EditPlan) {
       describe(analysis),
     ].join("\n"),
   );
+  // Every kept word at its time on the edited video, so sounds and text land on the exact word.
+  writeFileSync(
+    join(dir, "words.md"),
+    [
+      "# Every word on the edited video (OUTPUT seconds: start-end word). Cut words are left out.",
+      ...analysis.words.flatMap((w) => {
+        const at = toOutputTime(current, w.start + 0.01);
+        return at === undefined ? [] : [`${Math.max(0, at - 0.01).toFixed(2)}-${(at - 0.01 + (w.end - w.start)).toFixed(2)} ${w.text.trim()}`];
+      }),
+    ].join("\n"),
+  );
 }
 
 /** Reads plan.json back and checks everything Creatron can check. */
-async function check(dir: string, analysis: Analysis, current: EditPlan, focus?: Focus): Promise<{ plan?: EditPlan; problems: string[] }> {
+export async function check(dir: string, analysis: Analysis, current: EditPlan, focus?: Focus): Promise<{ plan?: EditPlan; problems: string[] }> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(join(dir, "plan.json"), "utf8"));
@@ -110,7 +121,11 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
   if (focus?.clips.length) problems.push(...keepsUnpicked(current, plan, focus.clips).problems);
   // B-roll already on the timeline, or a video the user attached to this request.
   const known = new Set([...current.broll.map((b) => b.source), ...(focus?.attachments ?? []).filter((a) => a.kind === "video").map((a) => `library:${a.path}`)]);
-  for (const b of plan.broll) if (!known.has(b.source)) problems.push(`broll ${b.source}: new B-roll can't be added in this mode yet; remove it`);
+  for (const b of plan.broll) {
+    if (b.source.startsWith("stock:")) {
+      if (!b.source.slice(6).trim()) problems.push(`broll ${b.id || "(new)"}: "stock:" needs a description of the shot after it`);
+    } else if (!known.has(b.source)) problems.push(`broll ${b.source}: unknown clip. For new B-roll use "source": "stock:<what the shot shows>"`);
+  }
   const custom = plan.motion.filter((m) => m.template === "custom");
   if (custom.length) {
     const compiled = await compileCustom(customDir(analysis.source));
@@ -125,7 +140,7 @@ async function check(dir: string, analysis: Analysis, current: EditPlan, focus?:
 }
 
 /** The edited frame at each marker (video, plus animations when there are any) with a red box where the user clicked. */
-async function markerFrames(dir: string, analysis: Analysis, plan: EditPlan, markers: Marker[]): Promise<string[]> {
+export async function markerFrames(dir: string, analysis: Analysis, plan: EditPlan, markers: Marker[]): Promise<string[]> {
   const size = outputSize(plan, analysis);
   const fps = analysis.fps;
   const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
@@ -210,7 +225,7 @@ function claude(dir: string, model: string, prompt: string, session?: string): P
   });
 }
 
-const GUIDE = `# Editing a video in Creatron
+export const GUIDE = `# Editing a video in Creatron
 
 You are the editor. You can change anything about this edit by editing plan.json, and you can
 write new Remotion animations. You only have file tools, in this folder.
@@ -230,8 +245,62 @@ write new Remotion animations. You only have file tools, in this folder.
 ## Built in (no code needed)
 captions (style, size, colour, position, animation none / pop / highlight / word), motion templates "title" and
 "lower-third", per-segment speed / zoom / volume, transform (scale, x, y, rotate), aspect, audio cleanup.
-New B-roll can't be searched for in this mode (keep existing broll entries as they are). Files the user attached
-to the request are the exception: add those exactly as the request's ATTACHED FILES section says.
+Keep existing broll entries as they are unless asked. Files the user attached go in exactly as the request's
+ATTACHED FILES section says.
+
+## New B-roll (stock footage)
+Add a broll entry whose source says what the shot shows, and Creatron finds and downloads a matching stock clip:
+{"id": "<unique>", "source": "stock:walking feet sunrise road POV", "atSource": <transcript s>, "duration": 2.5, "track": 2}
+Describe one concrete, filmable shot in plain words (subject, action, setting), like a stock-site search:
+"hands typing laptop close up", "book pages flipping", "city skyline night timelapse". Not ideas or text.
+Fullscreen by default; "scale": 0.45 with "x"/"y" makes a picture-in-picture. One entry per shot.
+
+## Sound design (sound effects and music)
+Sound is what makes an edit feel produced. Design it like a pro editor: every sound is tied to something the
+viewer SEES or a word that matters, and lands exactly on it.
+
+### Where sounds go
+- Read words.md: every word with its exact time on the edited video. Use those times, never estimates.
+- One sound per visual event: a hard cut to B-roll, a title or big word slamming in, text popping on, a list item
+  appearing, a zoom/punch-in, a reveal, the end card. Plus a few on the strongest spoken words. Not every word,
+  not every sentence: silence between hits is what makes the hits land. Typically 1 sound every 2-4 seconds.
+- The HIT lands on the event: the frame text appears / the cut happens / the first sound of the word.
+- Whooshes carry INTO a cut: their peak is on the cut. Risers build INTO a reveal: they end on it, then an impact.
+- Don't stack two sounds on the same moment unless it's a deliberate layer (whoosh into an impact).
+- Vary them: don't use the same sound more than twice in a row; for list items use one pop with rising pitch.
+
+### The bank (designed sounds, rendered to fit): "file": "earshot:<id>"
+For earshot sounds "at" is the moment the sound HITS (OUTPUT seconds). Creatron renders it and lines its loudest
+moment up there. Knobs after "?": dur=<s> (length), apex=<s> (whooshes: where the peak sits), pitch=<note>.
+- Whoosh into a cut or slide (short): whoosh_fast/crisp, whoosh_fast/tight, whoosh_fast/heavy, swish/blade,
+  swish/zing, swipe/glide. Big and cinematic: pro_whoosh_big/swell, whoosh_big/thump (whoosh with a low thump).
+- Impact on a title slam / key word / reveal: pro_impact/deep, pro_impact/short, cut_hit/punch, cut_hit/sub,
+  impact/punch (long cinematic tail). Sub drop under a big reveal: pro_sub_drop/low, sub_drop/808.
+- Riser into a reveal (the hit is the end): pro_riser/roll, riser/build, riser/tension, reverse_swell/cymbal.
+- Text pop-in, list items, stickers: pro_pop_in/round, pro_pop_in/airy, pro_pop/bloop, ui_pop/soft
+  (rising pitch per item: ?pitch=C5, ?pitch=E5, ?pitch=G5).
+- UI, counters, ticks: pro_click/mouse, hover_tick/detent, tap/finger, toggle/on.
+- Camera: shutter/dslr, shutter/quick. Typing: pro_typing_run/standard, typing_key/laptop.
+- Ding, success, a nice ending: pro_notify/ding_2045, mallet/glock, logo_sting/soft_bloom (end card sting).
+- Glitch transitions: pro_glitch/standard, glitch/hit. Magic sparkle: pro_shimmer/m1. Slide/zip: pro_zip/up.
+Levels (measured on a real mix: quieter than this gets buried under the voice): impacts -6 to -9 dB,
+whooshes -6 to -10, pops/clicks/shutters -6 to -10 (they're short, so they can sit higher), risers -10, end stings -8.
+Put overlapping sounds on different tracks (track 1, 2, 3...).
+{"id": "<unique>", "kind": "sfx", "file": "earshot:pro_impact/deep", "at": 1.62, "duration": 1, "offset": 0, "volumeDb": -10, "track": 1}
+
+### Real-world sounds the bank doesn't have (crowd, rain, engine…): "file": "sfx:<2-4 plain words>"
+Found in a free library; "at" is where the sound STARTS.
+
+### Music: "file": "music:<mood and genre>"
+{"id": "<unique>", "kind": "music", "file": "music:upbeat electronic", "at": 0, "duration": <the edit's length>, "offset": 0, "volumeDb": -22, "track": 1}
+One bed under the whole video, -20 to -24 dB so the voice stays clear. Keep it 2-3 words: "calm piano",
+"upbeat electronic", "epic cinematic", "lofi hip hop".
+
+## Text behind the person
+Set "behind": true on a motion item (or a caption's look) and it's drawn BEHIND the person in the video: giant
+words standing behind them, their head in front of the letters. Use it for big hook words over the main video
+(not over B-roll). Make such text large (often 30-60% of the frame height) and place it so the person covers part
+of it, usually centred and a little above the middle.
 
 ## Custom animations (Remotion)
 Anything the built-in options can't do: animated text in any style, shapes, icons drawn with SVG, emoji pops,

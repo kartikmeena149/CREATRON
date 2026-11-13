@@ -6,9 +6,12 @@ import { outputDuration } from "../src/timeline.ts";
 import { markerContext } from "./markers.ts";
 import type { ModelInfo } from "./env.d.ts";
 import { Icon } from "./icons.tsx";
-import { isAudio } from "./format.ts";
+import { isAudio, isDocument } from "./format.ts";
 import { MEDIA_DRAG } from "./Inspector.tsx";
-import { useEditor } from "./store.ts";
+import { type AgentMessage, useEditor } from "./store.ts";
+import { AgentTurn } from "./AgentTurn.tsx";
+import { Orb } from "./Orb.tsx";
+import { CreatorQuote } from "./Quotes.tsx";
 
 type Quick = { label: string; run: (plan: EditPlan) => EditPlan; says: string };
 
@@ -39,7 +42,8 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
   const [original, setOriginal] = useState<string | null>(null);
 
   const attach = (paths: string[]) => {
-    for (const p of paths) useEditor.getState().addToLibrary(p);
+    // Media goes into the library too; a storyboard or notes is only for the AI to read.
+    for (const p of paths) if (!isDocument(p)) useEditor.getState().addToLibrary(p);
     setAttached((a) => [...a, ...paths.filter((p) => !a.includes(p))]);
   };
 
@@ -55,9 +59,36 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
     setText(r.value.trim());
   };
   const list = useRef<HTMLDivElement>(null);
+  // Follow the conversation as it grows (Claude's live turn grows a lot), unless you scrolled up to read.
+  const pinned = useRef(true);
   useEffect(() => {
-    list.current?.scrollTo({ top: list.current.scrollHeight, behavior: "smooth" });
-  }, [messages.length, busy]);
+    const el = list.current;
+    if (el && pinned.current) el.scrollTo({ top: el.scrollHeight, behavior: busy ? "auto" : "smooth" });
+  }, [messages, busy]);
+
+  // Claude's live chat: its events stream in for this video.
+  const modelRef = useRef(model);
+  modelRef.current = model;
+  useEffect(
+    () => window.creatron.onChatEvent(({ path, event }) => {
+      const s = useEditor.getState();
+      if (s.project?.path === path) s.agentEvent(event, modelRef.current);
+    }),
+    [],
+  );
+  const live = model.startsWith("claude-code/");
+  const answer = (a: string) => {
+    if (!project) return;
+    useEditor.getState().answerQuestion(a);
+    window.creatron.chatSend(project.path, a, useEditor.getState().plan, model, undefined, true).then((r) => !r.ok && say({ role: "error", text: r.error }));
+  };
+  const stopClaude = () => {
+    if (!project) return;
+    window.creatron.chatStop(project.path);
+    const s = useEditor.getState();
+    const i = s.messages.findLastIndex((m) => m.role === "agent");
+    if (i >= 0) set({ busy: false, messages: s.messages.map((m, j) => (j === i ? { ...(m as AgentMessage), status: "stopped", ended: Date.now() } : m)) });
+  };
 
   const apply = (before: EditPlan, after: EditPlan, text: string, meta?: string) => {
     commit(after);
@@ -83,8 +114,20 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
     const pins = markers.map((m) => `📍${m.n}`).join(" ");
     const clips = files.length ? `\n📎 ${files.map((f) => f.split("/").pop()).join(", ")}` : "";
     say({ role: "user", text: [target && `${target}:`, pins, request].filter(Boolean).join(" ") + clips });
-    set({ busy: true });
     const before = useEditor.getState().plan;
+    if (live) {
+      // Claude works live in the chat; the timeline changes as it edits.
+      const words = project.analysis.words;
+      const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
+      const focus = target || sent.length || files.length
+        ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent, attachments: files.map((path) => ({ path })) }
+        : undefined;
+      if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
+      const r = await window.creatron.chatSend(project.path, request, before, model, focus);
+      if (!r.ok) say({ role: "error", text: /not logged in/i.test(r.error) ? "Claude isn't signed in on this Mac yet. Open Terminal, type claude, press Enter, type /login and sign in. Then send your request again." : r.error });
+      return;
+    }
+    set({ busy: true });
     const words = project.analysis.words;
     const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
     const focus =
@@ -125,16 +168,20 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
         </button>
       </div>
 
-      <div className="ai-messages" ref={list}>
+      <div className="ai-messages" ref={list} onScroll={(e) => {
+        const el = e.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      }}>
         {!messages.length && (
           <div className="ai-empty">
-            <div className="ai-empty-icon"><Icon name="sparkle" size={22} /></div>
-            <p>Tell me how to edit this video.</p>
-            <p className="dim">"Cut the boring parts and keep it under 45 seconds"</p>
-            <p className="dim">"Make a reel, zoom in when I make a point"</p>
+            <Orb size={56} calm />
+            <p>What should we make?</p>
+            <CreatorQuote />
           </div>
         )}
-        {messages.map((m, i) => (
+        {messages.map((m, i) => m.role === "agent" ? (
+          <AgentTurn key={i} m={m} index={i} last={i === messages.length - 1} onAnswer={answer} onStop={stopClaude} />
+        ) : (
           <div key={i} className={`msg ${m.role}`}>
             <div className="bubble">{m.text}</div>
             {m.role === "assistant" && (
@@ -149,7 +196,7 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
             )}
           </div>
         ))}
-        {busy && <div className="msg assistant"><div className="bubble thinking"><span className="mini-spin" /> {status || "Thinking"}…</div></div>}
+        {busy && messages.at(-1)?.role !== "agent" && <div className="msg assistant"><div className="bubble thinking"><span className="mini-spin" /> {status || "Thinking"}…</div></div>}
       </div>
 
       <div className="ai-quick">
@@ -185,7 +232,7 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
           <div className="ai-attached">
             {attached.map((p) => (
               <span key={p} className="ai-file" title={p}>
-                <Icon name={isAudio(p) ? "music" : "video"} size={12} />
+                <Icon name={isDocument(p) ? "paperclip" : isAudio(p) ? "music" : "video"} size={12} />
                 <span>{p.split("/").pop()}</span>
                 <button className="link" title="Don't send this file" onClick={() => setAttached((a) => a.filter((x) => x !== p))}>✕</button>
               </span>
@@ -229,8 +276,8 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
         <div className="ai-box-foot">
           <button
             className="icon-btn ai-tool"
-            title="Attach files for the AI (videos, music, sound effects). They go into the library too."
-            onClick={async () => attach(await window.creatron.pickLibrary())}
+            title="Attach files for the AI: a storyboard, script or notes to follow (xlsx, csv, docx, pdf, txt), or videos, music and sound effects to use"
+            onClick={async () => attach(await window.creatron.pickAttachments())}
           >
             <Icon name="paperclip" size={16} />
           </button>
@@ -243,10 +290,16 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
             {enhancing ? <span className="mini-spin" /> : <Icon name="sparkle" size={16} />}
           </button>
           <ModelPicker value={model} onChange={setModel} />
-          {busy && <span className="mini-spin" />}
-          <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">
-            <Icon name="arrowUp" size={16} />
-          </button>
+          {busy && !live && <span className="mini-spin" />}
+          {busy && live ? (
+            <button className="send stop" onClick={stopClaude} title="Stop Claude">
+              <i className="stop-square" />
+            </button>
+          ) : (
+            <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">
+              <Icon name="arrowUp" size={16} />
+            </button>
+          )}
         </div>
         </div>
       </div>

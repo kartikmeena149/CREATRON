@@ -56,7 +56,7 @@ export const CaptionLook = z.object({
   italic: z.boolean().optional(),
   underline: z.boolean().optional(),
   strike: z.boolean().optional(),
-  outline: z.enum(["outline", "box", "none"]).optional().describe("outline = black edge, box = dark box behind, none = plain"),
+  outline: z.enum(["outline", "box", "none", "ransom"]).optional().describe("outline = black edge, box = dark box behind, none = plain, ransom = every letter on its own torn paper scrap (ransom note)"),
   behind: z.boolean().optional().describe("Drawn behind the person in the video (the person stays in front of the text)"),
   highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional().describe("Colour of the word being said; null = same as the text"),
   background: z.string().regex(/^(#[0-9a-fA-F]{8})?$/).optional().describe('Box colour behind the text as #RRGGBBAA; "" = no box (the outline style still applies)'),
@@ -157,6 +157,7 @@ export const Motion = z.object({
   at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
   duration: z.number().min(0.5).max(3600).default(3).describe("How long it shows, seconds (2-4 is typical for text; a progress bar can run the whole video)"),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Accent color"),
+  behind: z.boolean().optional().describe("Drawn behind the person in the video (text-behind-subject: big words standing behind them). Only over the main video, not over B-roll"),
   hidden: z.boolean().optional().describe("Switched off by the user; keep as it is"),
 });
 export type Motion = z.infer<typeof Motion>;
@@ -189,9 +190,9 @@ export const EditPlan = z.object({
     .array(Segment)
     .describe("Parts of the source to keep, in playback order. Everything else is cut. Empty only when the user cleared the timeline."),
   aspect: z
-    .enum(["source", "9:16", "1:1", "16:9"])
+    .enum(["source", "9:16", "4:5", "1:1", "4:3", "16:9", "21:9"])
     .default("source")
-    .describe("Output frame shape. 9:16 for Reels/Shorts/TikTok."),
+    .describe("Output frame shape. 9:16 for Reels/Shorts/TikTok, 4:5 for an Instagram feed post, 1:1 square, 4:3 classic, 16:9 YouTube, 21:9 cinematic widescreen; source keeps the original shape."),
   // Where the video sits in the output frame. At scale 1 it exactly fills the frame (no bars);
   // x / y move it by a fraction of the frame's width / height, so 0.1 = 10% right / down.
   transform: z
@@ -235,7 +236,7 @@ export const EditPlan = z.object({
       italic: z.boolean().default(false),
       underline: z.boolean().default(false),
       strike: z.boolean().default(false),
-      outline: z.enum(["outline", "box", "none"]).optional().describe("Unset: outline for the bold style, box for minimal"),
+      outline: z.enum(["outline", "box", "none", "ransom"]).optional().describe("Unset: outline for the bold style, box for minimal. ransom = every letter on its own torn paper scrap"),
       behind: z.boolean().default(false).describe("All captions drawn behind the person in the video"),
       // Absent = captions follow the transcript automatically. Present = the user's (or AI's) own captions.
       cues: z.array(Caption).optional().describe("Explicit captions in SOURCE seconds; set to fix wording or timing"),

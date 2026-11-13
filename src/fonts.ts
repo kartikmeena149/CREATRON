@@ -123,4 +123,16 @@ export const TEST_FONTS = [
   { family: "Signerica Fat", weight: 400, file: "test/SignericaFat.ttf" },
   { family: "Kaufmann", weight: 400, file: "test/Kaufmann.ttf" },
   { family: "Ink Free", weight: 400, file: "test/InkFree.ttf" },
+  { family: "Ransom Note", weight: 400, file: "test/RansomNote.ttf" },
+  // Free Google Fonts (SIL OFL) standing in for the fonts of a font carousel Kartik liked (in brackets).
+  { family: "Fjalla One", weight: 400, file: "test/FjallaOne-Regular.ttf" }, // Modern Fonts title
+  { family: "Michroma", weight: 400, file: "test/Michroma-Regular.ttf" }, // Pionare
+  { family: "DM Serif Display", weight: 400, file: "test/DMSerifDisplay-Regular.ttf" }, // Garside
+  { family: "Sacramento", weight: 400, file: "test/Sacramento-Regular.ttf" }, // Ghellis
+  { family: "Sniglet", weight: 400, file: "test/Sniglet-ExtraBold.ttf" }, // Meloki
+  { family: "Gochi Hand", weight: 400, file: "test/GochiHand-Regular.ttf" }, // Dood
+  { family: "Silkscreen", weight: 400, file: "test/Silkscreen-Regular.ttf" }, // Pixelr
+  { family: "Audiowide", weight: 400, file: "test/Audiowide-Regular.ttf" }, // Azmega
+  { family: "Barlow Condensed Black Italic", weight: 400, file: "test/BarlowCondensed-BlackItalic.ttf" }, // Spanik
+  { family: "Titan One", weight: 400, file: "test/TitanOne-Regular.ttf" }, // Leafy Joy
 ] as const;

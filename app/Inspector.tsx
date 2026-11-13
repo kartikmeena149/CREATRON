@@ -1,11 +1,13 @@
 // Left panel: hands-on controls for the selected clip, the frame, captions and the voice.
 // Sliders save one undo step per drag (checkpoint on press, live updates while moving).
 import { useEffect, useState } from "react";
+import { FrameTiles } from "./FramePicker.tsx";
 import type { EditPlan } from "../src/schema.ts";
 import { isAudio, isGeneratedVoice, isImage, mediaUrl, shortTime, timecode } from "./format.ts";
 import { Icon } from "./icons.tsx";
 import * as act from "./clipActions.ts";
 import { VoiceLab } from "./VoiceLab.tsx";
+import { SfxPanel } from "./SfxPanel.tsx";
 import { CaptionStyle } from "./CaptionStyle.tsx";
 import { MotionEditor } from "./MotionEditor.tsx";
 import { pickClaudeEdit } from "./SceneImport.tsx";
@@ -14,7 +16,7 @@ import { openMediaMenu } from "./ClipMenu.tsx";
 import { useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
 
-const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice Studio" };
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice Studio", sfx: "Sound effects" };
 
 export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: (kind: "video" | "audio") => void; onOpenMain: (path: string) => void }) {
   const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
@@ -45,6 +47,8 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
   );
   // Voices (clone, script, generate) work before any video is open.
   if (view === "voice") return <aside className="panel inspector">{head}<VoiceLab /></aside>;
+  // Searching and previewing sounds works before any video is open.
+  if (view === "sfx") return <aside className="panel inspector">{head}<SfxPanel /></aside>;
   if (!project) return <aside className="panel inspector">{head}<p className="hint pad">Import a video first.</p></aside>;
 
   const seg = selected !== null ? plan.segments[selected] : undefined;
@@ -87,11 +91,7 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
 
       <section>
         <h3>Frame</h3>
-        <Segmented
-          value={plan.aspect}
-          options={[["source", "Original"], ["9:16", "9:16"], ["1:1", "1:1"], ["16:9", "16:9"]]}
-          onChange={(aspect) => setPlan({ aspect: aspect as EditPlan["aspect"] })}
-        />
+        <FrameTiles value={plan.aspect} onPick={(aspect) => aspect !== plan.aspect && setPlan({ aspect })} />
       </section>
 
       <PositionSize />
