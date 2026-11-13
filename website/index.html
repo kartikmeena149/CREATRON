@@ -173,10 +173,26 @@
       } catch {}
 
       // The editor loads only when asked: it brings a video with it.
+      // The editor is made for a laptop window: it's drawn at 1280 x 800 and scaled to fit the box,
+      // so on any screen it looks like the real app instead of a squeezed one.
+      const APP_W = 1280;
+      const APP_H = 800;
       const run = () => {
         const cover = document.getElementById("cover");
         if (!cover) return;
-        cover.replaceWith(Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatro demo", allow: "autoplay; fullscreen" }));
+        const stage = cover.parentElement;
+        const frame = Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatro demo", allow: "autoplay; fullscreen" });
+        Object.assign(frame.style, { width: `${APP_W}px`, height: `${APP_H}px`, transformOrigin: "0 0" });
+        const fit = () => {
+          const k = Math.min(1, stage.clientWidth / APP_W);
+          frame.style.transform = k < 1 ? `scale(${k})` : "";
+          frame.style.width = `${k < 1 ? APP_W : stage.clientWidth}px`;
+          stage.style.height = `${Math.round(APP_H * k)}px`;
+        };
+        cover.replaceWith(frame);
+        stage.classList.add("running");
+        fit();
+        new ResizeObserver(fit).observe(stage);
       };
       document.getElementById("run").addEventListener("click", run);
       for (const b of document.querySelectorAll("[data-run]")) b.addEventListener("click", run);
