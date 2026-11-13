@@ -3,15 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Creatron: Cursor for video</title>
-    <meta name="description" content="Describe the edit, pick any AI model, get a finished video. Creatron renders on your Mac and your footage never leaves it." />
+    <title>Creatro: Cursor for video</title>
+    <meta name="description" content="Describe the edit, pick any AI model, get a finished video. Creatro renders on your Mac and your footage never leaves it." />
+    <link rel="canonical" href="https://creatro.in/" />
+    <meta property="og:site_name" content="Creatro" />
+    <meta property="og:title" content="Creatro: Cursor for video" />
+    <meta property="og:description" content="Describe the edit, pick any AI model, get a finished video. Renders on your Mac." />
+    <meta property="og:url" content="https://creatro.in/" />
+    <meta property="og:image" content="https://creatro.in/brand/app-icon-1024.png" />
     <link rel="icon" href="./brand/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./brand/app-icon-180.png" />
     <link rel="stylesheet" href="./site.css" />
   </head>
   <body>
     <header class="nav">
-      <a class="brand" href="./"><img src="./brand/logo.svg" alt="Creatron" /></a>
+      <a class="brand" href="./" aria-label="Creatro"><img src="./brand/mark.svg" alt="" /><span>Creatro</span></a>
       <nav class="links mono">
         <a href="#demo">Demo</a>
         <a href="#rules">Rules</a>
@@ -25,7 +31,7 @@
       <section class="band ink hero">
         <div>
           <svg class="reel" id="reel" viewBox="0 0 100 100" aria-hidden="true"></svg>
-          <p class="dot muted">Creatron ( for Mac )</p>
+          <p class="dot muted">Creatro ( for Mac )</p>
           <h1>Cursor for video.</h1>
           <p class="lead muted">Describe the edit, pick any AI model, get a finished video. It renders on your Mac, and your footage never leaves it.</p>
           <div class="ctas">
@@ -49,7 +55,7 @@
           </div>
           <div class="window">
             <div class="chrome mono">
-              <span class="live"><i></i>Creatron</span>
+              <span class="live"><i></i>Creatro</span>
               <a href="./demo/" target="_blank" rel="noopener">Full screen</a>
             </div>
             <div class="stage">
@@ -79,7 +85,7 @@
             <article class="card">
               <span class="dot">( 02 )</span>
               <h3>A broken tool never ends the job.</h3>
-              <p>Every tool Creatron uses has a backup. If one fails, it says so in one line, switches to the backup and finishes your video.</p>
+              <p>Every tool Creatro uses has a backup. If one fails, it says so in one line, switches to the backup and finishes your video.</p>
             </article>
             <article class="card">
               <span class="dot">( 03 )</span>
@@ -138,7 +144,7 @@
         <a href="./demo/">Demo, full screen <span>↗</span></a>
       </div>
       <div class="foot-line mono">
-        <span>Creatron. Your footage stays on your Mac.</span>
+        <span>Creatro · creatro.in · Your footage stays on your Mac.</span>
         <img src="./brand/mark-small-white.svg" width="18" height="18" alt="" />
       </div>
     </footer>
@@ -160,7 +166,7 @@
       const run = () => {
         const cover = document.getElementById("cover");
         if (!cover) return;
-        cover.replaceWith(Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatron demo", allow: "autoplay; fullscreen" }));
+        cover.replaceWith(Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatro demo", allow: "autoplay; fullscreen" }));
       };
       document.getElementById("run").addEventListener("click", run);
       document.querySelector("[data-run]").addEventListener("click", run);

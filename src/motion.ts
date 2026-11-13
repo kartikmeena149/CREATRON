@@ -37,7 +37,7 @@ export type OverlayProps = {
   }[];
   /** Put before an encoded absolute path to load a scene's file (media:// in the app, a local server in the export). */
   assetPrefix?: string;
-  /** Creatron's font library (fonts edits brought in), as files to load. */
+  /** Creatro's font library (fonts edits brought in), as files to load. */
   fonts?: { family: string; weight: string; style: string; unicodeRange?: string; url: string }[];
 };
 

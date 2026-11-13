@@ -147,7 +147,7 @@ type State = {
   openScene: string | null;
   /** The layer picked in the open scene (by layer id). */
   selectedLayer: string | null;
-  /** Families in Creatron's font library (fonts edits brought in), loaded into the page. */
+  /** Families in Creatro's font library (fonts edits brought in), loaded into the page. */
   libraryFonts: string[];
   /** Loads the font library into the page (again after an import added fonts). */
   loadFontLibrary(): Promise<void>;

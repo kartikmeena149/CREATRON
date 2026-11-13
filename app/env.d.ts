@@ -41,7 +41,7 @@ declare global {
       importScene(path: string, detail: Detail): Promise<Result<{ file: string; scene: Scene }>>;
       loadScene(file: string): Promise<Result<Scene>>;
       sceneBase(file: string): Promise<Result<string>>;
-      /** Creatron's font library (fonts edits brought in), with a URL for each file. */
+      /** Creatro's font library (fonts edits brought in), with a URL for each file. */
       fontLibrary(): Promise<{ family: string; weight: string; style: string; unicodeRange?: string; file: string; url: string }[]>;
       chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean): Promise<Result<void>>;
       chatStop(path: string): Promise<void>;

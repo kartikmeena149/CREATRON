@@ -1,4 +1,4 @@
-// The imported Claude edits a plan uses, and Creatron's font library, read from disk for the
+// The imported Claude edits a plan uses, and Creatro's font library, read from disk for the
 // export (and the AI's frame checks), with a local server their files load from. The app's preview reads
 // them through the main process instead (load-scene).
 import { existsSync, readFileSync } from "node:fs";

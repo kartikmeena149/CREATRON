@@ -1,4 +1,4 @@
-/* Creatron's website. The rules behind every value here are in docs/DESIGN.md. */
+/* Creatro's website. The rules behind every value here are in docs/DESIGN.md. */
 @import url("https://fonts.googleapis.com/css2?family=Doto:wght@700;900&family=Geist+Mono:wght@400;500&family=Geist:wght@300;400;500&display=swap");
 
 :root {
@@ -88,7 +88,7 @@ h3 { font-size: 22px; line-height: 1.15; letter-spacing: -0.01em; }
   border-radius: var(--r-card); color: var(--ink);
 }
 /* The logo file carries its own clear space; the bar's padding is that space. */
-.nav .brand img { height: 40px; width: auto; }
+.nav .brand img { height: 22px; width: 22px; }
 .nav .links { display: flex; gap: 20px; margin-left: auto; color: var(--grey); }
 .nav .links a:hover { color: var(--ink); }
 .nav .btn { height: 36px; }
@@ -164,3 +164,10 @@ footer.band { padding: 120px 24px 32px; text-align: center; }
   .note.narrow { display: block; }
   .stage { min-height: 380px; }
 }
+
+/* The name next to the mark, as text: the product is Creatro (creatro.in). The drawn wordmark in
+   the logo files still reads CREATRON until the logo is redrawn, so the site writes the name. */
+.brand { display: inline-flex; align-items: center; gap: 10px; }
+.nav .brand img, .brand img { height: 22px; width: 22px; }
+.brand span { font: 500 13px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink); }
+.nav .brand { padding-left: 10px; }

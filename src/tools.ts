@@ -12,7 +12,7 @@ export type RunResult = { stdout: string; stderr: string };
 
 /**
  * Runs a command and resolves with its output; rejects with the tail of stderr on failure.
- * A tool Creatron knows (ffmpeg, ffprobe, whisper-cli, yt-dlp, swiftc) is started through the
+ * A tool Creatro knows (ffmpeg, ffprobe, whisper-cli, yt-dlp, swiftc) is started through the
  * toolchain wall (toolchain.ts), which finds it or its backup; a missing one rejects in one line.
  */
 export function run(cmd: string, args: string[], onStderr?: (chunk: string) => void, onStdout?: (chunk: string) => void): Promise<RunResult> {

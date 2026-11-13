@@ -1,6 +1,6 @@
 // person-mask <in.mp4> <out-mask.mp4>
 // Writes a black-and-white video, same size and timing as the input: white where a person is.
-// Uses Apple Vision's person segmentation (on-device). Creatron's Auto Edit merges it with the
+// Uses Apple Vision's person segmentation (on-device). Creatro's Auto Edit merges it with the
 // picture into a see-through speaker cutout (autoedit-tools.ts cutout).
 import AVFoundation
 import CoreImage

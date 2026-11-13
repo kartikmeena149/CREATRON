@@ -1,4 +1,4 @@
-// A Claude edit brought into Creatron (a HyperFrames page): its layers, each with its look and
+// A Claude edit brought into Creatro (a HyperFrames page): its layers, each with its look and
 // keyframes, so text, colours and movement can be changed here like any other clip. The import
 // (electron/sceneImport.ts) records the page frame by frame; toScene() turns that into keyframes.
 // The plan keeps only what the user changed (LayerEdit), so the scene file itself never changes.
@@ -54,7 +54,7 @@ export type Scene = {
   /** Where it came from (the project folder), and what it was made with (unset: HyperFrames). */
   source: string;
   kind?: "hyperframes" | "remotion";
-  /** The caption style the project's code uses, as one of Creatron's caption animations (doc, spec…). */
+  /** The caption style the project's code uses, as one of Creatro's caption animations (doc, spec…). */
   captionStyle?: "doc" | "spec" | "kinetic" | "glow";
   width: number;
   height: number;
@@ -293,7 +293,7 @@ const bare = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
  * are being said while they show (the transcript, in scene seconds), and the containers holding
  * only them, so every word of them goes (graphics that quote the voice, like a chat bubble or a big
  * label, are fewer and elsewhere and stay). Returns the layers to hide, where captions sat (as
- * Creatron's caption y, a shift from the frame's middle), their font and whether they were in capitals.
+ * Creatro's caption y, a shift from the frame's middle), their font and whether they were in capitals.
  */
 export function captionLayers(scene: Scene, words: { text: string; start: number; end: number }[]) {
   const spoken = words.map((w) => ({ ...w, k: bare(w.text) })).filter((w) => w.k);
@@ -397,7 +397,7 @@ export function captionLayers(scene: Scene, words: { text: string; start: number
   const column = columnOf(box0, hits0[0].path.slice(0, hits0[0].path.indexOf(box0)));
   // Words in a full caption: most lines (a dimmed previous line or a short one says less).
   const counts = [...lines.values()].map((ws) => ws.reduce((n, h) => n + h.l.text!.split(/\s+/).length, 0)).sort((a, b) => a - b);
-  // (Captions whose words leave one by one don't show this: then it's left to Creatron.)
+  // (Captions whose words leave one by one don't show this: then it's left to Creatro.)
   const perLine = counts[Math.floor(counts.length * 0.75)] >= 2 ? Math.min(8, counts[Math.floor(counts.length * 0.75)]) : undefined;
   const upper = keep.filter((h) => h.l.style["text-transform"] === "uppercase" || (h.l.text === h.l.text!.toUpperCase() && /[A-Z]/.test(h.l.text!))).length > keep.length / 2;
   return {
@@ -407,7 +407,7 @@ export function captionLayers(scene: Scene, words: { text: string; start: number
     upper,
     accent: [...accents].sort((a, b) => b[1] - a[1])[0]?.[0],
     align,
-    /** The column's middle as Creatron's caption x (a shift from the frame's middle) and its width as a share of the frame. */
+    /** The column's middle as Creatro's caption x (a shift from the frame's middle) and its width as a share of the frame. */
     x: Math.max(-0.5, Math.min(0.5, (column.left + column.width / 2) / scene.width - 0.5)),
     width: Math.max(0.2, Math.min(1, column.width / scene.width)),
     wordsPerCaption: perLine,

@@ -40,7 +40,7 @@ export const Segment = z
  */
 /** How captions look. On the captions as a whole, or on one caption (only what differs). */
 export const CAPTION_FONTS = [
-  // Bundled with Creatron (src/fonts.ts), then the Mac's own.
+  // Bundled with Creatro (src/fonts.ts), then the Mac's own.
   "Anton", "Bebas Neue", "Archivo Black", "Poppins", "Inter", "Bangers", "Luckiest Guy", "Lilita One", "Permanent Marker",
   "Arial", "Arial Black", "Helvetica Neue", "Avenir Next", "Avenir Next Condensed", "Futura", "Impact", "Gill Sans",
   "Rockwell", "Georgia", "Didot", "American Typewriter", "Copperplate", "Menlo", "Marker Felt", "Chalkboard SE",

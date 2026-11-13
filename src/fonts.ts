@@ -1,4 +1,4 @@
-// Fonts that ship with Creatron (free Google Fonts, in motion/fonts, SIL Open Font License or
+// Fonts that ship with Creatro (free Google Fonts, in motion/fonts, SIL Open Font License or
 // Apache 2.0), so captions look the same in the preview, the animated layer and the export on any
 // Mac. The app and Remotion load the files (motion/fonts.ts); the export registers them from
 // motion/fonts by path. No Node or browser APIs here: both sides import this list.
@@ -21,7 +21,7 @@ export const BUNDLED_FONTS = [
 
 // Fonts from Kartik's font pack, added to try out. Most aren't licensed for shipping in an app or
 // for commercial video (Adobe, Microsoft, demo and personal-use fonts): delete motion/fonts/test
-// and this list before Creatron goes out to anyone.
+// and this list before Creatro goes out to anyone.
 export const TEST_FONTS = [
   { family: "Montserrat", weight: 400, file: "test/Montserrat.ttf" },
   { family: "Montserrat", weight: 700, file: "test/Montserrat-Bold.ttf" },

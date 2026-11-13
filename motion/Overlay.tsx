@@ -21,10 +21,10 @@ const OUTLINE = [
 ].join(", ");
 
 export const Overlay: React.FC<OverlayProps> = (props) => {
-  // Creatron's caption fonts (Anton, Bebas Neue, Poppins…): frames wait until they're loaded.
+  // Creatro's caption fonts (Anton, Bebas Neue, Poppins…): frames wait until they're loaded.
   const [fonts] = useState(() => delayRender("caption fonts"));
   useEffect(() => void loadBundledFonts().then(() => continueRender(fonts), () => continueRender(fonts)), [fonts]);
-  // Fonts from Creatron's font library (fonts edits brought in): frames wait for them too.
+  // Fonts from Creatro's font library (fonts edits brought in): frames wait for them too.
   const [library] = useState(() => delayRender("font library"));
   useEffect(() => void Promise.all((props.fonts ?? []).map(loadFont)).finally(() => continueRender(library)), [library]);
   const frame = useCurrentFrame();

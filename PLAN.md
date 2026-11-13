@@ -1,11 +1,11 @@
-# CREATRON — Startup Plan
+# CREATRO — Startup Plan
 
-**One line:** Cursor for video. Drop raw footage, say what you want, pick any AI model, get an edited video. One subscription; Creatron pays the AI providers.
+**One line:** Cursor for video. Drop raw footage, say what you want, pick any AI model, get an edited video. One subscription; Creatro pays the AI providers.
 
 ## How it works
 1. User drops files → app runs locally: ffprobe (video info), Whisper (transcript), a few still frames.
 2. User types a request and picks a model (Claude / GPT / Gemini / …).
-3. App sends **text only** (transcript, metadata, frames, request) to the Creatron server. Video is never uploaded.
+3. App sends **text only** (transcript, metadata, frames, request) to the Creatro server. Video is never uploaded.
 4. Server calls the chosen model with editing tools: cut, trim, captions, speed, zoom, reframe 9:16, color, music.
 5. Model returns an **edit plan** (timeline JSON), not a finished video.
 6. App shows it as a timeline + preview; user tweaks or chats more.
@@ -26,7 +26,7 @@ No computer use — call ffmpeg directly via tools.
 | Mac signing + notarization | Apple Developer account ($99/yr) | Yes |
 | Extras | ElevenLabs, stock music, AI b-roll | Later |
 
-Users can't "log in with Claude" to use their Claude.ai plan in a third-party app. Options: Creatron subscription (main), or bring-your-own API key (optional plan).
+Users can't "log in with Claude" to use their Claude.ai plan in a third-party app. Options: Creatro subscription (main), or bring-your-own API key (optional plan).
 
 ## Pricing (draft)
 - **Free:** few exports/month, watermark, basic models

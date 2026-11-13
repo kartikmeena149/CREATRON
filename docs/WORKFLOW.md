@@ -1,4 +1,4 @@
-# How Creatron's AI edits a video: brain, hands, editable output
+# How Creatro's AI edits a video: brain, hands, editable output
 
 Three parts. The brain decides, the hands do, and whatever gets made stays an open project you can
 change yourself on this Mac.
@@ -34,7 +34,7 @@ A broken tool is said in one line, the next choice is used, the job finishes.
 
 | Job | First choice | Backup | Last resort |
 | --- | --- | --- | --- |
-| Cut, encode, probe | ffmpeg / ffprobe (Homebrew) | The ffmpeg bundled inside Remotion (cuts and encodes; no loudness meter, so audio is exported as mixed) | None: the one tool Creatron can't work without |
+| Cut, encode, probe | ffmpeg / ffprobe (Homebrew) | The ffmpeg bundled inside Remotion (cuts and encodes; no loudness meter, so audio is exported as mixed) | None: the one tool Creatro can't work without |
 | Transcribe | whisper.cpp + small.en | Another Whisper model on the Mac, then HyperFrames' transcriber | No transcript: captions typed into timeline.json, cuts from pauses |
 | Build and render | Remotion (`project/src` + `timeline.json`) | HyperFrames (`project/index.html`), same folder and commands | The starter project (footage + captions), or an edit plan on the timeline rendered with ffmpeg |
 | Web video, CC music | yt-dlp | Stock clips (Pixabay) and Wikimedia | No B-roll: type, shapes, colour |
@@ -65,7 +65,7 @@ What makes it editable
 - **Captions** are text with source times. They are drawn at render time and follow their words when a cut changes.
 - **Music, SFX, colours, sizes** are values in `timeline.json`; each sound is its own file in `assets/`.
 - **Length** is the sum of the cuts. Nothing to keep in sync.
-- **In Creatron's timeline**: *Open in timeline* (or Import Claude edit → the `project` folder) turns it into layers.
+- **In Creatro's timeline**: *Open in timeline* (or Import Claude edit → the `project` folder) turns it into layers.
 - **Re-export**: `render.command`, or `node src/cli.ts project render <folder>`. No hidden steps.
 
 ## 5. The rule, enforced
@@ -76,7 +76,7 @@ What makes it editable
 | `validateProject()` in `src/project.ts` | The rule as code: source untouched, cuts and captions are values, no pre-cut file, all media local, no absolute paths or internet media, README and render command present |
 | `check` in the tool belt | Prints `EDITABLE: yes / NO` first, with what to fix |
 | `ensureRendered()` in `src/autoedit.ts` | After every turn, anything `validateProject` finds is sent back to Claude to fix |
-| `CLAUDE.md` | The same three rules for anyone (or any AI) changing Creatron's code |
+| `CLAUDE.md` | The same three rules for anyone (or any AI) changing Creatro's code |
 
 ## Commands
 

@@ -130,16 +130,16 @@ export function CaptionToolbar({ stage }: { stage: React.RefObject<HTMLDivElemen
   );
 }
 
-/** Fonts, each drawn in itself, with a search box: ones Claude edits brought in, Creatron's own, then the Mac's. */
+/** Fonts, each drawn in itself, with a search box: ones Claude edits brought in, Creatro's own, then the Mac's. */
 function FontList({ value, onPick }: { value: string; onPick: (font: string) => void }) {
   const [q, setQ] = useState("");
-  // Fonts edits brought in come first, then Creatron's own.
+  // Fonts edits brought in come first, then Creatro's own.
   const library = useEditor((s) => s.libraryFonts);
   const shown = [...new Set([...library, ...CAPTION_FONTS])].filter((f) => f.toLowerCase().includes(q.trim().toLowerCase()));
   const mine = new Set(library);
   const groups: [string, string[]][] = [
     ["From your Claude edits", shown.filter((f) => mine.has(f))],
-    ["Creatron fonts", shown.filter((f) => BUNDLED.has(f) && !mine.has(f))],
+    ["Creatro fonts", shown.filter((f) => BUNDLED.has(f) && !mine.has(f))],
     ["Font pack (testing)", shown.filter((f) => TEST.has(f) && !mine.has(f))],
     ["On this Mac", shown.filter((f) => !BUNDLED.has(f) && !TEST.has(f) && !mine.has(f))],
   ];

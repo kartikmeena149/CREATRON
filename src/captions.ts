@@ -18,9 +18,9 @@ const EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc";
 /** Writes one PNG per cue plus a blank, and an ffmpeg concat list that plays them on time. */
 export function drawCues(cues: Cue[], plan: EditPlan, width: number, height: number, dir: string, total: number): string {
   GlobalFonts.registerFromPath(EMOJI_FONT, "CaptionEmoji");
-  // Creatron's own caption fonts (Anton, Bebas Neue, Poppins…), by family name like the Mac's.
+  // Creatro's own caption fonts (Anton, Bebas Neue, Poppins…), by family name like the Mac's.
   for (const f of [...BUNDLED_FONTS, ...TEST_FONTS]) GlobalFonts.registerFromPath(join(ROOT, "motion", "fonts", f.file), f.family);
-  // And the fonts edits brought into Creatron's library.
+  // And the fonts edits brought into Creatro's library.
   for (const f of libraryFonts()) GlobalFonts.registerFromPath(f.file, f.family);
 
   const blank = join(dir, "cap-blank.png");

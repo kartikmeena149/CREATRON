@@ -171,7 +171,7 @@ function start(source: string, dir: string, model: string, emit: (e: ChatEvent) 
 }
 
 /**
- * ChatGPT through OpenAI's Codex app: each message (and each fix after Creatron's check) is one
+ * ChatGPT through OpenAI's Codex app: each message (and each fix after Creatro's check) is one
  * `codex exec` run in the video's folder, signed in with the user's ChatGPT plan. It reads AGENTS.md
  * and edits plan.json like Claude does; its JSON events become the same chat steps.
  */
@@ -340,7 +340,7 @@ async function finish(s: Session, dir: string, result: any) {
     if (problems.length && t.fixes < 2) {
       t.fixes++;
       step(s, { id, icon: "fail", label: `Found ${problems.length} problem${problems.length > 1 ? "s" : ""} to fix`, running: "", status: "failed" });
-      s.send(`Creatron checked your work and found problems. Fix them, then reply again in one sentence:\n- ${problems.join("\n- ")}`);
+      s.send(`Creatro checked your work and found problems. Fix them, then reply again in one sentence:\n- ${problems.join("\n- ")}`);
       return;
     }
     step(s, { id, icon: "check", label: problems.length ? "Checked the edit (some problems left)" : "Checked the edit", running: "", status: problems.length ? "failed" : "done" });

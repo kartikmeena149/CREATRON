@@ -68,7 +68,7 @@ function createWindow() {
   // A video passed on the command line (or via Open With) opens straight away.
   const video = process.argv.slice(1).find((a) => /\.(mp4|mov|m4v|mkv|webm)$/i.test(a) && existsSync(a));
   if (video) win.webContents.once("did-finish-load", () => send("open-path", video));
-  // Closing the window quits Creatron: while an export runs, ask first (it would stop the export).
+  // Closing the window quits Creatro: while an export runs, ask first (it would stop the export).
   win.on("close", (e) => {
     if (!exportsRunning) return;
     const choice = dialog.showMessageBoxSync(win, {
@@ -413,7 +413,7 @@ ipcMain.handle("pick-folder", async (_e, start?: string) => {
 
 /** dir/name.mp4, or name 2.mp4, name 3.mp4… so an export never overwrites an earlier one. */
 function freeName(dir: string, name: string): string {
-  const clean = name.replace(/[/:]/g, "-").replace(/\.mp4$/i, "").trim() || "Creatron export";
+  const clean = name.replace(/[/:]/g, "-").replace(/\.mp4$/i, "").trim() || "Creatro export";
   let file = join(dir, `${clean}.mp4`);
   for (let n = 2; existsSync(file); n++) file = join(dir, `${clean} ${n}.mp4`);
   return file;
@@ -422,14 +422,14 @@ function freeName(dir: string, name: string): string {
 // The frame strip for a video on an upper track (made once per file).
 ipcMain.handle("file-thumbs", safe(async (path: string) => fileThumbnails(path)));
 
-/** True for a file Creatron made itself (downloads, voiceovers, music in work/), never your own files. */
+/** True for a file Creatro made itself (downloads, voiceovers, music in work/), never your own files. */
 const madeByCreatron = (path: string) => !relative(join(app.getAppPath(), "work"), resolve(path)).startsWith("..");
 
-// Moves a library file to the Trash (so it can be put back), only one Creatron made itself.
+// Moves a library file to the Trash (so it can be put back), only one Creatro made itself.
 ipcMain.handle(
   "trash-media",
   safe(async (path: string) => {
-    if (!madeByCreatron(path)) throw new Error("Only files Creatron downloaded or made can be moved to the Trash from here.");
+    if (!madeByCreatron(path)) throw new Error("Only files Creatro downloaded or made can be moved to the Trash from here.");
     await shell.trashItem(path);
   }),
 );

@@ -10,7 +10,7 @@
 // line with what to do instead, never a crash that ends the job.
 //
 //   node autoedit-tools.ts tools                         which tools work now and what each job uses
-//   node autoedit-tools.ts stage <name>                  tell Creatron which step you're on
+//   node autoedit-tools.ts stage <name>                  tell Creatro which step you're on
 //   node autoedit-tools.ts cut keep.json                 keep these source ranges -> "cuts" + "captions" in project/timeline.json
 //   node autoedit-tools.ts still <seconds> <name.png>    one frame of the video -> notes/checks/<name.png>
 //   node autoedit-tools.ts cutout                        the speaker without background -> assets/cutouts/speaker.webm
@@ -31,7 +31,7 @@ import { FALLBACK, find, healthReport } from "./toolchain.ts";
 import { ROOT, round, run } from "./tools.ts";
 
 const DIR = process.env.CREATRON_AUTOEDIT_DIR;
-if (!DIR || !existsSync(projectPaths(DIR).timeline)) fail("this isn't a Creatron project folder (no project/timeline.json). Set CREATRON_AUTOEDIT_DIR, or use: creatron project <command> <folder>");
+if (!DIR || !existsSync(projectPaths(DIR).timeline)) fail("this isn't a Creatro project folder (no project/timeline.json). Set CREATRON_AUTOEDIT_DIR, or use: creatron project <command> <folder>");
 const P = projectPaths(DIR);
 const config = readTimeline(DIR);
 /** The original recording (source/...). Read, never written. */
@@ -111,7 +111,7 @@ async function remotion() {
     rootDir: join(DIR!, "project"),
     publicDir: P.public,
     symlinkPublicDir: true, // source/ and assets/ are played where they are, never copied
-    // The project uses Creatron's own Remotion and React, wherever the folder lives.
+    // The project uses Creatro's own Remotion and React, wherever the folder lives.
     webpackOverride: (c) => ({ ...c, resolve: { ...c.resolve, modules: [join(ROOT, "node_modules"), "node_modules"] } }),
   });
   const browser = await ensureBrowser();
@@ -227,10 +227,10 @@ async function check(file: string) {
   );
 }
 
-/** B-roll search and download happen in Creatron itself (it has the keys); this just asks it. */
+/** B-roll search and download happen in Creatro itself (it has the keys); this just asks it. */
 async function broker(what: string, rest: string[]) {
-  const url = process.env.CREATRON_BROKER ?? fail("Creatron isn't listening for B-roll requests");
-  const res = await fetch(`${url}/broll/${what}`, { method: "POST", body: JSON.stringify({ args: rest }) }).catch((e) => fail(`couldn't reach Creatron: ${e.message}`));
+  const url = process.env.CREATRON_BROKER ?? fail("Creatro isn't listening for B-roll requests");
+  const res = await fetch(`${url}/broll/${what}`, { method: "POST", body: JSON.stringify({ args: rest }) }).catch((e) => fail(`couldn't reach Creatro: ${e.message}`));
   const text = await res.text();
   if (!res.ok) fail(text);
   console.log(text);

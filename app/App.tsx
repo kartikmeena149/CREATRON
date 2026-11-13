@@ -36,7 +36,7 @@ export function App() {
   const home = useHome((h) => h.view);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
-  // Fonts edits brought into Creatron, ready for captions and the preview.
+  // Fonts edits brought into Creatro, ready for captions and the preview.
   useEffect(() => void useEditor.getState().loadFontLibrary(), []);
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
@@ -157,7 +157,7 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   }, []);
   return (
     <header className="topbar">
-      <div className="brand" title="Creatron"><Orb size={16} still /> Creatron</div>
+      <div className="brand" title="Creatro"><Orb size={16} still /> Creatro</div>
       <HomeTab />
       <ProjectTabs />
       <div className="grow" />

@@ -4,7 +4,7 @@ import { useEditor } from "./store.ts";
 import "./styles.css";
 import { loadBundledFonts } from "../motion/fonts.ts";
 
-// Creatron's own caption fonts, so the preview and the font list show them.
+// Creatro's own caption fonts, so the preview and the font list show them.
 loadBundledFonts();
 
 // Automated tests (app launched with --creatron-debug) read the editor state from here.

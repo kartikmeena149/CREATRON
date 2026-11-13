@@ -11,7 +11,7 @@ import { outputSize } from "./frame.ts";
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-const SYSTEM = `You are Creatron, a video editor. You cannot see the video; you get its info, a transcript
+const SYSTEM = `You are Creatro, a video editor. You cannot see the video; you get its info, a transcript
 split into timed phrases, and detected pauses. Turn the user's request into an edit plan by calling
 submit_edit_plan exactly once.
 
@@ -346,7 +346,7 @@ export function keepsUnpicked(before: EditPlan, after: EditPlan, picked: number[
 async function openRouter(key: string, model: string, messages: any[], tools: unknown[], toolChoice: unknown): Promise<any> {
   const res = await fetch(ENDPOINT, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatro" },
     body: JSON.stringify({ model, messages, tools, tool_choice: toolChoice, usage: { include: true } }),
   });
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 500)}`);
@@ -380,7 +380,7 @@ function placeMotion(plan: EditPlan): EditPlan {
   return { ...plan, motion };
 }
 
-const ENHANCE = `You improve a video creator's rough request to Creatron, an AI video editor, before it's sent.
+const ENHANCE = `You improve a video creator's rough request to Creatro, an AI video editor, before it's sent.
 Rewrite it as one clear, specific edit instruction: keep what they want and their language, and add concrete
 details that fit this video (the transcript is below): what to cut, the hook, pacing, captions, B-roll, on-screen
 text, music, length. Don't invent facts about the video or ask questions. Answer with the rewritten request only:
@@ -402,7 +402,7 @@ export async function enhancePrompt(request: string, model: string, analysis?: A
   if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
   const res = await fetch(ENDPOINT, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatro" },
     body: JSON.stringify({ model, messages: [{ role: "system", content: ENHANCE }, { role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);

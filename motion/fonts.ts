@@ -1,4 +1,4 @@
-// Loads Creatron's bundled caption fonts (src/fonts.ts) into the page: the app's preview and the
+// Loads Creatro's bundled caption fonts (src/fonts.ts) into the page: the app's preview and the
 // Remotion layer both import this, so a caption in Anton is Anton everywhere.
 import anton from "./fonts/Anton-Regular.ttf";
 import archivoBlack from "./fonts/ArchivoBlack-Regular.ttf";

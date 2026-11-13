@@ -1,4 +1,4 @@
-// Brings a Claude edit (a HyperFrames project: index.html + compositions + assets) into Creatron
+// Brings a Claude edit (a HyperFrames project: index.html + compositions + assets) into Creatro
 // as layers with keyframes. The page is opened in a hidden window with the HyperFrames runtime,
 // stepped through frame by frame (scenePage.ts), and written down as a scene (src/scene.ts) with
 // its own copies of every picture, video, font and sound in work/scenes/<name>/.
@@ -236,7 +236,7 @@ export async function importScene(path: string, detail: Detail, status: (s: stri
   }
   const file = join(dir, "scene.json");
   writeFileSync(file, JSON.stringify(scene));
-  // Fonts Creatron didn't have become Creatron fonts (font lists, captions, export).
+  // Fonts Creatro didn't have become Creatro fonts (font lists, captions, export).
   addFonts(scene.fonts, dir);
   status("");
   return { file, scene };
@@ -278,7 +278,7 @@ export function loadScene(file: string): Scene {
 /**
  * A blank main track the length and size of the scene (black), for a tab that has no video yet:
  * the edit then sits on top of it like any other project. Its sound is the edit's voiceover (when
- * it has one), so Creatron transcribes it and its captions work as on any video.
+ * it has one), so Creatro transcribes it and its captions work as on any video.
  */
 export async function sceneBase(file: string): Promise<string> {
   const scene = loadScene(file);

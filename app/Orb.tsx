@@ -1,4 +1,4 @@
-// Creatron's mark, alive: the reel. Ten frames in a ring with a cut on the right (a C), and the red
+// Creatro's mark, alive: the reel. Ten frames in a ring with a cut on the right (a C), and the red
 // recording light in the middle. It's the welcome screen, the empty chat, Claude at work and the
 // export's progress: while working the frames light in turn; exporting, they fill up as it goes;
 // done, they all light and the red light turns into a check. Same shape as the logo

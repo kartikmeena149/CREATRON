@@ -6,12 +6,12 @@
 //   3. The output: always an editable project (project.ts): source/ untouched, assets/ as separate
 //      files, project/ with cuts, captions, music and colours as plain values, Export/ the MP4.
 //      validateProject is the rule in code; Claude is sent back until it passes.
-// Creatron prepares the folder (work/<video>/autoedit) from the project scaffold, adds the
+// Creatro prepares the folder (work/<video>/autoedit) from the project scaffold, adds the
 // transcript, an optional reference video's frames and a playbook, then runs Claude there.
 //
 // Fenced in: file tools only reach the folder (--restricted), and every command runs in Claude Code's
 // macOS sandbox, which can only write inside the folder, has no network and can't read .env or keys.
-// The one exception is Creatron's own tool belt (autoedit-tools.ts: render, stills), which Claude
+// The one exception is Creatro's own tool belt (autoedit-tools.ts: render, stills), which Claude
 // can't edit and which only touches the folder; B-roll comes from the app itself (autoedit-broll.ts).
 // Anything else is refused (dontAsk), never asked.
 import { type ChildProcess, spawn } from "node:child_process";
@@ -146,7 +146,7 @@ export async function autoEditFix(
 /** The review prompt: score the video honestly, then fix the biggest gaps. */
 function review(withReference: boolean): string {
   return [
-    "Creatron's review. Read notes/checks/review-sheet.jpg (16 frames of your exported video, left to right, top to bottom)" +
+    "Creatro's review. Read notes/checks/review-sheet.jpg (16 frames of your exported video, left to right, top to bottom)" +
       (withReference ? " and notes/reference/sheet.jpg (16 frames of the reference)." : "."),
     "Be a demanding director. Score 1-10: layout variety, motion and transitions, B-roll (relevant, enough, well framed),",
     "captions, graphics and annotations, sound design (music level, number and timing of sound effects), pacing" +
@@ -234,7 +234,7 @@ function writeShims(dir: string) {
     const f = find(tool);
     if (!f) continue;
     const env = Object.entries(f.env ?? {}).map(([k, v]) => `export ${k}="${v}"\n`).join("");
-    writeFileSync(join(bin, tool), `#!/bin/bash\n# ${tool} through Creatron's toolchain (${f.via})\n${env}exec "${f.cmd}" "$@"\n`, { mode: 0o755 });
+    writeFileSync(join(bin, tool), `#!/bin/bash\n# ${tool} through Creatro's toolchain (${f.via})\n${env}exec "${f.cmd}" "$@"\n`, { mode: 0o755 });
   }
 }
 
@@ -335,7 +335,7 @@ function claude(
       enabled: true,
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
-      // Remotion's Chrome can't start inside the sandbox; only Creatron's own tool belt runs outside it.
+      // Remotion's Chrome can't start inside the sandbox; only Creatro's own tool belt runs outside it.
       excludedCommands: [tools, `${tools} *`],
       network: { allowLocalBinding: true },
     },

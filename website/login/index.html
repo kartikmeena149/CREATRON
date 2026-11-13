@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sign in to Creatron</title>
+    <title>Sign in to Creatro</title>
+    <link rel="canonical" href="https://creatro.in/login/" />
     <link rel="icon" href="../brand/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../site.css" />
     <link rel="stylesheet" href="./login.css" />
@@ -11,7 +12,7 @@
   <body class="login">
     <main class="split">
       <section class="form-side band">
-        <a class="logo" href="../"><img src="../brand/logo.svg" alt="Creatron" /></a>
+        <a class="logo brand" href="../" aria-label="Creatro"><img src="../brand/mark.svg" alt="" /><span>Creatro</span></a>
 
         <div class="form-box">
           <p class="dot muted" id="label">( Sign in )</p>
@@ -38,7 +39,7 @@
 
           <p class="status" id="status" role="status" aria-live="polite"></p>
 
-          <p class="switch mono"><span id="ask" class="muted">New to Creatron?</span> <button type="button" class="link" id="swap">Create an account</button></p>
+          <p class="switch mono"><span id="ask" class="muted">New to Creatro?</span> <button type="button" class="link" id="swap">Create an account</button></p>
           <p class="switch mono"><a href="../demo/">Try the editor without an account &gt;</a></p>
         </div>
 
@@ -64,10 +65,10 @@
       const words = () => {
         $("label").textContent = creating ? "( New account )" : "( Sign in )";
         $("title").textContent = creating ? "Start editing." : "Welcome back.";
-        $("sub").textContent = creating ? "Describe the edit. Creatron does the rest." : "Pick up your edit where you left it.";
-        $("ask").textContent = creating ? "Have an account?" : "New to Creatron?";
+        $("sub").textContent = creating ? "Describe the edit. Creatro does the rest." : "Pick up your edit where you left it.";
+        $("ask").textContent = creating ? "Have an account?" : "New to Creatro?";
         $("swap").textContent = creating ? "Sign in" : "Create an account";
-        document.title = creating ? "Create your Creatron account" : "Sign in to Creatron";
+        document.title = creating ? "Create your Creatro account" : "Sign in to Creatro";
         $("status").textContent = "";
       };
       words();

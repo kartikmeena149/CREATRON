@@ -21,7 +21,7 @@ export type Tile = {
   shape: [number, number][];
 };
 
-/** Fonts the letters are cut from (all ship with Creatron, so every side draws them alike). */
+/** Fonts the letters are cut from (all ship with Creatro, so every side draws them alike). */
 const FONTS: [family: string, weight: number][] = [
   ["DM Serif Display", 400],
   ["Archivo Black", 400],

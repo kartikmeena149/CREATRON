@@ -1,4 +1,4 @@
-// The Dashboard: where Creatron opens. Say what you want to make and pick a video (it opens in the
+// The Dashboard: where Creatro opens. Say what you want to make and pick a video (it opens in the
 // editor and the request goes to the AI), get back to an open project, and connect the AI accounts
 // that do the editing: your Claude plan, your ChatGPT plan, or an OpenRouter key.
 import { useEffect, useState } from "react";
@@ -92,7 +92,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
         <Orb size={56} calm />
         <p className="dot-label">{greeting()}</p>
         <h1>What are we making today?</h1>
-        <p className="home-sub">Pick a video and say what you want. Creatron cuts, captions and styles it on your Mac.</p>
+        <p className="home-sub">Pick a video and say what you want. Creatro cuts, captions and styles it on your Mac.</p>
 
         <div
           className={`prompt ${dropping ? "dropping" : ""}`}
@@ -175,7 +175,7 @@ function ConnectionsPage({ conn, setConn, refresh }: { conn?: Connections; setCo
       <header className="conn-head">
         <p className="dot-label">( Connections )</p>
         <h1>Bring your own AI.</h1>
-        <p className="home-sub">Edit with the plan you already pay for. Each one signs in with your own account on this Mac; Creatron never sees your password.</p>
+        <p className="home-sub">Edit with the plan you already pay for. Each one signs in with your own account on this Mac; Creatro never sees your password.</p>
       </header>
 
       <h3 className="conn-group mono">Your plans</h3>
@@ -191,7 +191,7 @@ function ConnectionsPage({ conn, setConn, refresh }: { conn?: Connections; setCo
       <h3 className="conn-group mono">API key</h3>
       <OpenRouterRow has={conn?.openrouter} setConn={setConn} />
 
-      <p className="conn-foot">Pick which one edits from the model menu at the bottom of the chat. Your plans cost nothing extra in Creatron; OpenRouter bills per use, and its free models cost nothing.</p>
+      <p className="conn-foot">Pick which one edits from the model menu at the bottom of the chat. Your plans cost nothing extra in Creatro; OpenRouter bills per use, and its free models cost nothing.</p>
     </div>
   );
 }

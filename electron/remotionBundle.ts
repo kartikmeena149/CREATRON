@@ -1,5 +1,5 @@
 // A Claude edit made with Remotion, built so a hidden window can play it frame by frame
-// (sceneImport.ts). Bundled with Creatron's own Remotion, React and fonts, so a project needn't
+// (sceneImport.ts). Bundled with Creatro's own Remotion, React and fonts, so a project needn't
 // have its node_modules installed, and with the media stand-ins (motion/import/) that show which
 // file each video plays. The project's files are never changed.
 import { bundle } from "@remotion/bundler";
@@ -76,7 +76,7 @@ export function remotionBundle(project: RemotionProject, head: string): Promise<
             "@remotion/media$": join(ROOT, "motion", "import", "remotion-media.ts"),
             ...Object.fromEntries(Object.entries((config.resolve?.alias ?? {}) as Record<string, string>).filter(([k]) => k !== "remotion")),
           },
-          // Creatron's packages first (Remotion's must all be one version); the project's own for anything else.
+          // Creatro's packages first (Remotion's must all be one version); the project's own for anything else.
           modules: [mods, join(project.root, "node_modules"), "node_modules"],
         },
       }),

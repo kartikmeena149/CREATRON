@@ -1,6 +1,6 @@
 // "Import Claude edit": a HyperFrames or Remotion project (the code Claude makes videos with) comes in as
 // layers with keyframes, so its text, colours and movement can be changed here. Pick how closely
-// keyframes follow the motion and where it goes, then Creatron records it and builds it.
+// keyframes follow the motion and where it goes, then Creatro records it and builds it.
 import { useEffect, useState } from "react";
 import { type Detail, type Scene, captionLayers, sceneShots, sceneStats } from "../src/scene.ts";
 import { useEditor } from "./store.ts";
@@ -12,8 +12,8 @@ const DETAILS: [Detail, string, string][] = [
 ];
 
 /**
- * In a project made from the edit (its voiceover is the main track, so Creatron has the words):
- * the edit's own captions are hidden and Creatron's captions take their place, in the style the
+ * In a project made from the edit (its voiceover is the main track, so Creatro has the words):
+ * the edit's own captions are hidden and Creatro's captions take their place, in the style the
  * project's code used, its font and where they sat. Returns how many caption layers it hid.
  */
 function switchToCreatronCaptions(id: string, scene: Scene): number {
@@ -22,7 +22,7 @@ function switchToCreatronCaptions(id: string, scene: Scene): number {
   if (!words.length) return 0;
   const found = captionLayers(scene, words);
   if (!found?.ids.length) return 0;
-  // Its own font: Creatron keeps the edit's fonts, so the captions can use exactly that one.
+  // Its own font: Creatro keeps the edit's fonts, so the captions can use exactly that one.
   const font = found.font ?? s.plan.captions.font;
   s.commit({
     ...s.plan,
@@ -62,7 +62,7 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
     const r = await window.creatron.importScene(path, detail);
     if (!r.ok) return setBusy(false), setError(r.error);
     const { file, scene } = r.value;
-    await useEditor.getState().loadFontLibrary(); // the edit's fonts are Creatron fonts now
+    await useEditor.getState().loadFontLibrary(); // the edit's fonts are Creatro fonts now
     let at: number | undefined;
     if (into === "new") {
       // Its own project: a blank main track as long and as big as the edit, with the edit on top.
@@ -110,7 +110,7 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
                 <b>Built in {done.seconds.toFixed(1)} s</b>
                 <div className="dim small">
                   {done.layers} layers · {done.keyframes.toLocaleString()} keyframes{done.sounds ? ` · ${done.sounds} sounds on SFX tracks` : ""}
-                  {done.captions > 0 && <><br />Its captions are now Creatron captions: edit them on the Captions track.</>}
+                  {done.captions > 0 && <><br />Its captions are now Creatro captions: edit them on the Captions track.</>}
                 </div>
               </div>
             </div>
@@ -144,7 +144,7 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
             {error && <p className="error small">{error}</p>}
             <div className="link-actions">
               {busy && <span className="dim small si-status"><span className="spinner small" /> {status || "starting"}…</span>}
-              <button className="primary" disabled={busy || kind === null} onClick={build}>{busy ? "Building…" : "Build in Creatron"}</button>
+              <button className="primary" disabled={busy || kind === null} onClick={build}>{busy ? "Building…" : "Build in Creatro"}</button>
             </div>
           </>
         )}

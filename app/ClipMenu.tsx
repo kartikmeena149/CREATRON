@@ -13,7 +13,7 @@ type Target = act.ClipRef | { kind: "caption"; index: number } | Media;
 
 const useMenu = create<{ open: { x: number; y: number; ref: Target; group?: boolean } | null }>(() => ({ open: null }));
 
-/** Opens the menu for a file in the Library (it knows whether Creatron made the file, so it may be trashed). */
+/** Opens the menu for a file in the Library (it knows whether Creatro made the file, so it may be trashed). */
 export async function openMediaMenu(e: React.MouseEvent, media: Omit<Media, "kind" | "made">) {
   e.preventDefault();
   e.stopPropagation();
@@ -159,7 +159,7 @@ function deleteLabel(ref: act.ClipRef): string {
 
 /**
  * A file in the Library: put it on the timeline at the playhead, make it the main track, find it,
- * or take it out of the library. Files Creatron made (downloads, voiceovers) can go to the Trash
+ * or take it out of the library. Files Creatro made (downloads, voiceovers) can go to the Trash
  * (and come back from there) while nothing uses them; your own files are never deleted from here.
  */
 function mediaItems(m: Media, item: Item, sep: (key: string) => React.ReactNode) {

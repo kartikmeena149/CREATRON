@@ -1,7 +1,7 @@
-// Connectors: the AI accounts Creatron can edit with, each signed in by the user on this Mac.
+// Connectors: the AI accounts Creatro can edit with, each signed in by the user on this Mac.
 //  - Claude: the Claude Code app (claude), signed in with a Claude plan.
 //  - ChatGPT: OpenAI's Codex app (codex), signed in with a ChatGPT plan.
-//  - OpenRouter: an API key (pay per use, or free models), kept in Creatron's .env.
+//  - OpenRouter: an API key (pay per use, or free models), kept in Creatro's .env.
 // This module is the only place that starts these apps for sign-in, sign-out, install and status.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -17,7 +17,7 @@ const BIN: Record<AgentId, string> = { claude: "claude", codex: "codex" };
 const PACKAGE: Record<AgentId, string> = { claude: "@anthropic-ai/claude-code", codex: "@openai/codex" };
 export const INSTALL_COMMAND = (id: AgentId) => `npm install -g ${PACKAGE[id]}`;
 
-// A clean environment: the user's own sign-in, never an API key from Creatron's .env (that would
+// A clean environment: the user's own sign-in, never an API key from Creatro's .env (that would
 // bill an API account instead of their plan).
 export const cleanEnv = () => ({ HOME: homedir(), USER: process.env.USER ?? "", PATH: process.env.PATH ?? "", LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: tmpdir() });
 
@@ -122,7 +122,7 @@ export function setEnabled(id: AgentId, on: boolean): void {
   writeFileSync(SETTINGS(), JSON.stringify({ ...enabled(), [id]: on }, null, 2));
 }
 
-// ---- OpenRouter: an API key in Creatron's own .env (never sent anywhere but OpenRouter).
+// ---- OpenRouter: an API key in Creatro's own .env (never sent anywhere but OpenRouter).
 
 export function openRouterKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY || undefined;

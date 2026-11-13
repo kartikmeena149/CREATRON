@@ -64,9 +64,9 @@ export async function cloneVoice(opts: { source: string; start: number; duration
   return { id, name, kind: "cloned", file };
 }
 
-/** Deletes a generated voiceover file; only ever one Creatron made (in work/voiceovers). */
+/** Deletes a generated voiceover file; only ever one Creatro made (in work/voiceovers). */
 export function deleteVoiceoverFile(file: string) {
-  if (dirname(resolve(file)) !== resolve(OUT_DIR) || !file.endsWith(".wav")) throw new Error("That isn't a voiceover Creatron made.");
+  if (dirname(resolve(file)) !== resolve(OUT_DIR) || !file.endsWith(".wav")) throw new Error("That isn't a voiceover Creatro made.");
   rmSync(file, { force: true });
 }
 

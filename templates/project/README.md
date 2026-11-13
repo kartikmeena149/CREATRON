@@ -1,6 +1,6 @@
 # __NAME__
 
-An open Creatron project. Everything is on this Mac and stays editable: nothing is baked in.
+An open Creatro project. Everything is on this Mac and stays editable: nothing is baked in.
 
 ```
 source/    the original recording, never changed
@@ -22,9 +22,9 @@ __RENDER__
 
 The result is always `Export/__NAME__.mp4`, levelled to -14 LUFS.
 
-## Edit it in Creatron's timeline
+## Edit it in Creatro's timeline
 
-In Creatron choose **Import Claude edit** and pick the `project` folder (after an Auto Edit, press
+In Creatro choose **Import Claude edit** and pick the `project` folder (after an Auto Edit, press
 **Open in timeline**). Every caption, clip, picture and sound becomes a layer you can move, trim and retype.
 
 ## How to edit this by hand

@@ -1,6 +1,6 @@
-// Creatron's timeline helper. It reads project/timeline.json (the plain, hand-editable values)
+// Creatro's timeline helper. It reads project/timeline.json (the plain, hand-editable values)
 // and turns it into what the video components need. Don't put edit values in code: put them in
-// timeline.json, so they stay editable by hand and in Creatron's timeline.
+// timeline.json, so they stay editable by hand and in Creatro's timeline.
 //
 // All times in timeline.json are SOURCE seconds (seconds of the original recording). Because of
 // that, changing a cut never breaks a caption: captions are placed through the cuts every time.

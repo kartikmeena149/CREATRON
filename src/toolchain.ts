@@ -1,4 +1,4 @@
-// The wall between Creatron's brain and the tools on this Mac.
+// The wall between Creatro's brain and the tools on this Mac.
 //
 // The brain (the AI and the editing code) decides WHAT should happen. Tools only do it. Every
 // tool sits behind one thin wrapper here, and this file is the only place that knows where a
@@ -111,7 +111,7 @@ function candidates(tool: ToolName): (Found | undefined)[] {
     }
     case "remotion": {
       const ok = existsSync(join(ROOT, "node_modules", "@remotion", "renderer")) && existsSync(join(ROOT, "node_modules", "@remotion", "bundler"));
-      return [ok ? { cmd: "", pre: [], via: "inside Creatron", backup: false } : undefined];
+      return [ok ? { cmd: "", pre: [], via: "inside Creatro", backup: false } : undefined];
     }
     case "hyperframes":
       return [hyperframesCli()];
@@ -150,7 +150,7 @@ export const FALLBACK: Record<ToolName, { job: string; backup: string; without: 
   ffmpeg: { job: "cut, encode, measure sound", backup: "the ffmpeg bundled with Remotion", without: "nothing can be cut or exported: this is the one tool with no way round" },
   ffprobe: { job: "read a file's size, length and tracks", backup: "the ffprobe bundled with Remotion", without: "files can't be read" },
   whisper: { job: "transcribe speech", backup: "another Whisper model on this Mac, then HyperFrames' transcriber", without: "no transcript: captions are typed by hand and cuts follow the pauses only" },
-  remotion: { job: "build and render the video", backup: "a HyperFrames project, then Creatron's own edit plan (ffmpeg)", without: "the video is built as an edit plan on the timeline" },
+  remotion: { job: "build and render the video", backup: "a HyperFrames project, then Creatro's own edit plan (ffmpeg)", without: "the video is built as an edit plan on the timeline" },
   hyperframes: { job: "second engine for building and rendering", backup: "Remotion", without: "Remotion does everything" },
   "yt-dlp": { job: "download web videos and Creative Commons music", backup: "stock clips (Pixabay) and Wikimedia files", without: "no web videos: stock clips and the files you add" },
   earshot: { job: "sound-effect bank and listening checks", backup: "sound effects made with ffmpeg, loudness from ffmpeg's meters", without: "simple ffmpeg sound effects" },
@@ -232,7 +232,7 @@ export function routing(list = health()): { job: string; using: string; fallback
     pick("cut, encode, loudness", [
       [ok("ffmpeg") && !backup("ffmpeg"), "ffmpeg"],
       [ok("ffmpeg"), "ffmpeg bundled with Remotion (basic cuts and encodes only)"],
-      [true, "NOTHING: ffmpeg is the one tool Creatron can't work without"],
+      [true, "NOTHING: ffmpeg is the one tool Creatro can't work without"],
     ]),
     pick("transcribe speech", [
       [ok("whisper") && !backup("whisper"), "whisper.cpp (small.en)"],
@@ -243,7 +243,7 @@ export function routing(list = health()): { job: string; using: string; fallback
     pick("build and render the video", [
       [ok("remotion"), "Remotion project (project/src, values in project/timeline.json)"],
       [ok("hyperframes"), "HyperFrames project (project/index.html)"],
-      [true, "Creatron edit plan on the timeline (rendered with ffmpeg)"],
+      [true, "Creatro edit plan on the timeline (rendered with ffmpeg)"],
     ]),
     pick("web videos and music", [
       [ok("yt-dlp"), "yt-dlp"],

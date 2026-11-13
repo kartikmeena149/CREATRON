@@ -9,11 +9,11 @@ Three things hold for every job, in this order.
 
 1. **You are the brain.** Every editing decision (hook, cuts, pacing, structure, style) is yours. Decide what
    should happen first; only then pick the tool that does it. No decision may depend on one specific tool.
-2. **Tools are hands, and they can fail.** Read `notes/TOOLS.md` first: Creatron checked every tool just now.
+2. **Tools are hands, and they can fail.** Read `notes/TOOLS.md` first: Creatro checked every tool just now.
    A line marked BROKEN or FALLBACK tells you what to use instead. If a tool fails while you work, say so in
    one line of your summary, switch to the fallback below, and finish. A tool failing never ends the job.
-3. **What you make is an editable project, never just a file.** The user opens this folder and Creatron's
-   timeline and changes things by hand. Section "Editable, always" is not optional: Creatron checks it
+3. **What you make is an editable project, never just a file.** The user opens this folder and Creatro's
+   timeline and changes things by hand. Section "Editable, always" is not optional: Creatro checks it
    after you finish and sends you back until it passes.
 
 ## What's here (already made, already renders)
@@ -22,7 +22,7 @@ source/      the raw recording. NEVER modify, re-encode, rename or delete it.
 assets/      broll/  audio/ (music)  sfx/  cutouts/   every asset a separate file
 project/     the editable video
                timeline.json     cuts, captions, music, sfx, colours, sizes: plain values
-               src/              Remotion layers. src/creatron/ is Creatron's (use it, don't edit it)
+               src/              Remotion layers. src/creatron/ is Creatro's (use it, don't edit it)
                public/           two links to source/ and assets/ (don't touch)
 Export/      <Name>.mp4 is written here by the render command
 notes/       brief.md, transcript.md, transcript.json, TOOLS.md, this playbook, checks/, reference/
@@ -54,7 +54,7 @@ or use another way. Never try to get around the sandbox itself. Never print, rea
   (YouTube Creative Commons, Wikimedia Commons...). Prints `id | description | seconds | size | licence`.
 - `$T broll get <id> <name> [--from s --to s | --find "what it must show"] [--audio]`: download into
   `assets/broll/<name>.mp4` (or `assets/audio/<name>.m4a` with --audio, e.g. a Creative Commons music track).
-  Web videos: give --from/--to, or --find to let Creatron pick the moment that shows it.
+  Web videos: give --from/--to, or --find to let Creatro pick the moment that shows it.
 - `$T still <seconds> <name>`: render one frame of the video to `notes/checks/<name>.png` (seconds of the
   final video). Fast: use it a lot while building, then Read the PNG and look.
 - `$T render`: render the project to `Export/<Name>.mp4` (a few minutes), level the audio to -14 LUFS, then run check.
@@ -73,7 +73,7 @@ or use another way. Never try to get around the sandbox itself. Never print, rea
 | Job | First choice | If that's broken | Last resort |
 |---|---|---|---|
 | Build and render | Remotion (`project/src`) | HyperFrames: write `project/index.html` (media as `public/source/...`, `public/assets/...`; one `<video class="clip">` per cut with `data-media-start`, one text element per caption), delete `project/src`; `$T still` and `$T render` then use it | Plain footage + captions from the starter (it always renders) |
-| Transcript | notes/transcript.json | (Creatron already tried its backup) | No transcript: cut on the pauses in transcript.md, type captions into timeline.json yourself |
+| Transcript | notes/transcript.json | (Creatro already tried its backup) | No transcript: cut on the pauses in transcript.md, type captions into timeline.json yourself |
 | B-roll and music | `$T broll` (stock + web) | stock only (no `--web`) | No B-roll: design with type, shapes, the speaker and colour |
 | Sound effects | earshot bank | ffmpeg (`-f lavfi -i "sine=..."`, `anoisesrc` sweeps) into assets/sfx/ | No SFX |
 | Speaker cutout | `$T cutout` | (none) | Speaker as a rounded card or split screen instead |

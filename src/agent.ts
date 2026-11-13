@@ -1,7 +1,7 @@
 // The agent mode: instead of filling in a fixed form, Claude edits the project like a person at
 // a keyboard. It gets a folder (work/<video>/agent) with the edit as plan.json, the transcript,
 // a guide, and custom/ for Remotion animations it writes itself. It may only use file tools in
-// that folder (no commands, no internet). Creatron then checks the work, sends back problems, and
+// that folder (no commands, no internet). Creatro then checks the work, sends back problems, and
 // shows Claude real frames of its animations over the video so it can fix what looks wrong.
 import { spawn } from "node:child_process";
 import { signInProblem } from "./chatTypes.ts";
@@ -52,7 +52,7 @@ export async function runAgent(
     if (problems.length) {
       if (++fixes > 2) throw new Error(`Claude's edit still has problems:\n${problems.join("\n")}`);
       log(`Claude is fixing ${problems.length} problem${problems.length > 1 ? "s" : ""}`);
-      turn = await claude(dir, claudeModel, `Creatron checked your work and found problems. Fix them:\n- ${problems.join("\n- ")}`, turn.session);
+      turn = await claude(dir, claudeModel, `Creatro checked your work and found problems. Fix them:\n- ${problems.join("\n- ")}`, turn.session);
       continue;
     }
     const custom = plan!.motion.filter((m) => m.template === "custom");
@@ -107,7 +107,7 @@ export function prepare(dir: string, analysis: Analysis, current: EditPlan) {
   );
 }
 
-/** Reads plan.json back and checks everything Creatron can check. */
+/** Reads plan.json back and checks everything Creatro can check. */
 export async function check(dir: string, analysis: Analysis, current: EditPlan, focus?: Focus): Promise<{ plan?: EditPlan; problems: string[] }> {
   let raw: unknown;
   try {
@@ -227,7 +227,7 @@ function claude(dir: string, model: string, prompt: string, session?: string): P
   });
 }
 
-export const GUIDE = `# Editing a video in Creatron
+export const GUIDE = `# Editing a video in Creatro
 
 You are the editor. You can change anything about this edit by editing plan.json, and you can
 write new Remotion animations. You only have file tools, in this folder.
@@ -242,7 +242,7 @@ write new Remotion animations. You only have file tools, in this folder.
 ## Times
 - segments, captions.cues and atSource use SOURCE seconds (the original recording).
 - motion[].at / duration and broll at / duration use OUTPUT seconds (the edited video, after cuts and speed).
-  For motion items you can set "atSource" (a transcript second) instead of "at"; Creatron converts it.
+  For motion items you can set "atSource" (a transcript second) instead of "at"; Creatro converts it.
 
 ## Built in (no code needed)
 captions (style, size, colour, position, animation none / pop / highlight / word), motion templates "title" and
@@ -251,7 +251,7 @@ Keep existing broll entries as they are unless asked. Files the user attached go
 ATTACHED FILES section says.
 
 ## New B-roll (stock footage)
-Add a broll entry whose source says what the shot shows, and Creatron finds and downloads a matching stock clip:
+Add a broll entry whose source says what the shot shows, and Creatro finds and downloads a matching stock clip:
 {"id": "<unique>", "source": "stock:walking feet sunrise road POV", "atSource": <transcript s>, "duration": 2.5, "track": 2}
 Describe one concrete, filmable shot in plain words (subject, action, setting), like a stock-site search:
 "hands typing laptop close up", "book pages flipping", "city skyline night timelapse". Not ideas or text.
@@ -272,7 +272,7 @@ viewer SEES or a word that matters, and lands exactly on it.
 - Vary them: don't use the same sound more than twice in a row; for list items use one pop with rising pitch.
 
 ### The bank (designed sounds, rendered to fit): "file": "earshot:<id>"
-For earshot sounds "at" is the moment the sound HITS (OUTPUT seconds). Creatron renders it and lines its loudest
+For earshot sounds "at" is the moment the sound HITS (OUTPUT seconds). Creatro renders it and lines its loudest
 moment up there. Knobs after "?": dur=<s> (length), apex=<s> (whooshes: where the peak sits), pitch=<note>.
 - Whoosh into a cut or slide (short): whoosh_fast/crisp, whoosh_fast/tight, whoosh_fast/heavy, swish/blade,
   swish/zing, swipe/glide. Big and cinematic: pro_whoosh_big/swell, whoosh_big/thump (whoosh with a low thump).
@@ -343,6 +343,6 @@ export default function PopWord({ text, color, width, height, durationInFrames }
 
 ## When you're done
 Reply with one or two plain sentences for the user saying what you changed (no code, no file names).
-Creatron then checks your work (the JSON, that the code compiles, the edit fits the video) and may send you
+Creatro then checks your work (the JSON, that the code compiles, the edit fits the video) and may send you
 problems to fix or frames of your animations to look at.
 `;

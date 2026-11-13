@@ -44,7 +44,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const { project, plan, exporting, exported, exportError, status } = useEditor();
   const [opts, setOpts] = useState<ExportOptions>(() => load(OPTIONS_KEY, DEFAULT_EXPORT));
   const [custom, setCustom] = useState(false);
-  const [name, setName] = useState(() => (project ? project.path.split("/").pop()!.replace(/\.[^.]+$/, "") : "Creatron export"));
+  const [name, setName] = useState(() => (project ? project.path.split("/").pop()!.replace(/\.[^.]+$/, "") : "Creatro export"));
   const [dir, setDir] = useState(() => {
     try {
       return localStorage.getItem(DIR_KEY) ?? "";

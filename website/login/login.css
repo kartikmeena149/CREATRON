@@ -3,7 +3,7 @@ body.login { min-height: 100vh; }
 .split { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 
 .form-side { display: flex; flex-direction: column; padding: 20px 40px 28px; }
-.form-side .logo img { height: 44px; margin-left: -12px; }
+.form-side .logo img { height: 22px; width: 22px; margin: 10px 0; }
 .form-box { width: min(400px, 100%); margin: auto 0; padding: 48px 0; }
 .form-box h1 { font-size: clamp(40px, 5vw, 64px); margin: 18px 0 12px; }
 .form-box > p.muted { margin-bottom: 36px; }

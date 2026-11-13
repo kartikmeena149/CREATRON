@@ -20,7 +20,7 @@ export async function readDocument(path: string): Promise<string> {
   else if ([".docx", ".doc", ".rtf", ".rtfd", ".odt", ".pages"].includes(ext)) text = (await run("textutil", ["-convert", "txt", "-stdout", path])).stdout;
   else text = readFileSync(path, "utf8");
   text = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  if (!text) throw new Error(`"${path.split("/").pop()}" has no text Creatron can read.`);
+  if (!text) throw new Error(`"${path.split("/").pop()}" has no text Creatro can read.`);
   return text.length > MAX ? `${text.slice(0, MAX)}\n…(cut off: the document is longer)` : text;
 }
 

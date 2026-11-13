@@ -1,7 +1,7 @@
 // Renders the Remotion layer (motion/) as see-through PNG frames for the export to lay on top.
 // PNG frames on every core are ~45x faster than encoding a see-through video. The templates
 // are bundled once per run; Remotion fetches its own headless Chrome the first time (about
-// 140 MB), which Creatron keeps in ~/Library/Caches/Creatron (see chromeOutsideProtectedFolders).
+// 140 MB), which Creatro keeps in ~/Library/Caches/Creatron (see chromeOutsideProtectedFolders).
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderFrames, renderStill, selectComposition } from "@remotion/renderer";
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
@@ -75,7 +75,7 @@ export async function renderOverlay(
 /**
  * macOS guards Desktop, Documents and Downloads: when the app is the one asking, Chrome's helper
  * processes may not read their own files there and crash ("icudtl.dat not found", "Target closed").
- * So Creatron runs a copy of Remotion's Chrome from ~/Library/Caches/Creatron, made once.
+ * So Creatro runs a copy of Remotion's Chrome from ~/Library/Caches/Creatron, made once.
  */
 export function chromeOutsideProtectedFolders(exe: string): string {
   const cache = join(homedir(), "Library", "Caches", "Creatron");

@@ -1,6 +1,6 @@
-# Creatron: rules for working on this code
+# Creatro: rules for working on this code
 
-Creatron's AI editing has three parts. Every change must keep all three true. Details: `docs/WORKFLOW.md`.
+Creatro's AI editing has three parts. Every change must keep all three true. Details: `docs/WORKFLOW.md`.
 
 ## 1. The brain decides
 - Editing judgment (hook, cuts, pacing, structure, style) belongs to the model, not to a tool.

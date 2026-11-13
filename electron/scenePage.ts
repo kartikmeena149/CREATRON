@@ -419,7 +419,7 @@ export async function capturePage(opts: CaptureOptions): Promise<PageCapture> {
     fonts.push(`@font-face { font-family: "${family.replace(/^["']|["']$/g, "")}"; src: ${abs(source, location.href)}; ${extra} }`);
   }
 
-  // Sound becomes clips on Creatron's audio tracks.
+  // Sound becomes clips on Creatro's audio tracks.
   const audio: PageCapture["audio"] = [];
   if (R) {
     for (const [id, s] of sounds) {

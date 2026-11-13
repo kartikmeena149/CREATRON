@@ -41,3 +41,6 @@ voices/
 
 # Claude Code session lock
 .claude/scheduled_tasks.lock
+
+# The website demo plays this one clip (website/make-sample.ts), so the site can deploy from git.
+!website/public/sample/video.mp4

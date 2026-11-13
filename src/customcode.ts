@@ -67,7 +67,7 @@ export function writeCustomEntry(dir: string): string {
   const files = customFiles(dir);
   const entry = join(dir, "..", "entry.tsx");
   const lines = [
-    "// Written by Creatron for the export: the project's custom animations, then the Remotion root.",
+    "// Written by Creatro for the export: the project's custom animations, then the Remotion root.",
     `import { registerCustom } from ${JSON.stringify(join(ROOT, "motion", "custom.ts"))};`,
     ...files.map((f, i) => `import C${i} from ${JSON.stringify(`./custom/${f.name}.tsx`)};`),
     `import { registerRoot } from "remotion";`,

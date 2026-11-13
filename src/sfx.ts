@@ -31,7 +31,7 @@ const DIR = join(ROOT, "work", "sfx");
 export async function searchSfx(query: string, page = 1, short = true): Promise<{ results: Sfx[]; more: boolean }> {
   const params = new URLSearchParams({ q: query.trim(), page: String(page), page_size: "20", license_type: "commercial,modification" });
   if (short) params.set("length", "shortest");
-  const res = await fetch(`${API}?${params}`, { headers: { "User-Agent": "Creatron/0.1 (video editor)" } });
+  const res = await fetch(`${API}?${params}`, { headers: { "User-Agent": "Creatro/0.1 (video editor)" } });
   if (res.status === 429) throw new Error("Openverse is busy (too many searches). Try again in a minute.");
   if (!res.ok) throw new Error(`Openverse search failed (${res.status}).`);
   const data = (await res.json()) as { page_count: number; results: any[] };

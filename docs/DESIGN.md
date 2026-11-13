@@ -1,6 +1,6 @@
-# Creatron design language
+# Creatro design language
 
-How Creatron's website and brand look, and why. It starts from a close reading of
+How Creatro's website and brand look, and why. It starts from a close reading of
 [nothing.tech](https://in.nothing.tech/) (studied November 2026). We take its principles, not its assets:
 Nothing's typefaces (NType, Ndot), logo and product imagery are theirs and are never used here.
 
@@ -72,9 +72,9 @@ Hierarchy comes from **size and voice, never weight**. There is no bold on the p
 
 ---
 
-## Part 2. Creatron's version
+## Part 2. Creatro's version
 
-The same discipline, our own material. Creatron is a video editor that thinks, so our signal is a
+The same discipline, our own material. Creatro is a video editor that thinks, so our signal is a
 **red recording light**: the one dot that says "live", "recording", "the AI is working".
 
 ### 2.1 Principles
@@ -89,7 +89,7 @@ The same discipline, our own material. Creatron is a video editor that thinks, s
    - Buttons and links: **Geist Mono** 12px uppercase.
    All three are open-source (SIL OFL) and load from Google Fonts. The logo itself does not use a font:
    its letters are drawn dot by dot from code.
-4. **Speak like a timeline.** Timecodes and brackets carry meaning: `00:00:12:04`, `CREATRON ( DEMO )`,
+4. **Speak like a timeline.** Timecodes and brackets carry meaning: `00:00:12:04`, `CREATRO ( DEMO )`,
    `( 01 ) THE MODEL DECIDES`. Steps are numbered, versions are dated.
 5. **Bands and exact controls.** Full-width sections that alternate paper / ink. Buttons 40px tall,
    4px corners. Cards 8px corners, flat. No shadows, no glows, no gradients on UI.
@@ -153,7 +153,7 @@ The same discipline, our own material. Creatron is a video editor that thinks, s
   spinner.)
 - **Small mark.** Below 48px the twelve frames blur together, so small uses (favicon, 16–32px) draw the
   same C from eight places with six bigger dots.
-- **Wordmark.** `CREATRON` in our own dot-matrix letters, drawn on a 5 × 7 grid, one dot per pixel. It sits
+- **Wordmark.** (The product is now Creatro, at creatro.in. The drawn wordmark still reads `CREATRON` until the logo is redrawn.) `CREATRON` in our own dot-matrix letters, drawn on a 5 × 7 grid, one dot per pixel. It sits
   on the same dot pitch as the mark, so mark and word are made of the same material.
 - **Colour.** Ink or white only, plus the single red dot. A one-colour version replaces red with the ink.
 - **Clear space.** One mark-dot gap (the distance between two dots in the ring) times three, on all sides.

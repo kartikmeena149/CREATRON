@@ -45,7 +45,7 @@ export async function linkInfo(url: string, audio = false): Promise<LinkInfo> {
     throw new Error("That's a live stream. Only finished videos can be imported.");
   const streams = ((d.formats ?? []) as any[]).filter((f) => f.url && (audio ? f.acodec !== "none" : f.vcodec !== "none"));
   if (!streams.length && !d.url)
-    throw new Error(audio ? "That link has no sound Creatron can download." : "That link has no video Creatron can download (it may be a photo or a page without video).");
+    throw new Error(audio ? "That link has no sound Creatro can download." : "That link has no video Creatro can download (it may be a photo or a page without video).");
   // Some sites (Instagram) don't say how long a video is: ask the video stream itself.
   if (!d.duration) d.duration = await streamDuration([...streams.map((f) => f.url), d.url].filter(Boolean));
   if (!d.duration) throw new Error(`Couldn't tell how long that ${audio ? "track" : "video"} is, so it can't be imported. Try the link again in a minute.`);
@@ -208,7 +208,7 @@ export async function searchYouTube(query: string, cc: boolean, limit = 8): Prom
   });
 }
 
-const COMMONS_UA = "Creatron/0.1 (https://github.com/kartikmeena149/CREATRON; video editor)";
+const COMMONS_UA = "Creatro/0.1 (https://github.com/kartikmeena149/CREATRON; video editor)";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36";
 
 /**
@@ -379,7 +379,7 @@ async function judgeFrames(need: string, frames: { t: number; jpg: string }[]) {
   ];
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatron" },
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Creatro" },
     body: JSON.stringify({ model: VISION_MODEL, messages: [{ role: "user", content }], temperature: 0 }),
   });
   const data = (await res.json()) as any;
@@ -436,10 +436,10 @@ async function ytdlp(args: string[], onStdout?: (chunk: string) => void) {
 function explain(err: string): string {
   const line = err.split("\n").find((l) => l.startsWith("ERROR:"))?.replace(/^ERROR:\s*(\[[^\]]+\]\s*)?([\w-]+:\s*)?/, "") ?? err.split("\n")[0];
   if (/private video|this video is private/i.test(err)) return "This video is private, so it can't be downloaded. Ask the owner to make it public or unlisted.";
-  if (/confirm your age|age.restricted|inappropriate for some users/i.test(err)) return "This video is age-restricted, and YouTube only shows it to signed-in accounts. Creatron can't download it.";
+  if (/confirm your age|age.restricted|inappropriate for some users/i.test(err)) return "This video is age-restricted, and YouTube only shows it to signed-in accounts. Creatro can't download it.";
   if (/not a bot/i.test(err)) return "YouTube is asking to confirm this isn't a bot. Wait a few minutes and try again.";
-  if (/log ?in|sign in|login required|cookies|authentication|rate-limit reached/i.test(err)) return "This site only shows that video to signed-in accounts, so Creatron can't download it. Try a public link.";
-  if (/unsupported url/i.test(err)) return "Creatron can't download from that site. Links from YouTube, Instagram, X, Vimeo, TikTok and most video sites work.";
+  if (/log ?in|sign in|login required|cookies|authentication|rate-limit reached/i.test(err)) return "This site only shows that video to signed-in accounts, so Creatro can't download it. Try a public link.";
+  if (/unsupported url/i.test(err)) return "Creatro can't download from that site. Links from YouTube, Instagram, X, Vimeo, TikTok and most video sites work.";
   if (/unavailable|removed|not available|does not exist|404/i.test(err)) return "That video isn't available (it may have been removed, or it's blocked in your country).";
   if (/HTTP Error 429|too many requests/i.test(err)) return "That site is limiting downloads right now (too many requests). Try again in a few minutes.";
   if (/Unable to download webpage|timed out|getaddrinfo|network/i.test(err)) return `Couldn't reach that site. Check your internet connection. (${line})`;

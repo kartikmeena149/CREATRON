@@ -1,5 +1,5 @@
 // B-roll for Auto Edit, served by the app to the agent's tool belt (autoedit-tools.ts broll ...).
-// It runs inside Creatron, which holds the API keys, so the keys never reach Claude's folder or
+// It runs inside Creatro, which holds the API keys, so the keys never reach Claude's folder or
 // its sandbox. Listens on 127.0.0.1 only, behind a random token, and writes only into the job folder.
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

@@ -1,6 +1,6 @@
-// Creatron's own font library: fonts that came in with Claude edits (or anything else that brings
-// a font Creatron didn't have) are kept here for good, in work/fonts/ with fonts.json listing them.
-// From then on they're Creatron fonts like the bundled ones: in the font lists, in the preview,
+// Creatro's own font library: fonts that came in with Claude edits (or anything else that brings
+// a font Creatro didn't have) are kept here for good, in work/fonts/ with fonts.json listing them.
+// From then on they're Creatro fonts like the bundled ones: in the font lists, in the preview,
 // the animated layer and the export.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
