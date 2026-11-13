@@ -29,13 +29,13 @@
     <header class="nav">
       <a class="brand" href="./" aria-label="Creatro"><img src="./brand/mark.svg" alt="" /><span>Creatro</span></a>
       <nav class="links mono">
-        <a href="#demo">Demo</a>
+        <a href="#film">Film</a>
         <a href="#rules">Rules</a>
         <a href="#editor">Editor</a>
         <a href="#get">Get it</a>
       </nav>
       <a class="nav-sign mono" href="./login/" id="nav-sign">Sign in</a>
-      <a class="btn" href="#demo" data-run>Try it</a>
+      <a class="btn" href="#film">Watch</a>
     </header>
 
     <main>
@@ -46,7 +46,7 @@
           <h1>Cursor for video.</h1>
           <p class="lead muted">Describe the edit, pick any AI model, get a finished video. It renders on your Mac, and your footage never leaves it.</p>
           <div class="ctas">
-            <a class="btn signal" href="#demo" data-run>Try it in your browser</a>
+            <a class="btn signal" href="#film">Watch the film</a>
             <a class="btn light" href="#get">Get the app</a>
           </div>
           <div class="timecode mono" aria-hidden="true">
@@ -55,29 +55,23 @@
         </div>
       </section>
 
-      <section id="demo" class="band">
+      <section id="film" class="band">
         <div class="wrap">
           <div class="head">
-            <p class="dot muted">( Demo )</p>
+            <p class="dot muted">( Film )</p>
             <div>
-              <h2>The real editor, running here.</h2>
-              <p class="lead muted">Cut on the timeline, restyle captions, ask the AI for a rough cut. Open your own video too: it stays in this tab.</p>
+              <h2>It could write. It could code. Now it edits.</h2>
+              <p class="lead muted">Creatro gives the AI you already use an editor: your footage, on your Mac, cut by the model you pick.</p>
             </div>
           </div>
           <div class="window">
             <div class="chrome mono">
               <span class="live"><i></i>Creatro</span>
-              <a href="./demo/" target="_blank" rel="noopener">Full screen</a>
+              <span>Film with thisAtharv</span>
             </div>
-            <div class="stage">
-              <div class="cover" id="cover">
-                <img src="./brand/mark-white.svg" alt="" />
-                <p>The same code as the Mac app. The AI follows a script and export is switched off; both need the app.</p>
-                <button class="btn light" id="run">Run the demo</button>
-                <p class="mono note narrow">Made for a wide screen</p>
-              </div>
-            </div>
+            <video class="film" src="./film/creatro-launch.mp4" poster="./film/poster.jpg" controls playsinline preload="metadata"></video>
           </div>
+          <p class="mono muted film-try"><a href="./demo/">Or try the editor in your browser &gt;</a></p>
         </div>
       </section>
 
@@ -145,7 +139,7 @@
 
     <footer class="band ink">
       <nav class="foot-words">
-        <a href="#demo">Demo</a>
+        <a href="#film">Film</a>
         <a href="./login/">Join</a>
         <a href="./brand/">Brand</a>
       </nav>
@@ -177,30 +171,6 @@
         }
       } catch {}
 
-      // The editor loads only when asked: it brings a video with it.
-      // The editor is made for a laptop window: it's drawn at 1280 x 800 and scaled to fit the box,
-      // so on any screen it looks like the real app instead of a squeezed one.
-      const APP_W = 1280;
-      const APP_H = 800;
-      const run = () => {
-        const cover = document.getElementById("cover");
-        if (!cover) return;
-        const stage = cover.parentElement;
-        const frame = Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatro demo", allow: "autoplay; fullscreen" });
-        Object.assign(frame.style, { width: `${APP_W}px`, height: `${APP_H}px`, transformOrigin: "0 0" });
-        const fit = () => {
-          const k = Math.min(1, stage.clientWidth / APP_W);
-          frame.style.transform = k < 1 ? `scale(${k})` : "";
-          frame.style.width = `${k < 1 ? APP_W : stage.clientWidth}px`;
-          stage.style.height = `${Math.round(APP_H * k)}px`;
-        };
-        cover.replaceWith(frame);
-        stage.classList.add("running");
-        fit();
-        new ResizeObserver(fit).observe(stage);
-      };
-      document.getElementById("run").addEventListener("click", run);
-      for (const b of document.querySelectorAll("[data-run]")) b.addEventListener("click", run);
     </script>
   </body>
 </html>

@@ -109,22 +109,15 @@ h3 { font-size: 22px; line-height: 1.15; letter-spacing: -0.01em; }
 .head .dot { padding-top: 10px; }
 .head p.lead { margin-top: 18px; }
 
-/* The demo window. */
+/* The film, in the same window the demo used. */
 .window { border-radius: var(--r-card); overflow: hidden; background: var(--ink); border: 1px solid var(--line-2); }
 .chrome { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; color: var(--grey-2); border-bottom: 1px solid var(--line-2); }
 .chrome a:hover { color: var(--white); }
 .chrome .live { display: flex; align-items: center; gap: 8px; }
 .chrome .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
-.stage { height: min(760px, 80vh); min-height: 440px; }
-.stage iframe { border: 0; display: block; }
-/* Running: the box takes the editor's own shape (set by the script), whatever the screen. */
-.stage.running { min-height: 0; overflow: hidden; }
-.cover { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; text-align: center; padding: 24px; color: var(--white); position: relative; }
-.cover::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, #fff 1px, transparent 1.6px) 0 0 / var(--grid) var(--grid); opacity: 0.08; }
-.cover > * { position: relative; }
-.cover img { width: 72px; height: 72px; }
-.cover p { color: var(--grey-2); max-width: 440px; }
-.note.narrow { display: none; }
+.film { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.film-try { margin-top: 18px; text-align: right; }
+.film-try a:hover { color: var(--ink); }
 
 /* Cards: flat, numbered like a spec sheet. */
 .grid { display: grid; gap: 12px; }
@@ -163,8 +156,6 @@ footer.band { padding: 120px 24px 32px; text-align: center; }
   .card { min-height: 0; }
   .card .dot { padding-bottom: 28px; }
   .timecode { gap: 14px; flex-wrap: wrap; }
-  .note.narrow { display: block; }
-  .stage { min-height: 380px; }
 }
 
 /* The name next to the mark, as text: the product is Creatro (creatro.in). The drawn wordmark in

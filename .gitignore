@@ -44,3 +44,4 @@ voices/
 
 # The website demo plays this one clip (website/make-sample.ts), so the site can deploy from git.
 !website/public/sample/video.mp4
+!website/public/film/creatro-launch.mp4
