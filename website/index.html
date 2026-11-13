@@ -6,11 +6,21 @@
     <title>Creatro: Cursor for video</title>
     <meta name="description" content="Describe the edit, pick any AI model, get a finished video. Creatro renders on your Mac and your footage never leaves it." />
     <link rel="canonical" href="https://creatro.in/" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Creatro" />
     <meta property="og:title" content="Creatro: Cursor for video" />
-    <meta property="og:description" content="Describe the edit, pick any AI model, get a finished video. Renders on your Mac." />
+    <meta property="og:description" content="Describe the edit, pick any AI model, get a finished video. Renders on your Mac; your footage never leaves it." />
+    <meta property="og:image" content="https://creatro-opal.vercel.app/share.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Creatro: Cursor for video" />
+    <meta name="twitter:description" content="Describe the edit, pick any AI model, get a finished video. Renders on your Mac; your footage never leaves it." />
+    <meta name="twitter:image" content="https://creatro-opal.vercel.app/share.png" />
     <meta property="og:url" content="https://creatro.in/" />
-    <meta property="og:image" content="https://creatro.in/brand/app-icon-1024.png" />
+    <!-- Vercel Web Analytics: no cookies, counts visits once it is switched on in the Vercel project. -->
+    <script defer src="/_vercel/insights/script.js"></script>
     <link rel="icon" href="./brand/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./brand/app-icon-180.png" />
     <link rel="stylesheet" href="./site.css" />
@@ -24,7 +34,7 @@
         <a href="#editor">Editor</a>
         <a href="#get">Get it</a>
       </nav>
-      <a class="btn" href="./login/">Sign in</a>
+      <a class="btn" href="#demo" data-run>Try it</a>
     </header>
 
     <main>
@@ -135,7 +145,7 @@
     <footer class="band ink">
       <nav class="foot-words">
         <a href="#demo">Demo</a>
-        <a href="./login/">Sign in</a>
+        <a href="https://github.com/kartikmeena149/CREATRON">GitHub</a>
         <a href="./brand/">Brand</a>
       </nav>
       <div class="foot-list mono">
@@ -169,7 +179,7 @@
         cover.replaceWith(Object.assign(document.createElement("iframe"), { src: "./demo/", title: "Creatro demo", allow: "autoplay; fullscreen" }));
       };
       document.getElementById("run").addEventListener("click", run);
-      document.querySelector("[data-run]").addEventListener("click", run);
+      for (const b of document.querySelectorAll("[data-run]")) b.addEventListener("click", run);
     </script>
   </body>
 </html>
