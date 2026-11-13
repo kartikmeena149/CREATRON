@@ -1,7 +1,7 @@
 // Position & Size: where the video sits in the frame. Scale, X/Y in output pixels, rotation.
 // Every control saves one undo step per gesture (checkpoint on press, live while moving).
 import { useEffect, useRef, useState } from "react";
-import { isIdentity, outputSize } from "../src/frame.ts";
+import { cropOf, isCropped, isIdentity, outputSize } from "../src/frame.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { useEditor } from "./store.ts";
 
@@ -86,7 +86,33 @@ export function PositionSize() {
         />
         <Dial value={t.rotate} onStart={checkpoint} onChange={(v) => set({ rotate: v })} />
       </div>
-      <p className="hint">Tip: drag the video in the viewer to move it.</p>
+
+      <div className="field-label">Crop</div>
+      <div className="crop-fields">
+        {(["left", "top", "right", "bottom"] as const).map((side) => (
+          <NumberField
+            key={side}
+            prefix={side[0].toUpperCase()}
+            value={cropOf(t)[side] * 100}
+            format={(v) => `${Math.round(v)}%`}
+            step={1}
+            onStart={checkpoint}
+            onChange={(v) => {
+              const c = cropOf(useEditor.getState().plan.transform);
+              const other = side === "left" ? c.right : side === "right" ? c.left : side === "top" ? c.bottom : c.top;
+              set({ crop: { ...c, [side]: clamp(v / 100, 0, 0.95 - other) } });
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="field-row pos-actions">
+        <button className={t.flip ? "on" : ""} aria-pressed={Boolean(t.flip)} title="Mirror the picture left to right"
+          onClick={() => commit({ ...plan, transform: { ...t, flip: !t.flip } })}>⇋ Flip</button>
+        <button disabled={!isCropped(t)} title="Bring back the whole picture"
+          onClick={() => commit({ ...plan, transform: { ...t, crop: undefined } })}>Uncrop</button>
+      </div>
+      <p className="hint">In the viewer: drag the picture to move it, a corner to size it, an edge bar to crop that side, and just outside a corner to turn it. Hold ⌘ to move without snapping.</p>
     </section>
   );
 }

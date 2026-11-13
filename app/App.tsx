@@ -1,6 +1,7 @@
 import { Component, type ReactNode, useEffect, useState } from "react";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { FramePicker } from "./FramePicker.tsx";
+import { Dashboard, closeHome, openHome, useHome } from "./Dashboard.tsx";
 import { Orb } from "./Orb.tsx";
 import { CreatorQuote } from "./Quotes.tsx";
 import { AIPanel } from "./AIPanel.tsx";
@@ -32,6 +33,7 @@ export function App() {
   const [sizes, setSizes] = useLayoutSizes();
   // A multi-selection shows its own panel even when the left panel was hidden.
   const leftOpen = useEditor((s) => s.leftView !== null || s.picked.length + s.pickedIds.length > 1);
+  const home = useHome((h) => h.view);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
   // Fonts edits brought into Creatron, ready for captions and the preview.
@@ -77,6 +79,7 @@ export function App() {
     // A tab that already has a video keeps it: the new one opens in its own tab.
     if (useEditor.getState().project && !here) useTabs.getState().add();
     load({ path, ...r.value });
+    closeHome();
     return true;
   };
 
@@ -92,7 +95,8 @@ export function App() {
     >
       <TopBar
         aiOpen={aiOpen} onToggleAi={() => setAiOpen(!aiOpen)} />
-      <div className="body" style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${sizes.ai}px` : "minmax(0, 1fr)" }}>
+      {home && <Dashboard onOpenVideo={(p) => open(p)} />}
+      <div className="body" hidden={Boolean(home)} style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${sizes.ai}px` : "minmax(0, 1fr)" }}>
         <div className="editor" style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${sizes.timeline}px` }}>
           <div className="workspace">
             <Rail />
@@ -154,6 +158,7 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   return (
     <header className="topbar">
       <div className="brand" title="Creatron"><Orb size={16} still /> Creatron</div>
+      <HomeTab />
       <ProjectTabs />
       <div className="grow" />
       {project && (
@@ -173,8 +178,20 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   );
 }
 
+/** The Dashboard, as the first tab. */
+function HomeTab() {
+  const home = useHome((h) => h.view);
+  return (
+    <button className={`doc-tab home-tab ${home ? "on" : ""}`} title="Dashboard: start a video, open projects, connect your AI" onClick={() => (home ? closeHome() : openHome())}>
+      <Icon name="grid" size={14} />
+      <span>Home</span>
+    </button>
+  );
+}
+
 function ProjectTabs() {
   const { tabs, active, add, switchTo, close } = useTabs();
+  const home = useHome((h) => h.view);
   const live = useEditor((s) => s.project);
   const locked = useEditor((s) => s.busy || s.exporting !== null);
   // Keep the open tab in view when there are more tabs than fit.
@@ -188,9 +205,9 @@ function ProjectTabs() {
         return (
           <div
             key={t.id}
-            className={`doc-tab ${t.id === active ? "on" : ""}`}
+            className={`doc-tab ${t.id === active && !home ? "on" : ""}`}
             title={locked && t.id !== active ? "Wait for the AI or export to finish" : project?.analysis.source}
-            onClick={() => switchTo(t.id)}
+            onClick={() => (switchTo(t.id), closeHome())}
           >
             {project ? <video className="doc-thumb" src={`${project.videoUrl}#t=1`} muted preload="metadata" /> : <Icon name="video" size={14} />}
             <span>{name}</span>
@@ -199,7 +216,7 @@ function ProjectTabs() {
         );
       })}
     </div>
-    <button className="icon-btn" title="New tab (⌘T)" disabled={locked} onClick={add}><Icon name="plus" /></button>
+    <button className="icon-btn" title="New tab (⌘T)" disabled={locked} onClick={() => (add(), closeHome())}><Icon name="plus" /></button>
     </>
   );
 }

@@ -4,6 +4,7 @@
 // that folder (no commands, no internet). Creatron then checks the work, sends back problems, and
 // shows Claude real frames of its animations over the video so it can fix what looks wrong.
 import { spawn } from "node:child_process";
+import { signInProblem } from "./chatTypes.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -216,9 +217,10 @@ function claude(dir: string, model: string, prompt: string, session?: string): P
       try {
         out = JSON.parse(stdout);
       } catch {
-        return fail(new Error(`Claude error: ${(stderr || stdout).trim().slice(0, 300)}`));
+        const raw = (stderr || stdout).trim();
+        return fail(new Error(signInProblem(raw) ?? `Claude error: ${raw.slice(0, 300)}`));
       }
-      if (out.is_error) return fail(new Error(`Claude ${out.api_error_status ?? "error"}: ${out.result ?? "unknown error"}`));
+      if (out.is_error) return fail(new Error(signInProblem(String(out.result ?? "")) ?? `Claude ${out.api_error_status ?? "error"}: ${out.result ?? "unknown error"}`));
       ok({ text: String(out.result ?? "").trim(), session: out.session_id });
     });
     child.stdin.end(prompt);

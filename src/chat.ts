@@ -2,14 +2,16 @@
 // wait after the first), streaming everything it does so the chat can show it as it happens: its
 // words, its thinking, each file it reads or edits, and the timeline changing under it. When a choice
 // is the user's, Claude ends its turn with a question card; the answer goes into the same session.
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { GUIDE, check, markerFrames, prepare } from "./agent.ts";
 import { agentDir } from "./customcode.ts";
 import { type Focus, describeFocus } from "./plan.ts";
 import { type Analysis, EditPlan } from "./schema.ts";
+import { signInProblem } from "./chatTypes.ts";
+import { cleanEnv } from "./agents.ts";
 import { type Orientation, resolveStockBroll } from "./stock.ts";
 import { resolveSounds } from "./sfx.ts";
 import { outputSize } from "./frame.ts";
@@ -39,13 +41,18 @@ don't guess: ask, and stop. End your reply with exactly one block like this and 
 comes as the next message. Ask at most once per request, and only when it matters; small things, just do.
 `;
 
+/** Claude (Claude Code) keeps one process open per video; ChatGPT (Codex) runs one process per message. */
 type Session = {
   source: string;
-  child: ChildProcessWithoutNullStreams;
+  kind: "claude" | "codex";
+  child?: ChildProcess;
   model: string;
   id?: string;
   emit: (e: ChatEvent) => void;
   turn?: Turn;
+  send: (text: string) => void;
+  /** Codex starts fresh each message: the last few exchanges go with the next one. */
+  history: string[];
 };
 
 /** One request in flight: what the session is collecting until Claude's turn ends. */
@@ -75,17 +82,22 @@ export async function chat(
   opts: { focus?: Focus; answer?: boolean } = {},
 ): Promise<void> {
   const dir = agentDir(analysis.source);
-  const claudeModel = model.replace(/^claude-code\//, "");
+  const kind = model.startsWith("codex/") ? "codex" : "claude";
+  const agentModel = model.replace(/^(claude-code|codex)\//, "");
   let s = sessions.get(analysis.source);
-  if (s && (s.model !== claudeModel || s.child.exitCode !== null)) (stop(analysis.source), (s = undefined));
-  const first = !s && !resumeIds.has(analysis.source);
+  if (s && (s.model !== agentModel || s.kind !== kind || (kind === "claude" && s.child?.exitCode !== null))) (stop(analysis.source), (s = undefined));
+  // Claude resumes its own conversation; Codex gets the video every time (it starts fresh).
+  const first = kind === "codex" || (!s && !resumeIds.has(analysis.source));
   // The timeline as it is now (the user may have changed it by hand since the last message).
   prepare(dir, analysis, current);
-  if (!s) s = start(analysis.source, dir, claudeModel, emit);
+  if (kind === "codex") writeFileSync(join(dir, "AGENTS.md"), GUIDE + CHAT_RULES);
+  if (!s) s = kind === "codex" ? startCodex(analysis.source, dir, agentModel, emit) : start(analysis.source, dir, agentModel, emit);
   s.emit = emit;
 
   const pictures = opts.focus?.markers?.length ? await markerFrames(dir, analysis, current, opts.focus.markers) : [];
   const content = [
+    kind === "codex" && s.history.length ? `Earlier in this chat:\n${s.history.join("\n")}\n` : "",
+    kind === "codex" ? "Follow AGENTS.md (the editing guide and the chat rules). Work only in this folder." : "",
     opts.answer ? `My answer: ${message}` : `REQUEST: ${message}`,
     opts.focus ? describeFocus(current, opts.focus) : "",
     pictures.length ? `\nWhat I'm pointing at (Read each image; the red box is the spot I clicked):\n${pictures.join("\n")}` : "",
@@ -99,7 +111,7 @@ export async function chat(
   emit({ type: "start" });
   await new Promise<void>((resolve) => {
     s!.turn = { analysis, current, focus: opts.focus, text: "", changed: false, fixes: 0, blocks: new Map(), steps: new Map(), resolve };
-    send(s!, content);
+    s!.send(content);
   });
 }
 
@@ -108,7 +120,7 @@ export function stop(source: string) {
   const s = sessions.get(source);
   if (!s) return;
   sessions.delete(source);
-  s.child.kill();
+  s.child?.kill();
   if (s.turn) (s.emit({ type: "done", changed: s.turn.changed }), s.turn.resolve(), (s.turn = undefined));
 }
 
@@ -126,11 +138,11 @@ function start(source: string, dir: string, model: string, emit: (e: ChatEvent) 
     ...(resume ? ["--resume", resume] : []),
   ];
   const child = spawn("claude", args, { env, cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
-  const s: Session = { source, child, model, emit };
+  const s: Session = { source, kind: "claude", child, model, emit, history: [], send: (text) => child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n") };
   sessions.set(source, s);
   let buf = "";
   let err = "";
-  child.stdout.on("data", (d) => {
+  child.stdout!.on("data", (d) => {
     buf += d;
     let nl;
     while ((nl = buf.indexOf("\n")) >= 0) {
@@ -145,11 +157,11 @@ function start(source: string, dir: string, model: string, emit: (e: ChatEvent) 
       }
     }
   });
-  child.stderr.on("data", (d) => (err += d));
+  child.stderr!.on("data", (d) => (err += d));
   child.on("close", () => {
     if (sessions.get(source) === s) sessions.delete(source);
     if (!s.turn) return;
-    const msg = /not logged in/i.test(err + buf) ? "Claude isn't signed in on this Mac yet. Open Terminal, type claude, then /login." : `Claude stopped: ${(err || buf).trim().slice(0, 300) || "no reply"}`;
+    const msg = signInProblem(err + buf) ?? `Claude stopped: ${(err || buf).trim().slice(0, 300) || "no reply"}`;
     s.emit({ type: "error", error: msg });
     s.turn.resolve();
     s.turn = undefined;
@@ -158,7 +170,90 @@ function start(source: string, dir: string, model: string, emit: (e: ChatEvent) 
   return s;
 }
 
-const send = (s: Session, text: string) => s.child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n");
+/**
+ * ChatGPT through OpenAI's Codex app: each message (and each fix after Creatron's check) is one
+ * `codex exec` run in the video's folder, signed in with the user's ChatGPT plan. It reads AGENTS.md
+ * and edits plan.json like Claude does; its JSON events become the same chat steps.
+ */
+function startCodex(source: string, dir: string, model: string, emit: (e: ChatEvent) => void): Session {
+  const s: Session = { source, kind: "codex", model, emit, history: [], send: (text) => runCodex(s, dir, text) };
+  sessions.set(source, s);
+  return s;
+}
+
+function runCodex(s: Session, dir: string, prompt: string) {
+  const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "-C", dir, ...(s.model !== "default" ? ["--model", s.model] : []), "-"];
+  const child = spawn("codex", args, { env: cleanEnv(), cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
+  s.child = child;
+  const request = prompt.match(/^(REQUEST|My answer): (.*)$/m)?.[0];
+  let buf = "";
+  let err = "";
+  let ended = false;
+  child.stdout.on("data", (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let e: any;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (e.type === "turn.completed" || e.type === "turn.failed" || e.type === "error") ended = true;
+      onCodexEvent(s, dir, e);
+    }
+  });
+  child.stderr.on("data", (d) => (err += d));
+  child.on("close", () => {
+    if (s.turn && request) s.history = [...s.history, `You were asked: ${request}`, `You answered: ${s.turn.text.trim().slice(0, 400)}`].slice(-6);
+    if (ended || !s.turn) return;
+    s.emit({ type: "error", error: signInProblem(err + buf, "ChatGPT") ?? `ChatGPT stopped: ${(err || buf).trim().slice(0, 300) || "no reply"}` });
+    s.turn.resolve();
+    s.turn = undefined;
+  });
+  child.on("error", (e) => s.turn && (s.emit({ type: "error", error: `Couldn't start Codex: ${e.message}` }), s.turn.resolve(), (s.turn = undefined)));
+  child.stdin.end(prompt);
+}
+
+/** One line of `codex exec --json`: thread / turn / item events. */
+function onCodexEvent(s: Session, dir: string, e: any) {
+  const t = s.turn;
+  if (e.type === "thread.started") s.id = e.thread_id;
+  if (!t) return;
+  const item = e.item ?? {};
+  const id = `codex-${item.id ?? Date.now()}`;
+  if (e.type === "item.started" || e.type === "item.completed") {
+    const done = e.type === "item.completed";
+    if (item.type === "agent_message" && done && item.text) {
+      const delta = (t.text && !t.text.endsWith("\n\n") ? "\n\n" : "") + item.text;
+      t.text += delta;
+      s.emit({ type: "text", delta });
+    } else if (item.type === "reasoning") {
+      step(s, { id, icon: "think", label: "Thought it through", running: "Thinking", status: done ? "done" : "running" });
+    } else if (item.type === "command_execution") {
+      const failed = done && typeof item.exit_code === "number" && item.exit_code !== 0;
+      const what = /\b(cat|sed|head|tail|less|rg|grep|ls|find)\b/.test(String(item.command ?? "")) ? { icon: "read" as const, label: "Read the project", running: "Reading the project" } : { icon: "code" as const, label: "Ran a command", running: "Running a command" };
+      step(s, { id, ...what, status: !done ? "running" : failed ? "failed" : "done", ...(failed ? { icon: "fail" as const } : {}) });
+    } else if (item.type === "file_change") {
+      const path = String(item.changes?.[0]?.path ?? "");
+      step(s, { id, status: done ? (item.status === "failed" ? "failed" : "done") : "running", ...describeTool("Edit", { file_path: path }) });
+      if (done && (item.changes ?? []).some((c: any) => String(c.path).endsWith("plan.json"))) livePlan(s, dir);
+    }
+    return;
+  }
+  if (e.type === "turn.completed") {
+    // Codex may have edited plan.json with a command rather than a file change: look once more.
+    try {
+      if (readFileSync(join(dir, "plan.json"), "utf8") !== JSON.stringify(t.current, null, 2)) livePlan(s, dir);
+    } catch {}
+    void finish(s, dir, { is_error: false });
+  } else if (e.type === "turn.failed" || e.type === "error") {
+    void finish(s, dir, { is_error: true, result: e.error?.message ?? e.message ?? "unknown error", api_error_status: "error" });
+  }
+}
 
 /** One line of Claude's stream-json output. */
 function onEvent(s: Session, dir: string, e: any) {
@@ -233,7 +328,7 @@ function livePlan(s: Session, dir: string) {
 async function finish(s: Session, dir: string, result: any) {
   const t = s.turn!;
   if (result.is_error) {
-    s.emit({ type: "error", error: `Claude ${result.api_error_status ?? "error"}: ${result.result ?? "unknown error"}` });
+    s.emit({ type: "error", error: signInProblem(String(result.result ?? ""), s.kind === "codex" ? "ChatGPT" : "Claude") ?? `${s.kind === "codex" ? "ChatGPT" : "Claude"} ${result.api_error_status ?? "error"}: ${result.result ?? "unknown error"}` });
     s.turn = undefined;
     return t.resolve();
   }
@@ -245,7 +340,7 @@ async function finish(s: Session, dir: string, result: any) {
     if (problems.length && t.fixes < 2) {
       t.fixes++;
       step(s, { id, icon: "fail", label: `Found ${problems.length} problem${problems.length > 1 ? "s" : ""} to fix`, running: "", status: "failed" });
-      send(s, `Creatron checked your work and found problems. Fix them, then reply again in one sentence:\n- ${problems.join("\n- ")}`);
+      s.send(`Creatron checked your work and found problems. Fix them, then reply again in one sentence:\n- ${problems.join("\n- ")}`);
       return;
     }
     step(s, { id, icon: "check", label: problems.length ? "Checked the edit (some problems left)" : "Checked the edit", running: "", status: problems.length ? "failed" : "done" });

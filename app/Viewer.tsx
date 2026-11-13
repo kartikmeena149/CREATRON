@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaptionOverlay } from "./CaptionOverlay.tsx";
 import { CaptionToolbar } from "./CaptionToolbar.tsx";
-import { pictureSize, placeBox, placement } from "../src/frame.ts";
+import { cropBox, cropOf, isIdentity, pictureSize, placeBox, placement } from "../src/frame.ts";
 import { buildCues, clipStarts, editDuration, outputDuration } from "../src/timeline.ts";
 import { MotionPreview } from "./MotionPreview.tsx";
 import { locate, useEditor } from "./store.ts";
@@ -156,6 +156,41 @@ export function Viewer() {
   useEffect(() => void (anyBehind && !cutoutUrl && useEditor.getState().prepareCutout()), [anyBehind, cutoutUrl]);
   const place = placement(plan, a ? pictureSize(a).width : 16, a ? pictureSize(a).height : 9, frameSize.w, frameSize.h);
   const mainSelected = useEditor((s) => s.selected !== null && s.selectedPart === "picture" && s.selectedBroll === null) && Boolean(a?.width);
+  // The crop cuts the picture's own edges (as a clip on its box, like the export's crop filter).
+  const crop = cropOf(plan.transform);
+  const clip = crop.left || crop.top || crop.right || crop.bottom
+    ? `inset(${crop.top * 100}% ${crop.right * 100}% ${crop.bottom * 100}% ${crop.left * 100}%)` : undefined;
+  const [guides, setGuides] = useState({ x: false, y: false });
+
+  /**
+   * Where a move lands after snapping: the kept part's middle within SNAP px of the frame's centre
+   * lines goes onto them, and an unturned picture's edges within SNAP px of the frame's edges go
+   * onto those. Says which centre line it snapped to, for the guides.
+   */
+  const snapMove = (start: typeof plan, x: number, y: number) => {
+    const SNAP = 6;
+    const W = frameSize.w;
+    const H = frameSize.h;
+    const base = placement({ ...start, transform: { ...start.transform, x: 0, y: 0 } }, pictureSize(a!).width, pictureSize(a!).height, W, H);
+    const kept0 = cropBox(base, cropOf(start.transform)); // where the kept part is with no shift
+    const offX = kept0.cx - W / 2;
+    const offY = kept0.cy - H / 2;
+    let cx = false;
+    let cy = false;
+    const midX = W / 2 + x * W + offX;
+    const midY = H / 2 + y * H + offY;
+    if (Math.abs(midX - W / 2) < SNAP) (x = -offX / W), (cx = true);
+    else if (!start.transform.rotate) {
+      for (const edge of [midX - kept0.w / 2, midX + kept0.w / 2 - W])
+        if (Math.abs(edge) < SNAP) { x -= edge / W; break; }
+    }
+    if (Math.abs(midY - H / 2) < SNAP) (y = -offY / H), (cy = true);
+    else if (!start.transform.rotate) {
+      for (const edge of [midY - kept0.h / 2, midY + kept0.h / 2 - H])
+        if (Math.abs(edge) < SNAP) { y -= edge / H; break; }
+    }
+    return { x, y, cx, cy };
+  };
 
   // Drag the picture to move it, like in a phone editor. One undo step per drag.
   const [dragging, setDragging] = useState(false);
@@ -175,30 +210,36 @@ export function Viewer() {
         setDragging(true);
       }
       const clamp = (v: number) => Math.max(-1, Math.min(1, v));
-      live({
-        ...start,
-        transform: {
-          ...start.transform,
-          x: clamp(start.transform.x + (ev.clientX - x0) / frameSize.w),
-          y: clamp(start.transform.y + (ev.clientY - y0) / frameSize.h),
-        },
-      });
+      let x = clamp(start.transform.x + (ev.clientX - x0) / frameSize.w);
+      let y = clamp(start.transform.y + (ev.clientY - y0) / frameSize.h);
+      // Snapping (hold ⌘ to place freely): the kept part's middle onto the frame's centre lines and,
+      // when the picture isn't turned, its edges onto the frame's edges.
+      const snapped = snapMove(start, x, y);
+      if (!ev.metaKey) (x = snapped.x), (y = snapped.y);
+      setGuides(ev.metaKey ? { x: false, y: false } : { x: snapped.cx, y: snapped.cy });
+      live({ ...start, transform: { ...start.transform, x, y } });
     };
     const up = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", up);
       setDragging(false);
+      setGuides({ x: false, y: false });
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", up);
   };
+
+  // Moving or sizing a picture shows all of it, like a pro editor: what falls outside the frame
+  // stays visible under a dark veil, so you can see where it is. The export only keeps the frame.
+  const brollSelected = useEditor((s) => s.selectedBroll !== null);
+  const reveal = (mainSelected && time < mainEnd) || dragging || brollSelected;
 
   if (!project) return <div className="viewer" />;
   return (
     <div className="viewer">
       <div className="viewer-stage" ref={stage}>
         <div
-          className={`viewer-frame ${dragging ? "dragging" : ""}`}
+          className={`viewer-frame ${dragging ? "dragging" : ""} ${reveal ? "reveal" : ""}`}
           ref={frame}
           style={{ aspectRatio: String(ratio) }}
           onPointerDown={startDrag}
@@ -216,6 +257,7 @@ export function Viewer() {
               left: place.cx - place.w / 2,
               top: place.cy - place.h / 2,
               transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined,
+              clipPath: clip,
             }}
           >
             <video
@@ -223,17 +265,21 @@ export function Viewer() {
               src={project.videoUrl}
               crossOrigin="anonymous"
               preload="auto"
-              style={{ transform: seg && seg.zoom > 1 ? `scale(${seg.zoom})` : undefined }}
+              style={{ transform: pictureTransform(seg?.zoom ?? 1, plan.transform.flip) }}
             />
           </div>
           <BrollLayer broll={shown.broll} time={time} playing={playing} frame={frameSize} overlay={overlay} />
+          {reveal && <div className="frame-veil" aria-hidden="true" />}
+          {guides.x && <div className="snap-guide v" />}
+          {guides.y && <div className="snap-guide h" />}
           {/* The main video's box while its clip is selected: corners resize it, dragging moves it. */}
           {mainSelected && time < mainEnd && frameSize.w > 0 && overlay && (
-            <SizeBox overlay={overlay} place={place} frame={frameSize} t={plan.transform} onStart={() => useEditor.getState().checkpoint()}
+            <SizeBox overlay={overlay} place={place} frame={frameSize} t={plan.transform} moving={dragging} cropping
+              onStart={() => useEditor.getState().checkpoint()}
               onChange={(t) => {
                 const s = useEditor.getState();
                 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-                s.live({ ...s.plan, transform: { ...s.plan.transform, scale: clamp(t.scale, 0.1, 3), x: clamp(t.x, -1, 1), y: clamp(t.y, -1, 1), rotate: t.rotate } });
+                s.live({ ...s.plan, transform: { ...s.plan.transform, scale: clamp(t.scale, 0.1, 3), x: clamp(t.x, -1, 1), y: clamp(t.y, -1, 1), rotate: t.rotate, ...(t.crop ? { crop: t.crop } : {}) } });
               }} />
           )}
           {/* Animated captions are drawn by the Remotion layer; the caption here is then an invisible
@@ -251,9 +297,10 @@ export function Viewer() {
                 left: place.cx - place.w / 2,
                 top: place.cy - place.h / 2,
                 transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined,
+                clipPath: clip,
               }}
             >
-              <CutoutVideo url={cutoutUrl} main={video} zoom={seg?.zoom ?? 1} />
+              <CutoutVideo url={cutoutUrl} main={video} zoom={seg?.zoom ?? 1} flip={plan.transform.flip} />
             </div>
           )}
           {/* Markers near the playhead (all of them while pointing), numbered like in the AI box. */}
@@ -283,6 +330,12 @@ export function Viewer() {
         </div>
         <div className="frame-overlay" ref={setOverlay}
           style={frame.current ? { left: frame.current.offsetLeft, top: frame.current.offsetTop, width: frameSize.w, height: frameSize.h } : undefined} />
+        {mainSelected && !isIdentity(plan.transform) && (
+          <button className="viewer-reset" title="Put the picture back: no move, size, turn, crop or flip"
+            onClick={() => { const s = useEditor.getState(); s.commit({ ...s.plan, transform: { scale: 1, x: 0, y: 0, rotate: 0 } }); }}>
+            ↺ Reset
+          </button>
+        )}
         <CaptionToolbar stage={stage} />
       </div>
     </div>
@@ -290,7 +343,7 @@ export function Viewer() {
 }
 
 /** The see-through person, kept on the same frame as the main video (it plays muted alongside it). */
-function CutoutVideo({ url, main, zoom }: { url: string; main: React.RefObject<HTMLVideoElement | null>; zoom: number }) {
+function CutoutVideo({ url, main, zoom, flip }: { url: string; main: React.RefObject<HTMLVideoElement | null>; zoom: number; flip?: boolean }) {
   const el = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     let raf = 0;
@@ -308,7 +361,7 @@ function CutoutVideo({ url, main, zoom }: { url: string; main: React.RefObject<H
     raf = requestAnimationFrame(sync);
     return () => cancelAnimationFrame(raf);
   }, [main]);
-  return <video ref={el} src={url} muted preload="auto" style={{ transform: zoom > 1 ? `scale(${zoom})` : undefined }} />;
+  return <video ref={el} src={url} muted preload="auto" style={{ transform: pictureTransform(zoom, flip) }} />;
 }
 
 /** Routes the preview's sound through the same voice tweaks the export applies. */
@@ -473,60 +526,106 @@ function moveBroll(e: React.PointerEvent, b: Broll, frame: { w: number; h: numbe
   window.addEventListener("pointerup", up);
 }
 
+/** The picture's own CSS transform: the clip's punch-in zoom, mirrored when flipped. */
+function pictureTransform(zoom: number, flip?: boolean): string | undefined {
+  const parts = [zoom > 1 ? `scale(${zoom})` : "", flip ? "scaleX(-1)" : ""].filter(Boolean);
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+type Crop = { left: number; top: number; right: number; bottom: number };
+type Edge = "left" | "top" | "right" | "bottom";
+
 /**
- * The selected picture's box: a square outline with a handle on each corner and a rotate handle
- * above it. Drag a corner to resize it (its shape kept) while the opposite corner stays put; drag
- * the rotate handle to turn it (snaps to straight angles, ⇧ for 15° steps); drag the picture
- * itself to move it.
+ * The selected picture's box, like a pro editor's transform box. It outlines what's kept of the
+ * picture (after its crop). Corners resize it, its shape kept, while the opposite corner stays put;
+ * the bars on its edges crop that side (the picture stays where it is, only the edge moves in);
+ * dragging just outside a corner, or the handle on top, turns it (snaps to straight angles, ⇧ for
+ * 15° steps). While anything is being dragged a rule-of-thirds grid shows inside it.
  */
-function SizeBox({ overlay, place, frame, t, onStart, onChange }: {
+function SizeBox({ overlay, place, frame, t, moving, cropping, onStart, onChange }: {
   overlay: HTMLDivElement;
   place: { w: number; h: number; cx: number; cy: number };
   frame: { w: number; h: number };
-  t: { scale?: number; x?: number; y?: number; rotate?: number };
+  t: { scale?: number; x?: number; y?: number; rotate?: number; crop?: Partial<Crop> };
+  moving?: boolean;
+  cropping?: boolean;
   onStart: () => void;
-  onChange: (t: { scale: number; x: number; y: number; rotate: number }) => void;
+  onChange: (t: { scale: number; x: number; y: number; rotate: number; crop?: Crop }) => void;
 }) {
   const [turning, setTurning] = useState<number | null>(null);
+  const [active, setActive] = useState<null | "size" | "crop" | "turn">(null);
   const deg = t.rotate ?? 0;
   const rad = (deg * Math.PI) / 180;
-  // A point in the box's own (unrotated) frame, offset from its middle, turned onto the frame.
+  const c: Crop = cropOf(t);
+  // A point in the box's own (unrotated) frame, offset from its middle, turned onto the frame; and back.
   const turn = (dx: number, dy: number) => [dx * Math.cos(rad) - dy * Math.sin(rad), dx * Math.sin(rad) + dy * Math.cos(rad)];
-  const drag = (e: React.PointerEvent, move: (x: number, y: number, ev: PointerEvent) => void, up?: () => void) => {
+  const unturn = (dx: number, dy: number) => [dx * Math.cos(rad) + dy * Math.sin(rad), -dx * Math.sin(rad) + dy * Math.cos(rad)];
+  // The kept part's edges, in the picture's own frame (its middle at 0, 0).
+  const L = -place.w / 2 + c.left * place.w;
+  const R = place.w / 2 - c.right * place.w;
+  const T = -place.h / 2 + c.top * place.h;
+  const B = place.h / 2 - c.bottom * place.h;
+  const [kdx, kdy] = turn((L + R) / 2, (T + B) / 2);
+  const kept = { w: R - L, h: B - T, cx: place.cx + kdx, cy: place.cy + kdy };
+
+  const drag = (e: React.PointerEvent, kind: "size" | "crop" | "turn", move: (x: number, y: number, ev: PointerEvent) => void, up?: () => void) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     const fr = overlay.getBoundingClientRect(); // lined up with the frame
     let started = false;
     const onMove = (ev: PointerEvent) => {
-      if (!started) (started = true), onStart();
+      if (!started) (started = true), onStart(), setActive(kind);
       move(ev.clientX - fr.left, ev.clientY - fr.top, ev);
     };
-    const onUp = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", onUp), up?.());
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setActive(null);
+      up?.();
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return fr;
   };
 
   const resize = (corner: "nw" | "ne" | "sw" | "se") => (e: React.PointerEvent) => {
-    const sx = corner.endsWith("e") ? 1 : -1;
-    const sy = corner.startsWith("s") ? 1 : -1;
-    // The opposite corner (on the frame, rotation included) stays where it is.
-    const [ox, oy] = turn((-sx * place.w) / 2, (-sy * place.h) / 2);
-    const ax = place.cx + ox;
-    const ay = place.cy + oy;
+    // The kept part's opposite corner (on the frame, rotation included) stays where it is.
+    const ox = corner.endsWith("e") ? L : R;
+    const oy = corner.startsWith("s") ? T : B;
+    const [ax0, ay0] = turn(ox, oy);
+    const ax = place.cx + ax0;
+    const ay = place.cy + ay0;
     const s0 = t.scale ?? 1;
     let d0 = 0;
-    const fr = drag(e, (x, y) => {
+    const fr = drag(e, "size", (x, y) => {
       const k = Math.max(0.05 / s0, Math.min(5 / s0, Math.hypot(x - ax, y - ay) / d0));
-      const [hx, hy] = turn((sx * place.w * k) / 2, (sy * place.h * k) / 2);
-      onChange({ scale: s0 * k, x: (ax + hx - frame.w / 2) / frame.w, y: (ay + hy - frame.h / 2) / frame.h, rotate: deg });
+      const [hx, hy] = turn(ox * k, oy * k);
+      onChange({ scale: s0 * k, x: (ax - hx - frame.w / 2) / frame.w, y: (ay - hy - frame.h / 2) / frame.h, rotate: deg });
     });
     if (fr) d0 = Math.max(4, Math.hypot(e.clientX - fr.left - ax, e.clientY - fr.top - ay));
   };
 
+  const cropEdge = (edge: Edge) => (e: React.PointerEvent) => {
+    if (!cropping) return;
+    drag(e, "crop", (x, y) => {
+      const [px, py] = unturn(x - place.cx, y - place.cy);
+      const next = { ...c };
+      const MIN = 0.05; // never crop the picture away entirely
+      if (edge === "left") next.left = Math.max(0, Math.min(1 - c.right - MIN, (px + place.w / 2) / place.w));
+      if (edge === "right") next.right = Math.max(0, Math.min(1 - c.left - MIN, (place.w / 2 - px) / place.w));
+      if (edge === "top") next.top = Math.max(0, Math.min(1 - c.bottom - MIN, (py + place.h / 2) / place.h));
+      if (edge === "bottom") next.bottom = Math.max(0, Math.min(1 - c.top - MIN, (place.h / 2 - py) / place.h));
+      // Within a few pixels of the picture's own edge it lets go of the crop.
+      for (const k of ["left", "right"] as const) if (next[k] * place.w < 4) next[k] = 0;
+      for (const k of ["top", "bottom"] as const) if (next[k] * place.h < 4) next[k] = 0;
+      const round = (v: number) => Math.round(v * 1000) / 1000;
+      onChange({ scale: t.scale ?? 1, x: t.x ?? 0, y: t.y ?? 0, rotate: deg, crop: { left: round(next.left), top: round(next.top), right: round(next.right), bottom: round(next.bottom) } });
+    });
+  };
+
   const rotate = (e: React.PointerEvent) => {
     let a0 = 0;
-    const fr = drag(e, (x, y, ev) => {
+    const fr = drag(e, "turn", (x, y, ev) => {
       let next = deg + ((Math.atan2(y - place.cy, x - place.cx) - a0) * 180) / Math.PI;
       next = ((((next + 180) % 360) + 360) % 360) - 180; // -180…180
       if (ev.shiftKey) next = Math.round(next / 15) * 15;
@@ -537,16 +636,34 @@ function SizeBox({ overlay, place, frame, t, onStart, onChange }: {
     if (fr) a0 = Math.atan2(e.clientY - fr.top - place.cy, e.clientX - fr.left - place.cx);
   };
 
+  const box = (b: { w: number; h: number; cx: number; cy: number }) =>
+    ({ left: b.cx - b.w / 2, top: b.cy - b.h / 2, width: b.w, height: b.h, transform: deg ? `rotate(${deg}deg)` : undefined });
+  const grid = Boolean(moving || active);
   return createPortal(
-    <div
-      className="size-box"
-      style={{ left: place.cx - place.w / 2, top: place.cy - place.h / 2, width: place.w, height: place.h, transform: deg ? `rotate(${deg}deg)` : undefined }}
-    >
-      {(["nw", "ne", "sw", "se"] as const).map((c) => <i key={c} className={`cap-handle ${c}`} onPointerDown={resize(c)} />)}
-      <i className="rotate-stem" />
-      <i className="rotate-handle" title="Drag to rotate (⇧ for 15° steps)" onPointerDown={rotate} />
-      {turning !== null && <span className="rotate-angle" style={{ transform: `rotate(${-deg}deg)` }}>{Math.round(turning)}°</span>}
-    </div>,
+    <>
+      {/* While cropping: the whole picture's outline, so you see what you're cutting from. */}
+      {active === "crop" && <div className="crop-full" style={box(place)} />}
+      <div className={`size-box ${grid ? "gridded" : ""}`} style={box(kept)}>
+        {grid && <i className="thirds" />}
+        {(["nw", "ne", "sw", "se"] as const).map((k) => (
+          <span key={k}>
+            <i className={`rot-zone ${k}`} title="Drag to rotate (⇧ for 15° steps)" onPointerDown={rotate} />
+            <i className={`cap-handle ${k}`} onPointerDown={resize(k)} />
+          </span>
+        ))}
+        {cropping && (["left", "top", "right", "bottom"] as const).map((k) => (
+          <i key={k} className={`crop-bar ${k}`} title="Drag to crop this side" onPointerDown={cropEdge(k)} />
+        ))}
+        <i className="rotate-stem" />
+        <i className="rotate-handle" title="Drag to rotate (⇧ for 15° steps)" onPointerDown={rotate} />
+        {turning !== null && <span className="rotate-angle" style={{ transform: `rotate(${-deg}deg)` }}>{Math.round(turning)}°</span>}
+        {active === "crop" && (
+          <span className="crop-read" style={{ transform: deg ? `rotate(${-deg}deg)` : undefined }}>
+            {Math.round(kept.w / frame.w * 100)}% × {Math.round(kept.h / frame.h * 100)}%
+          </span>
+        )}
+      </div>
+    </>,
     overlay,
   );
 }

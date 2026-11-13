@@ -50,6 +50,15 @@ const sample: Promise<Sample | undefined> = fetch(`${sampleDir}sample.json`)
   })
   .catch(() => undefined);
 
+const inBrowser = "Connect it in the Mac app. The browser demo can't sign in apps on your computer.";
+const demoConnections = {
+  claude: { installed: false, signedIn: false, error: inBrowser },
+  codex: { installed: false, signedIn: false, error: inBrowser },
+  openrouter: false,
+  enabled: { claude: true, codex: true },
+  install: { claude: "npm install -g @anthropic-ai/claude-code", codex: "npm install -g @openai/codex" },
+};
+
 const api: Api = {
   mediaUrl: (path) => urls.get(path) ?? path,
   pathForFile,
@@ -136,6 +145,15 @@ const api: Api = {
   onExportProgress: never,
   onAutoEdit: never,
   onAutoEditState: never,
+  // Connectors sign in apps on a Mac: the demo shows the page, with nothing to connect.
+  connections: async () => demoConnections,
+  agentSignIn: async () => demoConnections,
+  agentSignOut: async () => demoConnections,
+  agentInstall: async () => demoConnections,
+  agentCancel: async () => demoConnections,
+  agentEnable: async () => demoConnections,
+  setOpenRouterKey: async () => demoConnections,
+  onConnections: never,
   // A browser tab has no Mac window buttons: the top bar never keeps space for them.
   onFullScreen: (fn) => (fn(true), () => {}),
   // The editor listens here for "open this file": the demo uses it to open the sample once.

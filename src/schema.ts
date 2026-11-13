@@ -201,6 +201,16 @@ export const EditPlan = z.object({
       x: z.number().min(-1).max(1).default(0).describe("Horizontal shift as a fraction of frame width; negative = left"),
       y: z.number().min(-1).max(1).default(0).describe("Vertical shift as a fraction of frame height; negative = up"),
       rotate: z.number().min(-180).max(180).default(0).describe("Rotation in degrees, clockwise"),
+      crop: z
+        .object({
+          left: z.number().min(0).max(0.95).default(0),
+          top: z.number().min(0).max(0.95).default(0),
+          right: z.number().min(0).max(0.95).default(0),
+          bottom: z.number().min(0).max(0.95).default(0),
+        })
+        .optional()
+        .describe("Cut off the edges of the picture, as fractions of its width / height (0.1 = 10% off that side). The picture stays where it is; only its edges move in"),
+      flip: z.boolean().optional().describe("Mirror the picture left to right"),
     })
     .default({ scale: 1, x: 0, y: 0, rotate: 0 }),
   captions: z

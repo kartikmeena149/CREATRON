@@ -62,6 +62,14 @@ const api = {
   onExportProgress: on("export-progress"),
   onOpenPath: on("open-path"),
   onFullScreen: on("full-screen"),
+  connections: () => ipcRenderer.invoke("connections"),
+  agentSignIn: (id: string) => ipcRenderer.invoke("agent-sign-in", id),
+  agentSignOut: (id: string) => ipcRenderer.invoke("agent-sign-out", id),
+  agentInstall: (id: string) => ipcRenderer.invoke("agent-install", id),
+  agentCancel: (id: string) => ipcRenderer.invoke("agent-cancel", id),
+  agentEnable: (id: string, on: boolean) => ipcRenderer.invoke("agent-enable", id, on),
+  setOpenRouterKey: (key: string) => ipcRenderer.invoke("openrouter-key", key),
+  onConnections: on("connections"),
   // Launched with --creatron-debug (automated tests): the UI exposes its state for inspection.
   debug: process.argv.includes("--creatron-debug"),
 };

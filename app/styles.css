@@ -1090,7 +1090,7 @@ img.broll-layer { object-fit: cover; }
 .size-box .rotate-handle {
   position: absolute; left: 50%; top: -38px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; pointer-events: auto; cursor: grab;
   background: #fff; border: 1.5px solid var(--sel); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f8cff' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e5231b' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5'/%3E%3C/svg%3E");
   background-size: 11px; background-repeat: no-repeat; background-position: center;
 }
 .size-box .rotate-handle:active { cursor: grabbing; }
@@ -1427,3 +1427,136 @@ kbd, .tc, .tl-toolbar .tc, .cap-time, .xp-pct, .xp-specs, .slider .value, .num-b
 /* In the side panel the tiles wrap to the panel's width. */
 .inspector-wrap .fp-tiles { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
 .inspector-wrap .fp-tile { border-color: var(--line-soft); }
+
+/* Moving or sizing a picture: the frame stops clipping, so the whole picture shows. Everything
+   outside the frame sits under a dark veil and a hairline marks the frame's edge. The stage still
+   clips at its own edges. */
+.viewer-stage { overflow: hidden; }
+.viewer-frame.reveal { overflow: visible; }
+.frame-veil {
+  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  box-shadow: 0 0 0 100vmax rgba(14, 14, 14, 0.72);
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  animation: veil-in 0.18s ease-out;
+}
+@keyframes veil-in { from { box-shadow: 0 0 0 100vmax rgba(14, 14, 14, 1); } }
+
+/* The transform box, pro-editor style: crop bars on each edge, corners that size, a rotate zone just
+   outside each corner, a thirds grid while dragging, and the whole picture outlined while cropping. */
+.size-box .crop-bar { position: absolute; pointer-events: auto; background: #fff; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); z-index: 1; }
+.size-box .crop-bar.top, .size-box .crop-bar.bottom { left: 50%; width: 22px; height: 4px; margin-left: -11px; cursor: ns-resize; }
+.size-box .crop-bar.left, .size-box .crop-bar.right { top: 50%; height: 22px; width: 4px; margin-top: -11px; cursor: ew-resize; }
+.size-box .crop-bar.top { top: -2px; }
+.size-box .crop-bar.bottom { bottom: -2px; }
+.size-box .crop-bar.left { left: -2px; }
+.size-box .crop-bar.right { right: -2px; }
+.size-box .crop-bar::before { content: ""; position: absolute; inset: -8px; } /* a bigger grab area */
+.size-box .crop-bar:hover { background: var(--sel); }
+.size-box .rot-zone { position: absolute; width: 26px; height: 26px; pointer-events: auto; z-index: 0;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.3-5.7' stroke='black' stroke-width='4.2'/%3E%3Cpath d='M20 4v5h-5' stroke='black' stroke-width='4.2'/%3E%3Cpath d='M20 12a8 8 0 1 1-2.3-5.7'/%3E%3Cpath d='M20 4v5h-5'/%3E%3C/svg%3E") 11 11, grab; }
+.size-box .rot-zone.nw { left: -26px; top: -26px; }
+.size-box .rot-zone.ne { right: -26px; top: -26px; }
+.size-box .rot-zone.sw { left: -26px; bottom: -26px; }
+.size-box .rot-zone.se { right: -26px; bottom: -26px; }
+.size-box .cap-handle { z-index: 1; }
+.size-box .cap-handle.nw, .size-box .cap-handle.se { cursor: nwse-resize; }
+.size-box .cap-handle.ne, .size-box .cap-handle.sw { cursor: nesw-resize; }
+.size-box .thirds { position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to right, transparent calc(33.333% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.333% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px), transparent calc(66.666% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.666% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(33.333% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.333% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px), transparent calc(66.666% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.666% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px)); }
+.crop-full { position: absolute; z-index: 7; pointer-events: none; outline: 1px dashed rgba(255, 255, 255, 0.55); }
+.size-box .crop-read { position: absolute; left: 50%; bottom: -30px; margin-left: -44px; width: 88px; text-align: center; font: 500 10.5px/20px var(--mono); color: #fff; background: rgba(0, 0, 0, 0.75); border-radius: 4px; pointer-events: none; }
+
+/* Reset on the viewer, top right, while the picture is moved, sized, turned, cropped or flipped. */
+.viewer-reset { position: absolute; top: 12px; right: 12px; z-index: 9; height: 28px; padding: 0 10px; font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; background: rgba(18, 18, 18, 0.9); border-color: var(--line); color: var(--text); }
+
+/* Position & Size: the crop sides and the flip / uncrop buttons. */
+.crop-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.crop-fields .num-field { width: 100%; }
+.pos-actions { margin-top: 10px; }
+.pos-actions button { flex: 1; height: 30px; font-size: 12px; }
+.pos-actions button.on { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+
+/* ---------------------------------------------------------------------------------------------
+   Dashboard (app/Dashboard.tsx): Home and Connections. Same rules as the rest: ink, greys, mono for
+   labels, red only for something live.
+   --------------------------------------------------------------------------------------------- */
+.body[hidden] { display: none; }
+.home-tab { gap: 7px; }
+.dash { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; background: var(--bg); }
+.dash-side { display: flex; flex-direction: column; gap: 8px; padding: 16px 12px; background: var(--chrome); border-right: 1px solid var(--line-soft); }
+.dash-side nav { display: grid; gap: 2px; }
+.dash-side nav button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; background: transparent; border: none; color: var(--dim); font-size: 13px; text-align: left; }
+.dash-side nav button:hover:not(:disabled) { background: var(--raised); color: var(--text); border: none; }
+.dash-side nav button.on { background: var(--raised); color: var(--text); }
+.dash-count { margin-left: auto; min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 9px; font: 500 10px/1 var(--mono); background: var(--hover); color: var(--dim); }
+.dash-count.ok { background: #f2f2f2; color: #111; }
+.dash-note { margin: auto 6px 4px; font-size: 10.5px; line-height: 1.5; color: var(--faint); text-transform: none; letter-spacing: 0; }
+.dash-main { min-height: 0; overflow-y: auto; background: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1.6px) 0 0 / 24px 24px, var(--bg); }
+.dot-label { margin: 0; font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
+.home-sub { margin: 0; color: var(--dim); font-size: 14px; line-height: 1.5; max-width: 520px; }
+
+.home { max-width: 860px; margin: 0 auto; padding: 72px 32px 64px; }
+.home-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; }
+.home-hero .orb { margin-bottom: 8px; }
+.home-hero h1 { margin: 0; font-size: 40px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; }
+.prompt { width: 100%; margin-top: 18px; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; transition: border-color 0.15s; }
+.prompt:focus-within { border-color: #3a3a3a; }
+.prompt.dropping { border-color: var(--accent); }
+.prompt textarea { display: block; width: 100%; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: 400 15px/1.5 inherit; font-family: inherit; padding: 16px 16px 6px; }
+.prompt textarea::placeholder { color: var(--faint); }
+.prompt-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px; }
+.prompt-file { display: inline-flex; align-items: center; gap: 7px; height: 30px; max-width: 260px; padding: 0 10px; background: var(--raised); border-color: var(--line); color: var(--text); font-size: 12px; }
+.prompt-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-file i { display: grid; place-items: center; margin-right: -3px; color: var(--dim); }
+.prompt-file i:hover { color: var(--text); }
+.prompt-connect { height: 30px; padding: 0 10px; background: transparent; border-color: var(--line); color: var(--text); font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
+.prompt-model { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.prompt-model i { width: 6px; height: 6px; border-radius: 50%; background: #f2f2f2; }
+.prompt-go { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 6px; background: #f2f2f2; border-color: #f2f2f2; color: #111; }
+.prompt-go:hover:not(:disabled) { background: #fff; border-color: #fff; }
+.ideas { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 4px; }
+.ideas button { height: 30px; padding: 0 12px; background: transparent; border-color: var(--line); color: var(--dim); font-size: 12.5px; border-radius: 999px; }
+.ideas button:hover:not(:disabled) { color: var(--text); border-color: #3a3a3a; background: var(--panel); }
+
+.home-open { margin-top: 64px; }
+.home-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.home-head h2 { margin: 0; font-size: 15px; font-weight: 500; }
+.home-head .dim, .mono.dim { color: var(--faint); font-size: 11px; }
+.home-empty { color: var(--faint); font-size: 13px; margin: 0; padding: 22px; border: 1px dashed var(--line); border-radius: 8px; text-align: center; }
+.proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.proj { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 0 0 10px; background: var(--panel); border-color: var(--line-soft); text-align: left; overflow: hidden; }
+.proj video { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #000; display: block; }
+.proj-name { padding: 0 10px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-meta { padding: 0 10px; font-size: 10.5px; color: var(--faint); }
+
+.conn { max-width: 760px; margin: 0 auto; padding: 64px 32px; }
+.conn-head { display: grid; gap: 12px; margin-bottom: 36px; }
+.conn-head h1 { margin: 0; font-size: 34px; font-weight: 500; letter-spacing: -0.03em; }
+.conn-group { margin: 28px 0 10px; font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); }
+.conn-list { display: grid; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.conn-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 18px; background: var(--panel); }
+.conn-list .conn-row + .conn-row { border-top: 1px solid var(--line-soft); }
+body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
+.conn-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font: 600 13px/1 var(--mono); color: var(--text); }
+.conn-row.ok .conn-mark { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+.conn-name { font-size: 14px; font-weight: 500; }
+.conn-name .dim { margin-left: 6px; font-weight: 400; }
+.conn-status { display: flex; align-items: center; gap: 7px; margin-top: 4px; font-size: 12px; color: var(--dim); }
+.conn-status i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--faint); }
+.conn-row.ok .conn-status i { background: #f2f2f2; border-color: #f2f2f2; }
+.conn-row.busy .conn-status i { background: var(--accent); border-color: var(--accent); animation: rec-blink 1.2s steps(1) infinite; }
+.conn-what { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--faint); }
+.conn-error { margin: 8px 0 0; font-size: 12px; color: var(--danger); }
+.conn-install { margin: 8px 0 0; font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conn-install code { font: 400 11.5px var(--mono); color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+.conn-actions { display: flex; align-items: center; gap: 10px; }
+.conn-actions button:not(.toggle) { height: 30px; padding: 0 12px; font-size: 12px; white-space: nowrap; }
+.conn-check { height: 42px; border: none; border-top: 1px solid var(--line-soft); border-radius: 0; background: transparent; color: var(--dim); text-align: left; padding: 0 18px; font-size: 12.5px; }
+.conn-check:hover:not(:disabled) { background: var(--panel-2); color: var(--text); border: none; border-top: 1px solid var(--line-soft); }
+.conn-key { display: flex; gap: 8px; margin-top: 12px; }
+.conn-key input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: 12px var(--mono); outline: none; }
+.conn-key input:focus { border-color: #3a3a3a; }
+.conn-key button { height: 32px; }
+.conn-foot { margin: 28px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--faint); }

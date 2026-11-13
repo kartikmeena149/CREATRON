@@ -4,6 +4,7 @@ import type { AutoEditEvent, AutoEditResult as Result_ } from "../src/autoedit.t
 import type { LinkInfo } from "../src/webvideo.ts";
 import type { Sfx } from "../src/sfx.ts";
 import type { ChatEvent } from "../src/chat.ts";
+import type { AgentId, Connections } from "../src/chatTypes.ts";
 import type { ExportOptions } from "../src/exportOptions.ts";
 
 export type AutoEditResult = Result_ & { url: string };
@@ -77,6 +78,15 @@ declare global {
       onOpenPath(fn: (path: string) => void): () => void;
       /** The window entered (true) or left (false) full screen, where the Mac's window buttons are hidden. */
       onFullScreen(fn: (on: boolean) => void): () => void;
+      /** Connectors: Claude (Claude Code), ChatGPT (Codex) and an OpenRouter key. */
+      connections(): Promise<Connections>;
+      agentSignIn(id: AgentId): Promise<Connections>;
+      agentSignOut(id: AgentId): Promise<Connections>;
+      agentInstall(id: AgentId): Promise<Connections>;
+      agentCancel(id: AgentId): Promise<Connections>;
+      agentEnable(id: AgentId, on: boolean): Promise<Connections>;
+      setOpenRouterKey(key: string): Promise<Connections>;
+      onConnections(fn: (c: Connections) => void): () => void;
       debug: boolean;
     };
   }

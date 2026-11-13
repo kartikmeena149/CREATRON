@@ -26,3 +26,33 @@ export function splitAsk(text: string): { text: string; question?: Question } {
   return { text: text.slice(0, m.index).trim(), question };
 }
 
+
+/**
+ * Claude's sign-in on this Mac is missing or has run out (never signed in, logged out, or the
+ * session expired and couldn't renew). Then the plain fix to show instead of Claude's raw error.
+ */
+export function signInProblem(text: string, who: "Claude" | "ChatGPT" = "Claude"): string | undefined {
+  if (!/not logged in|failed to authenticate|oauth|session expired|invalid api key|please run \/login|authentication_error|401|login required|not signed in/i.test(text)) return undefined;
+  return /expired|could not be refreshed|failed to authenticate|oauth/i.test(text)
+    ? `${who}'s sign-in on this Mac has expired. Open Connections (top left) and press Sign in next to ${who}, then send your message again.`
+    : `${who} isn't signed in on this Mac yet. Open Connections (top left) and press Sign in next to ${who}, then send your message again.`;
+}
+
+/** A connector's state on this Mac (src/agents.ts finds it out). */
+export type AgentId = "claude" | "codex";
+export type AgentState = {
+  installed: boolean;
+  version?: string;
+  signedIn: boolean;
+  account?: string;
+  busy?: "signing-in" | "installing";
+  error?: string;
+};
+/** Everything the Connections page shows. */
+export type Connections = {
+  claude: AgentState;
+  codex: AgentState;
+  openrouter: boolean;
+  enabled: Record<AgentId, boolean>;
+  install: Record<AgentId, string>;
+};

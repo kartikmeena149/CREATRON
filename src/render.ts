@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, editDuration, outputDuration } from "./timeline.ts";
-import { isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
+import { cropBox, cropOf, isCropped, isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { sceneLibrary } from "./sceneFiles.ts";
 import { customDir } from "./customcode.ts";
@@ -213,10 +213,19 @@ function frameFilters(
   const p = placement(plan, W, H, OW, OH);
   const rad = ((p.rotate * Math.PI) / 180).toFixed(6);
   const rotate = p.rotate ? `,format=rgba,rotate=${rad}:ow='rotw(${rad})':oh='roth(${rad})':c=none` : "";
+  // Mirrored first, then the edges cut (the crop is of the picture as you see it), then turned.
+  const sw = even(p.w);
+  const sh = even(p.h);
+  const c = cropOf(plan.transform);
+  const flip = plan.transform.flip ? ",hflip" : "";
+  const crop = isCropped(plan.transform)
+    ? `,crop=${even(sw * (1 - c.left - c.right))}:${even(sh * (1 - c.top - c.bottom))}:${Math.round(sw * c.left)}:${Math.round(sh * c.top)}`
+    : "";
+  const kept = cropBox(p, c);
   return [
-    `[${p_}cat]scale=${even(p.w)}:${even(p.h)}:flags=lanczos${rotate}[${p_}placed]`,
+    `[${p_}cat]scale=${sw}:${sh}:flags=lanczos${flip}${crop}${rotate}[${p_}placed]`,
     `color=c=black:s=${OW}x${OH}:r=${fps}:d=${total.toFixed(3)}[${p_}bg]`,
-    `[${p_}bg][${p_}placed]overlay=x='${p.cx.toFixed(1)}-overlay_w/2':y='${p.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[${p_}framed]`,
+    `[${p_}bg][${p_}placed]overlay=x='${kept.cx.toFixed(1)}-overlay_w/2':y='${kept.cy.toFixed(1)}-overlay_h/2':shortest=1,format=yuv420p[${p_}framed]`,
   ];
 }
 

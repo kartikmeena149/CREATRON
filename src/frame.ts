@@ -30,7 +30,27 @@ export function placeBox(t: { scale?: number; x?: number; y?: number; rotate?: n
   return { w: srcW * k, h: srcH * k, cx: outW / 2 + (t.x ?? 0) * outW, cy: outH / 2 + (t.y ?? 0) * outH, rotate: t.rotate ?? 0 };
 }
 
-export const isIdentity = (t: EditPlan["transform"]) => t.scale === 1 && t.x === 0 && t.y === 0 && t.rotate === 0;
+export type Crop = { left: number; top: number; right: number; bottom: number };
+export const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 };
+/** The crop of a transform, every side present (none = nothing cut). */
+export const cropOf = (t: { crop?: Partial<Crop> }): Crop => ({ ...NO_CROP, ...t.crop });
+export const isCropped = (t: { crop?: Partial<Crop> }) => Object.values(cropOf(t)).some((v) => v > 0.0005);
+
+export const isIdentity = (t: EditPlan["transform"]) =>
+  t.scale === 1 && t.x === 0 && t.y === 0 && t.rotate === 0 && !isCropped(t) && !t.flip;
+
+/**
+ * What remains of a placed picture after its crop: the size of the kept part and its middle in the
+ * frame (the crop moves the edges in, so the middle shifts, turned with the picture's rotation).
+ */
+export function cropBox(p: Placement, crop: Crop): Placement {
+  const w = p.w * (1 - crop.left - crop.right);
+  const h = p.h * (1 - crop.top - crop.bottom);
+  const dx = ((crop.left - crop.right) * p.w) / 2;
+  const dy = ((crop.top - crop.bottom) * p.h) / 2;
+  const r = (p.rotate * Math.PI) / 180;
+  return { w, h, cx: p.cx + dx * Math.cos(r) - dy * Math.sin(r), cy: p.cy + dx * Math.sin(r) + dy * Math.cos(r), rotate: p.rotate };
+}
 
 /**
  * The main source's picture size. A voice recording has none (faceless videos): it plays over

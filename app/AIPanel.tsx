@@ -1,6 +1,8 @@
 // Right panel: tell the editor what you want. Quick actions run instantly on this Mac;
 // anything typed goes to the AI, which edits the current timeline. Each change can be undone.
 import { useEffect, useRef, useState } from "react";
+import { useHome } from "./Dashboard.tsx";
+import { signInProblem } from "../src/chatTypes.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
 import { markerContext } from "./markers.ts";
@@ -76,7 +78,8 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
     }),
     [],
   );
-  const live = model.startsWith("claude-code/");
+  // Your own Claude or ChatGPT plan works live in the chat; OpenRouter models answer in one go.
+  const live = model.startsWith("claude-code/") || model.startsWith("codex/");
   const answer = (a: string) => {
     if (!project) return;
     useEditor.getState().answerQuestion(a);
@@ -104,8 +107,16 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
     apply(before, after, q.says, `instant · ${d0.toFixed(1)}s → ${d1.toFixed(1)}s`);
   };
 
-  const send = async () => {
-    const request = text.trim();
+  // A request typed on the Dashboard: sent as soon as its video is open here.
+  const pending = useHome((h) => h.pending);
+  useEffect(() => {
+    if (!pending || !project || !plan.segments.length || busy || !model) return;
+    useHome.setState({ pending: null });
+    void send(pending);
+  }, [pending, project?.path, model]);
+
+  const send = async (given?: string) => {
+    const request = (typeof given === "string" ? given : text).trim();
     if (!request || !project || !plan.segments.length || busy) return;
     setText("");
     setOriginal(null);
@@ -124,7 +135,7 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
         : undefined;
       if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
       const r = await window.creatron.chatSend(project.path, request, before, model, focus);
-      if (!r.ok) say({ role: "error", text: /not logged in/i.test(r.error) ? "Claude isn't signed in on this Mac yet. Open Terminal, type claude, press Enter, type /login and sign in. Then send your request again." : r.error });
+      if (!r.ok) say({ role: "error", text: signInProblem(r.error) ?? r.error });
       return;
     }
     set({ busy: true });
@@ -145,8 +156,8 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
             ? "OpenRouter didn't accept the API key. Check the key in CREATRON/.env and restart the app."
             : /free-models-per-day/.test(r.error)
               ? `You've used today's free AI requests (OpenRouter allows 50 a day on free models, and each edit uses a few). They come back at ${freeResetTime()}. Adding $10 of OpenRouter credits once raises the limit to 1000 a day, even on free models.`
-            : /Claude .*Not logged in/i.test(r.error)
-              ? "Claude isn't signed in on this Mac yet. Open Terminal, type claude, press Enter, type /login and sign in with your Claude account. Then send your request again."
+            : /^Claude/.test(r.error) && signInProblem(r.error)
+              ? signInProblem(r.error)!
             : /OpenRouter (429|503)/.test(r.error)
               ? "That AI model is busy right now (free models share capacity). Try again in a minute, or pick another model."
               : r.error;
@@ -296,7 +307,7 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
               <i className="stop-square" />
             </button>
           ) : (
-            <button className="send" disabled={!text.trim() || busy || !project} onClick={send} title="Send (Enter)">
+            <button className="send" disabled={!text.trim() || busy || !project} onClick={() => send()} title="Send (Enter)">
               <Icon name="arrowUp" size={16} />
             </button>
           )}
@@ -326,6 +337,8 @@ type Models = { models: ModelInfo[]; credits: number | null; recommended: string
 let modelsOnce: Promise<Models | undefined> | undefined;
 const loadModels = () =>
   (modelsOnce ??= window.creatron.models().then((r) => (r.ok ? r.value : ((modelsOnce = undefined), undefined))));
+// Connecting or switching off an account on the Dashboard changes the list: load it again.
+window.addEventListener("creatron:models", () => (modelsOnce = undefined));
 
 /** The chosen model, remembered on this Mac; until you pick one, the best fit for your credits. */
 function useModelChoice(): [string, (id: string) => void] {
@@ -351,7 +364,12 @@ function useModelChoice(): [string, (id: string) => void] {
 
 function ModelPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const [data, setData] = useState<Models>();
-  useEffect(() => void loadModels().then(setData), []);
+  useEffect(() => {
+    void loadModels().then(setData);
+    const reload = () => setTimeout(() => void loadModels().then(setData));
+    window.addEventListener("creatron:models", reload);
+    return () => window.removeEventListener("creatron:models", reload);
+  }, []);
   const price = (m: ModelInfo) => (m.free ? "free" : `$${+m.inPerM.toFixed(2)} / $${+m.outPerM.toFixed(2)} per M`);
   const current = data?.models.find((m) => m.id === value);
   return (

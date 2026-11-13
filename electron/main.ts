@@ -9,6 +9,8 @@ import { analyze } from "../src/analyze.ts";
 import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
+import { type AgentId, INSTALL_COMMAND, agentState, cancel, enabled, install, openRouterKey, setEnabled, setOpenRouterKey, signIn, signOut } from "../src/agents.ts";
+import type { Connections } from "../src/chatTypes.ts";
 import { type Attachment, type Focus, enhancePrompt, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
@@ -234,6 +236,24 @@ ipcMain.handle(
 );
 
 ipcMain.handle("models", safe(async () => listModels()));
+
+// Connectors (the Dashboard): which AI accounts are installed and signed in on this Mac, and the
+// buttons that sign in (in the browser), sign out, install and switch each one on for the chat.
+const connectionsNow = (): Connections => ({
+  claude: agentState("claude"),
+  codex: agentState("codex"),
+  openrouter: Boolean(openRouterKey()),
+  enabled: enabled(),
+  install: { claude: INSTALL_COMMAND("claude"), codex: INSTALL_COMMAND("codex") },
+});
+const pushConnections = () => send("connections", connectionsNow());
+ipcMain.handle("connections", () => connectionsNow());
+ipcMain.handle("agent-sign-in", (_e, id: AgentId) => (void signIn(id, pushConnections), connectionsNow()));
+ipcMain.handle("agent-sign-out", (_e, id: AgentId) => (signOut(id), connectionsNow()));
+ipcMain.handle("agent-install", (_e, id: AgentId) => (void install(id, pushConnections), connectionsNow()));
+ipcMain.handle("agent-cancel", (_e, id: AgentId) => (cancel(id), connectionsNow()));
+ipcMain.handle("agent-enable", (_e, id: AgentId, on: boolean) => (setEnabled(id, on), connectionsNow()));
+ipcMain.handle("openrouter-key", (_e, key: string) => (setOpenRouterKey(key), connectionsNow()));
 
 // Claude edits (HyperFrames projects) brought in as layers with keyframes.
 ipcMain.handle("pick-scene", async () => {

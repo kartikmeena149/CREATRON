@@ -394,6 +394,10 @@ export async function enhancePrompt(request: string, model: string, analysis?: A
     const { askClaude } = await import("./claudecli.ts");
     return clean(await askClaude(model.replace(/^claude-code\//, ""), `${ENHANCE}\n\n${user}`));
   }
+  if (model.startsWith("codex/")) {
+    const { askCodex } = await import("./agents.ts");
+    return clean(await askCodex(`${ENHANCE}\n\n${user}`));
+  }
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.");
   const res = await fetch(ENDPOINT, {
