@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { openHome } from "./Dashboard.tsx";
 import type { ModelInfo } from "./env.d.ts";
 import { Icon } from "./icons.tsx";
+import { Logo, makerOf } from "./logos.tsx";
 
 type Models = { models: ModelInfo[]; credits: number | null; recommended: string };
 
@@ -62,8 +63,11 @@ function detail(m: ModelInfo) {
   const n = (v: number) => `$${+v.toFixed(2)}`;
   return `${n(m.inPerM)} in · ${n(m.outPerM)} out per 1M tokens`;
 }
-/** The tile beside each name: the model family's first letter. */
-const initial = (m: ModelInfo) => (m.id.startsWith("codex/") ? "G" : m.name.charAt(0).toUpperCase());
+/** The tile beside each name: its maker's logo, or the name's first letter for anyone else. */
+function Tile({ m }: { m: ModelInfo }) {
+  const maker = makerOf(m.id);
+  return <span className="mp-tile">{maker ? <Logo maker={maker} size={18} /> : m.name.charAt(0).toUpperCase()}</span>;
+}
 const short = (m?: ModelInfo, id = "") => m?.name.replace(/\s*\(free\)/i, "") ?? (id.split("/").pop() || "Choose a model");
 
 /** The model menu: a button with the current model, opening your connected plans, then OpenRouter. */
@@ -136,7 +140,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
         onMouseEnter={() => setActive(i)}
         onClick={() => pick(m.id)}
       >
-        <span className="mp-tile">{initial(m)}</span>
+        <Tile m={m} />
         <span className="mp-text">
           <span className="mp-name">{short(m)}</span>
           <span className="mp-detail">{detail(m)}</span>
@@ -150,7 +154,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
   return (
     <div className="model-picker" ref={root}>
       <button className={`mp-trigger ${open ? "open" : ""}`} onClick={toggle} aria-haspopup="listbox" aria-expanded={open} title="Choose the AI model">
-        <i className="mp-dot" />
+        {current && makerOf(current.id) ? <Logo maker={makerOf(current.id)!} size={14} className="mp-mark" /> : <i className="mp-dot" />}
         <span className="mp-current">{short(current, value)}</span>
         <Icon name="chevronDown" size={12} />
       </button>
@@ -165,7 +169,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
           <div className="mp-list" style={{ maxHeight: room }}>
             {plans.length > 0 && <p className="mp-group">Connected</p>}
             {plans.map(row)}
-            {free.length + paid.length > 0 && <p className="mp-group">OpenRouter</p>}
+            {free.length + paid.length > 0 && <p className="mp-group"><Logo maker="openrouter" size={11} />OpenRouter</p>}
             {free.map(row)}
             {paid.map(row)}
             {!data && <p className="mp-empty">Loading models…</p>}

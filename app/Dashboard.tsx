@@ -3,6 +3,7 @@
 // that do the editing: your Claude plan, your ChatGPT plan, or an OpenRouter key.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
+import { Logo, type Maker } from "./logos.tsx";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import type { AgentId, AgentState, Connections } from "../src/chatTypes.ts";
 import { Icon } from "./icons.tsx";
@@ -164,9 +165,9 @@ function HomeModel() {
   return <span className="prompt-model"><ModelPicker value={model} onChange={setModel} /></span>;
 }
 
-const AGENTS: { id: AgentId; name: string; via: string; mark: string; what: string }[] = [
-  { id: "claude", name: "Claude", via: "Claude Code", mark: "C", what: "Your Claude plan (Pro or Max). Edits live in the chat and writes its own animations." },
-  { id: "codex", name: "ChatGPT", via: "Codex", mark: "G", what: "Your ChatGPT plan (Plus or Pro). Edits live in the chat through OpenAI's Codex." },
+const AGENTS: { id: AgentId; name: string; via: string; mark: Maker; what: string }[] = [
+  { id: "claude", name: "Claude", via: "Claude Code", mark: "claude", what: "Your Claude plan (Pro or Max). Edits live in the chat and writes its own animations." },
+  { id: "codex", name: "ChatGPT", via: "Codex", mark: "openai", what: "Your ChatGPT plan (Plus or Pro). Edits live in the chat through OpenAI's Codex." },
 ];
 
 function ConnectionsPage({ conn, setConn, refresh }: { conn?: Connections; setConn: (c: Connections) => void; refresh: () => void }) {
@@ -215,7 +216,7 @@ function AgentRow({ info, state, on, install, setConn }: {
   const act = (p: Promise<Connections>) => void p.then(setConn);
   return (
     <div className={`conn-row ${tone}`}>
-      <span className="conn-mark" aria-hidden="true">{info.mark}</span>
+      <span className="conn-mark" aria-hidden="true"><Logo maker={info.mark} size={22} /></span>
       <div className="conn-text">
         <div className="conn-name">{info.name} <span className="mono dim">via {info.via}{state?.version ? ` ${state.version}` : ""}</span></div>
         <div className="conn-status"><i />{status}</div>
@@ -257,7 +258,7 @@ function OpenRouterRow({ has, setConn }: { has?: boolean; setConn: (c: Connectio
   const save = async (k: string) => (setConn(await window.creatron.setOpenRouterKey(k)), setKey(""), setEditing(false));
   return (
     <div className={`conn-row ${has ? "ok" : "off"}`}>
-      <span className="conn-mark" aria-hidden="true">OR</span>
+      <span className="conn-mark" aria-hidden="true"><Logo maker="openrouter" size={20} /></span>
       <div className="conn-text">
         <div className="conn-name">OpenRouter <span className="mono dim">API key</span></div>
         <div className="conn-status"><i />{has ? "Key saved on this Mac" : "No key"}</div>

@@ -454,7 +454,11 @@ button.wide { width: 100%; margin-top: 8px; }
 
 /* Model picker */
 .model-picker { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; }
-/* The button: a light, the model's name, a chevron. */
+/* Makers' logos (app/logos.tsx): drawn inline; one-colour ones take the text colour. */
+.logo { display: inline-flex; flex: none; line-height: 0; color: var(--text); }
+.logo svg { width: 100%; height: 100%; }
+
+/* The button: the maker's logo, the model's name, a chevron. */
 .mp-trigger {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; height: 30px; padding: 0 10px 0 9px;
   border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--dim);
@@ -501,7 +505,9 @@ button.wide { width: 100%; margin-top: 8px; }
   flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
   background: #1b1b1b; border: 1px solid #2a2a2a; font: 600 12px/1 var(--mono); color: var(--dim);
 }
-.mp-row.on .mp-tile { background: var(--text); border-color: var(--text); color: #0a0a0a; }
+.mp-row.on .mp-tile { border-color: #6a6a6a; background: #202020; }
+.mp-row.active .mp-tile { border-color: #3a3a3a; }
+.mp-mark { opacity: 0.95; }
 .mp-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .mp-name { font: 500 13px/1.2 -apple-system, system-ui, sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-detail { font-size: 11px; line-height: 1.2; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1601,7 +1607,7 @@ kbd, .tc, .tl-toolbar .tc, .cap-time, .xp-pct, .xp-specs, .slider .value, .num-b
 .conn-list .conn-row + .conn-row { border-top: 1px solid var(--line-soft); }
 body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .conn-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font: 600 13px/1 var(--mono); color: var(--text); }
-.conn-row.ok .conn-mark { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+.conn-row.ok .conn-mark { border-color: #5a5a5a; box-shadow: 0 0 0 3px rgba(242, 242, 242, 0.06); }
 .conn-name { font-size: 14px; font-weight: 500; }
 .conn-name .dim { margin-left: 6px; font-weight: 400; }
 .conn-status { display: flex; align-items: center; gap: 7px; margin-top: 4px; font-size: 12px; color: var(--dim); }
