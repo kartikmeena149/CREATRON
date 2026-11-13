@@ -34,6 +34,7 @@
         <a href="#editor">Editor</a>
         <a href="#get">Get it</a>
       </nav>
+      <a class="nav-sign mono" href="./login/" id="nav-sign">Sign in</a>
       <a class="btn" href="#demo" data-run>Try it</a>
     </header>
 
@@ -145,7 +146,7 @@
     <footer class="band ink">
       <nav class="foot-words">
         <a href="#demo">Demo</a>
-        <a href="https://github.com/kartikmeena149/CREATRON">GitHub</a>
+        <a href="./login/">Join</a>
         <a href="./brand/">Brand</a>
       </nav>
       <div class="foot-list mono">
@@ -160,6 +161,10 @@
     </footer>
 
     <script type="module">
+      // Signed in on this browser: the nav says so (no network needed).
+      import { hasSession } from "./auth.ts";
+      if (hasSession()) document.getElementById("nav-sign").textContent = "On the list";
+
       // The hero mark is the logo file itself, with its red light set blinking.
       try {
         const svg = await (await fetch("./brand/mark-white.svg")).text();

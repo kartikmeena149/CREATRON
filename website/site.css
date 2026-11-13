@@ -180,3 +180,6 @@ footer.band { padding: 120px 24px 32px; text-align: center; }
 .lost h1 { margin: 18px 0 16px; font-size: clamp(40px, 7vw, 88px); }
 .lost .lead { margin: 0 auto 32px; }
 .lost .ctas { justify-content: center; }
+.nav-sign { color: var(--grey); padding: 0 6px; white-space: nowrap; }
+.nav-sign:hover { color: var(--ink); }
+@media (max-width: 860px) { .nav-sign { margin-left: auto; } .nav .btn { margin-left: 0; } }

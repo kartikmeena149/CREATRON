@@ -54,3 +54,14 @@ input:focus-visible { border-color: var(--ink); outline: none; }
   .viewfinder { height: 460px; }
   .frames i { width: 6px; height: 6px; }
 }
+
+/* Signed out: the one Google button; signed in: who you are and your place on the list. */
+.form-box h1 { margin: 18px 0 12px; }
+.form-box > p.muted { margin-bottom: 28px; }
+.fine { margin: 14px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--grey); }
+.me { display: flex; align-items: center; gap: 16px; margin: 18px 0 16px; }
+.me img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line); }
+.me h1 { margin: 0 0 6px; font-size: clamp(32px, 4vw, 44px); }
+.me .mono { text-transform: none; letter-spacing: 0; }
+.in-actions { display: flex; gap: 10px; margin-top: 22px; }
+.in-actions .btn { width: auto; flex: 1; justify-content: center; height: 44px; }

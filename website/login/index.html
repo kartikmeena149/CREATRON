@@ -29,18 +29,11 @@
       <section class="form-side band">
         <a class="logo brand" href="../" aria-label="Creatro"><img src="../brand/mark.svg" alt="" /><span>Creatro</span></a>
 
-        <div class="form-box">
-          <p class="dot muted" id="label">( Sign in )</p>
-          <h1 id="title">Welcome back.</h1>
-          <p class="muted" id="sub">Pick up your edit where you left it.</p>
-
-          <form id="form" novalidate>
-            <label class="mono muted" for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
-            <button class="btn" type="submit">Continue with email</button>
-          </form>
-
-          <div class="or mono"><span>Or</span></div>
+        <!-- Signed out: one button. Signing in is joining the early-access list. -->
+        <div class="form-box" id="out">
+          <p class="dot muted">( Early access )</p>
+          <h1>Join Creatro.</h1>
+          <p class="muted">Sign in with Google to get on the list. We'll email you when the Mac app is ready for you.</p>
 
           <button class="btn line plain google" type="button" id="google">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true">
@@ -51,11 +44,27 @@
             </svg>
             Continue with Google
           </button>
-
           <p class="status" id="status" role="status" aria-live="polite"></p>
-
-          <p class="switch mono"><span id="ask" class="muted">New to Creatro?</span> <button type="button" class="link" id="swap">Create an account</button></p>
+          <p class="fine">We only use your name and email from Google. No posting, no access to your files.</p>
           <p class="switch mono"><a href="../demo/">Try the editor without an account &gt;</a></p>
+        </div>
+
+        <!-- Signed in: who you are, and your place on the list. -->
+        <div class="form-box" id="in" hidden>
+          <p class="dot muted">( On the list )</p>
+          <div class="me">
+            <img id="avatar" alt="" referrerpolicy="no-referrer" hidden />
+            <div>
+              <h1 id="hello">You're in.</h1>
+              <p class="muted mono" id="email"></p>
+            </div>
+          </div>
+          <p class="muted" id="joined">You're on the early-access list. We'll email you when the Mac app is ready for you.</p>
+          <p class="status" id="status-in" role="status" aria-live="polite"></p>
+          <div class="in-actions">
+            <a class="btn" href="../demo/">Open the demo</a>
+            <button class="btn line plain" type="button" id="out-btn">Sign out</button>
+          </div>
         </div>
 
         <p class="mono muted foot">Your footage stays on your Mac.</p>
@@ -74,39 +83,44 @@
       </section>
     </main>
 
+    <script type="module">
+      import { currentUser, joinWaitlist, signInWithGoogle, signOut, takeReturn } from "../auth.ts";
+      const $ = (id) => document.getElementById(id);
+      const say = (el, text, bad) => (($(el).textContent = text), $(el).classList.toggle("bad", Boolean(bad)));
+
+      const showOut = () => (($("out").hidden = false), ($("in").hidden = true));
+      async function showIn(user) {
+        $("out").hidden = true;
+        $("in").hidden = false;
+        $("hello").textContent = `You're in, ${user.name.split(" ")[0]}.`;
+        $("email").textContent = user.email;
+        if (user.avatar) (($("avatar").src = user.avatar), ($("avatar").hidden = false));
+        document.title = "You're on the list · Creatro";
+        try {
+          const when = new Date(await joinWaitlist(user));
+          $("joined").textContent = `You joined the early-access list on ${when.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}. We'll email ${user.email} when the Mac app is ready for you.`;
+        } catch (e) {
+          say("status-in", `${e.message} You're signed in; try again in a moment.`, true);
+        }
+      }
+
+      const problem = takeReturn();
+      if (problem) say("status", `Sign-in didn't finish: ${problem}`, true);
+      const user = await currentUser().catch(() => null);
+      user ? showIn(user) : showOut();
+
+      $("google").addEventListener("click", () => {
+        say("status", "Opening Google…");
+        signInWithGoogle();
+      });
+      $("out-btn").addEventListener("click", async () => {
+        await signOut();
+        showOut();
+        say("status", "Signed out.");
+      });
+    </script>
     <script>
       const $ = (id) => document.getElementById(id);
-      let creating = new URLSearchParams(location.search).has("signup");
-      const words = () => {
-        $("label").textContent = creating ? "( New account )" : "( Sign in )";
-        $("title").textContent = creating ? "Start editing." : "Welcome back.";
-        $("sub").textContent = creating ? "Describe the edit. Creatro does the rest." : "Pick up your edit where you left it.";
-        $("ask").textContent = creating ? "Have an account?" : "New to Creatro?";
-        $("swap").textContent = creating ? "Sign in" : "Create an account";
-        document.title = creating ? "Create your Creatro account" : "Sign in to Creatro";
-        $("status").textContent = "";
-      };
-      words();
-      $("swap").addEventListener("click", () => ((creating = !creating), words()));
-
-      const say = (text, bad) => {
-        $("status").textContent = text;
-        $("status").classList.toggle("bad", Boolean(bad));
-      };
-
-      // Accounts are not connected yet: this is where the sign-in service gets called once one is chosen.
-      // Until then the page says so, instead of pretending to sign anyone in.
-      const signIn = () => say("Accounts aren't switched on yet. You can use the editor without one.");
-
-      $("form").addEventListener("submit", (e) => {
-        e.preventDefault();
-        const email = $("email");
-        if (!email.value.trim()) return say("Type your email address first.", true), email.focus();
-        if (!email.checkValidity()) return say("That doesn't look like an email address. Check it and try again.", true), email.focus();
-        signIn();
-      });
-      $("google").addEventListener("click", signIn);
-
       // The timecode runs with the clip, and a strip of frames under it fills as it plays.
       const clip = $("clip");
       const frames = $("frames");
