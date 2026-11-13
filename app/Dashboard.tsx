@@ -18,6 +18,7 @@ export const openHome = (view: View = "home") => useHome.setState({ view });
 export const closeHome = () => useHome.setState({ view: null });
 
 const IDEAS: [string, string][] = [
+  ["Full edit", "Edit the whole video like a pro: a strong hook, B-roll, music, sound effects and motion graphics"],
   ["Reel", "Make it a tight 9:16 reel with bold captions, cut the pauses and retakes"],
   ["Talking head", "Clean up this talking-head video: cut dead air and retakes, add captions"],
   ["Podcast clip", "Find the best 45 seconds and make a vertical clip with captions"],
@@ -110,7 +111,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
         >
           <textarea
             value={text}
-            placeholder="Describe the video. For example: a 30-second reel with bold captions and the pauses cut"
+            placeholder="Describe the video. A quick fix, or the whole finished edit with B-roll, music and motion graphics"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), void start())}
             rows={3}

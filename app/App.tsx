@@ -1,11 +1,10 @@
-import { Component, type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { FramePicker } from "./FramePicker.tsx";
 import { Dashboard, closeHome, openHome, useHome } from "./Dashboard.tsx";
 import { Orb } from "./Orb.tsx";
 import { CreatorQuote } from "./Quotes.tsx";
 import { AIPanel } from "./AIPanel.tsx";
-import { AutoEdit } from "./AutoEdit.tsx";
 import { Inspector } from "./Inspector.tsx";
 import { LinkImport } from "./LinkImport.tsx";
 import { useMagnet } from "./magnet.ts";
@@ -28,7 +27,6 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [linkOpen, setLinkOpen] = useState<false | "video" | "audio">(false);
-  const [autoOpen, setAutoOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [sizes, setSizes] = useLayoutSizes();
   // A multi-selection shows its own panel even when the left panel was hidden.
@@ -110,7 +108,7 @@ export function App() {
               <Splitter dir="x" value={fit.sizes.left} min={MIN.left} max={fit.max.left} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
             </>}
             <main className="center">
-              {project ? <Viewer /> : <Welcome onOpen={() => addMedia()} onAuto={() => setAutoOpen(true)} error={error} />}
+              {project ? <Viewer /> : <Welcome onOpen={() => addMedia()} error={error} />}
             </main>
           </div>
           <Splitter dir="y" value={fit.sizes.timeline} min={MIN.timeline} max={fit.max.timeline} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
@@ -118,14 +116,9 @@ export function App() {
         </div>
         {aiOpen && <>
           <Splitter dir="x" value={fit.sizes.ai} min={MIN.ai} max={fit.max.ai} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
-          <AIPanel onAuto={() => setAutoOpen(true)} />
+          <AIPanel />
         </>}
       </div>
-      {autoOpen && (
-        <Catch onClose={() => setAutoOpen(false)}>
-          <AutoEdit initialVideo={project?.path} onClose={() => setAutoOpen(false)} />
-        </Catch>
-      )}
       <ClipMenu />
       {sceneImport && <SceneImport key={sceneImport} path={sceneImport} onClose={() => set({ sceneImport: null })} onOpenMain={open} />}
       {linkOpen && <LinkImport key={linkOpen} audio={linkOpen === "audio"} onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
@@ -248,7 +241,7 @@ function Rail() {
   );
 }
 
-function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => void; error: string }) {
+function Welcome({ onOpen, error }: { onOpen: () => void; error: string }) {
   return (
     <div className="welcome">
       <div className="drop">
@@ -257,9 +250,6 @@ function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => 
         <p className="dim">Your footage stays on this Mac. Only the transcript goes to the AI.</p>
         <button className="primary" onClick={onOpen}>Choose video</button>
         <div className="drop-more">
-          <button onClick={onAuto} title="Give Claude your footage and a brief; it makes the whole finished video">
-            <Icon name="sparkle" size={13} /> Claude edits it all
-          </button>
           <button onClick={pickClaudeEdit} title="Open a HyperFrames video Claude made, with every layer and keyframe editable">
             <Icon name="layers" size={13} /> Open a Claude edit
           </button>
@@ -319,21 +309,3 @@ function useShortcuts() {
   }, []);
 }
 
-/** A view that crashes shows its error instead of taking the whole window down. */
-class Catch extends Component<{ children: ReactNode; onClose: () => void }, { error?: Error }> {
-  state: { error?: Error } = {};
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="overlay">
-        <div className="overlay-card">
-          <div className="error">Something went wrong: {this.state.error.message}</div>
-          <button onClick={() => (this.setState({ error: undefined }), this.props.onClose())}>Close</button>
-        </div>
-      </div>
-    );
-  }
-}

@@ -30,8 +30,7 @@ const QUICK: Quick[] = [
   },
 ];
 
-/** onAuto opens Auto Edit (Claude makes the whole finished video), offered next to the quick actions. */
-export function AIPanel({ onAuto }: { onAuto: () => void }) {
+export function AIPanel() {
   const { project, plan, messages, busy, status, commit, say, set, picked, selectedBroll, markers, removeMarker } = useEditor();
   const pickedBroll = selectedBroll ? plan.broll.find((b) => b.id === selectedBroll) : undefined;
   const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source);
@@ -211,9 +210,6 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
       </div>
 
       <div className="ai-quick">
-        <button className="auto" title="Auto Edit: Claude makes the whole finished video for you" onClick={onAuto}>
-          <Icon name="sparkle" size={13} /> Auto Edit
-        </button>
         {QUICK.map((q) => (
           <button key={q.label} disabled={!project || !plan.segments.length} onClick={() => runQuick(q)}>{q.label}</button>
         ))}
@@ -269,7 +265,7 @@ export function AIPanel({ onAuto }: { onAuto: () => void }) {
         <textarea
           value={text}
           disabled={!project}
-          placeholder={!project ? "Import a video first" : !plan.segments.length ? "The timeline is empty: drop your video back on it" : target ? `What should I do with ${target}?` : "Describe the edit…"}
+          placeholder={!project ? "Import a video first" : !plan.segments.length ? "The timeline is empty: drop your video back on it" : target ? `What should I do with ${target}?` : "Describe an edit, or ask for the whole finished video…"}
           onChange={(e) => (setText(e.target.value), setOriginal(null))}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

@@ -601,46 +601,6 @@ button.wide { width: 100%; margin-top: 8px; }
 .ai-markers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .ai-marker { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; font-size: 11px; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca; }
 
-/* Auto Edit */
-button.ghost.auto { color: var(--accent-2); }
-.auto-hint { margin-top: 14px !important; }
-.autoedit { position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; flex-direction: column; user-select: text; }
-.autoedit-head { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 16px 0 84px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
-.autoedit-head button { -webkit-app-region: no-drag; }
-.autoedit-title { font-weight: 700; letter-spacing: 0.02em; }
-.autoedit .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.autoedit .row.end { margin-top: 10px; }
-.autoedit label { font-weight: 600; margin-top: 12px; display: block; }
-.autoedit textarea, .autoedit select { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
-.autoedit-form { width: 560px; max-width: calc(100% - 32px); margin: 24px auto; display: grid; gap: 6px; }
-.autoedit-form .file { flex: 1; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.autoedit button.big { padding: 10px; font-size: 14px; margin-top: 10px; }
-.autoedit-running { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 820px; max-width: calc(100% - 32px); margin: 0 auto; padding: 24px 0; }
-.timer { display: grid; gap: 8px; }
-.timer-left { font-size: 30px; font-weight: 300; }
-.timer-left b { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent-2); }
-.timer .bar { height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
-.timer .bar i { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
-.stages { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; }
-.stages span { padding: 2px 8px; border-radius: 10px; background: var(--panel-2); color: var(--faint); }
-.stages span.done { color: var(--dim); }
-.stages span.now { background: var(--accent); color: #fff; }
-.autoedit-log { flex: 1; min-height: 0; overflow-y: auto; margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; }
-.autoedit-log .line { display: flex; gap: 10px; padding: 2px 0; color: var(--dim); }
-.autoedit-log .line .t { color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
-.autoedit-log .line.note { color: var(--text); }
-.autoedit-log .line.info { color: var(--accent-2); }
-.autoedit-done { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 360px; }
-.autoedit-done .player { position: relative; background: #000; min-height: 0; display: flex; }
-.autoedit-done .player video { width: 100%; height: 100%; object-fit: contain; }
-.autoedit-done .player.pointing { cursor: crosshair; }
-.autoedit-done .marker-pin { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: #ff3b30; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; border: 2px solid #fff; pointer-events: none; }
-.autoedit-done .side { padding: 16px; display: flex; flex-direction: column; gap: 8px; border-left: 1px solid var(--line); min-height: 0; overflow-y: auto; }
-.autoedit-done .side > * { flex: none; }
-.autoedit-done .side > .grow { flex: 1; }
-.autoedit-done .notes { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; line-height: 1.5; white-space: pre-wrap; max-height: 42vh; overflow-y: auto; }
-.autoedit-done button.on { background: #ff3b30; border-color: #ff3b30; }
-.autoedit .chip { background: var(--raised); border-radius: 10px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
 
 /* Resizable sections */
 .splitter { position: relative; z-index: 30; }
@@ -746,8 +706,6 @@ body.resizing-x video, body.resizing-y video, body.resizing-x iframe { pointer-e
 
 /* AI panel: no title, just the new-chat button; Auto Edit sits with the quick actions */
 .ai-head .new-chat { margin-left: auto; }
-.ai-quick button.auto { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-2); border-color: rgba(255, 255, 255, 0.45); background: rgba(255, 255, 255, 0.1); }
-.ai-quick button.auto:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.2); border-color: var(--accent); }
 .caption.plain span { color: inherit; }
 
 /* Caption style bar (select a caption) */
@@ -1639,3 +1597,21 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .conn-key input:focus { border-color: #3a3a3a; }
 .conn-key button { height: 32px; }
 .conn-foot { margin: 28px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--faint); }
+
+/* A full edit in the chat (AgentTurn: JobCard while it works, ResultCard when it's done). */
+.job { margin-top: 10px; padding: 12px 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: #141414; }
+.job-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.job-stage { font-size: 13px; color: var(--text); }
+.job-left { font: 500 10.5px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.job-bar { margin-top: 10px; height: 3px; border-radius: 2px; background: #262626; overflow: hidden; }
+.job-bar i { display: block; height: 100%; background: var(--text); transition: width 0.6s ease; }
+.job-ticks { display: flex; gap: 4px; margin-top: 8px; }
+.job-ticks i { flex: 1; height: 4px; border-radius: 2px; background: #222; }
+.job-ticks i.done { background: #5a5a5a; }
+.job-ticks i.now { background: var(--accent); box-shadow: 0 0 8px rgba(229, 35, 27, 0.6); }
+.job-note { margin: 9px 0 0; font-size: 11px; line-height: 1.4; color: var(--faint); }
+.job-result { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #141414; }
+.job-result video { display: block; width: 100%; max-height: 320px; border-radius: 6px; background: #000; }
+.job-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.job-actions button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; font-size: 12px; }
+.job-version { margin-left: auto; font: 500 10.5px/1 var(--mono); letter-spacing: 0.08em; color: var(--faint); }

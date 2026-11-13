@@ -8,7 +8,7 @@ import { captionLook, captionsOf, clipLength, clipStarts, editDuration, outputDu
 import { compactTracks, freeTrack, spanFree, userClip } from "../src/tracks.ts";
 import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
 import { loadFont } from "../motion/Overlay.tsx";
-import type { ChatEvent, Question, Step } from "../src/chatTypes.ts";
+import type { ChatEvent, FullEditProgress, FullEditResult, Question, Step } from "../src/chatTypes.ts";
 
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 /** A generated voiceover; voiceId and speed say how it was made (older takes don't have them). */
@@ -40,6 +40,10 @@ export type AgentMessage = {
   reverted?: boolean;
   model: string;
   error?: string;
+  /** A full edit running in this turn: where it is (and when that was said, for the clock). */
+  job?: FullEditProgress & { at: number };
+  /** The finished full edit this turn made. */
+  result?: FullEditResult;
 };
 
 type State = {
@@ -580,6 +584,11 @@ export const useEditor = create<State>((set, get) => ({
         m.items[at] = { kind: "steps", steps: it.steps.map((x) => (x.id === e.step.id ? e.step : x)) };
       } else if (last?.kind === "steps") m.items[m.items.length - 1] = { kind: "steps", steps: [...last.steps, e.step] };
       else m.items.push({ kind: "steps", steps: [e.step] });
+    } else if (e.type === "job") {
+      m.job = { ...e.progress, at: Date.now() };
+    } else if (e.type === "result") {
+      m.result = e.result;
+      m.job = undefined;
     } else if (e.type === "plan") {
       // The first change of a turn is one undo step; after that the timeline follows Claude live.
       if (!m.before) (m.before = s.plan), get().checkpoint();
