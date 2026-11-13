@@ -6,7 +6,7 @@ import { signInProblem } from "../src/chatTypes.ts";
 import type { EditPlan } from "../src/schema.ts";
 import { outputDuration } from "../src/timeline.ts";
 import { markerContext } from "./markers.ts";
-import type { ModelInfo } from "./env.d.ts";
+import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import { Icon } from "./icons.tsx";
 import { isAudio, isDocument } from "./format.ts";
 import { MEDIA_DRAG } from "./Inspector.tsx";
@@ -333,67 +333,3 @@ function describePick(clips: number[], broll?: string): string {
   return parts.join(" + ");
 }
 
-type Models = { models: ModelInfo[]; credits: number | null; recommended: string };
-let modelsOnce: Promise<Models | undefined> | undefined;
-const loadModels = () =>
-  (modelsOnce ??= window.creatron.models().then((r) => (r.ok ? r.value : ((modelsOnce = undefined), undefined))));
-// Connecting or switching off an account on the Dashboard changes the list: load it again.
-window.addEventListener("creatron:models", () => (modelsOnce = undefined));
-
-/** The chosen model, remembered on this Mac; until you pick one, the best fit for your credits. */
-function useModelChoice(): [string, (id: string) => void] {
-  const read = () => {
-    try {
-      return localStorage.getItem("creatron.model") ?? "";
-    } catch {
-      return "";
-    }
-  };
-  const [model, setModel] = useState(read);
-  useEffect(() => {
-    if (!model) loadModels().then((m) => m && setModel(m.recommended));
-  }, []);
-  const choose = (id: string) => {
-    setModel(id);
-    try {
-      localStorage.setItem("creatron.model", id);
-    } catch {}
-  };
-  return [model, choose];
-}
-
-function ModelPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const [data, setData] = useState<Models>();
-  useEffect(() => {
-    void loadModels().then(setData);
-    const reload = () => setTimeout(() => void loadModels().then(setData));
-    window.addEventListener("creatron:models", reload);
-    return () => window.removeEventListener("creatron:models", reload);
-  }, []);
-  const price = (m: ModelInfo) => (m.free ? "free" : `$${+m.inPerM.toFixed(2)} / $${+m.outPerM.toFixed(2)} per M`);
-  const current = data?.models.find((m) => m.id === value);
-  return (
-    <div className="model-picker">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        title={current ? `${current.name}: ${price(current)}` : value}
-      >
-        {!data && <option value={value}>{value.split("/").pop() || "Loading…"}</option>}
-        {data && (
-          <>
-            <optgroup label="Free (no credits needed)">
-              {data.models.filter((m) => m.free).map((m) => <option key={m.id} value={m.id}>{m.name.replace(" (free)", "")} · free</option>)}
-            </optgroup>
-            <optgroup label={data.credits !== null && data.credits <= 0 ? "Paid (needs OpenRouter credits)" : "Paid"}>
-              {data.models.filter((m) => !m.free).map((m) => <option key={m.id} value={m.id}>{m.name} · {price(m)}</option>)}
-            </optgroup>
-          </>
-        )}
-      </select>
-      {data?.credits !== null && data?.credits !== undefined && (
-        <span className={`credits ${data.credits <= 0 ? "empty" : ""}`} title="OpenRouter balance">${data.credits.toFixed(2)}</span>
-      )}
-    </div>
-  );
-}

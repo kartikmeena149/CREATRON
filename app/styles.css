@@ -1513,7 +1513,9 @@ kbd, .tc, .tl-toolbar .tc, .cap-time, .xp-pct, .xp-specs, .slider .value, .num-b
 .prompt-file i:hover { color: var(--text); }
 .prompt-connect { height: 30px; padding: 0 10px; background: transparent; border-color: var(--line); color: var(--text); font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
 .prompt-model { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
-.prompt-model i { width: 6px; height: 6px; border-radius: 50%; background: #f2f2f2; }
+.prompt-model i { width: 6px; height: 6px; border-radius: 50%; background: #f2f2f2; flex: none; }
+.prompt-model .model-picker { flex: none; }
+.prompt-model .model-picker select { font: 500 11px/1 "SF Mono", ui-monospace, monospace; letter-spacing: 0.04em; color: var(--dim); max-width: 280px; }
 .prompt-go { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 6px; background: #f2f2f2; border-color: #f2f2f2; color: #111; }
 .prompt-go:hover:not(:disabled) { background: #fff; border-color: #fff; }
 .ideas { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 4px; }

@@ -1,5 +1,5 @@
-// Which AI models the editor can use: OpenRouter's tool-capable models, free ones first
-// when the account has no credits. Cached for an hour so the picker opens instantly.
+// Which AI models the editor can use: your connected plans (Claude, ChatGPT) first, then
+// OpenRouter's tool-capable models when there is a key, free ones first without credits. Cached for an hour so the picker opens instantly.
 import { claudeAvailable } from "./claudecli.ts";
 import { agentState, enabled } from "./agents.ts";
 import { DEFAULT_MODEL } from "./plan.ts";
@@ -21,7 +21,9 @@ const FREE_PREFERRED = [
 let cache: { at: number; models: ModelInfo[] } | undefined;
 
 export async function listModels(key = process.env.OPENROUTER_API_KEY): Promise<ModelList> {
-  if (!cache || Date.now() - cache.at > 3600_000) cache = { at: Date.now(), models: await fetchModels() };
+  // OpenRouter's models are offered only with an OpenRouter key; without one they can't run.
+  if (key && (!cache || Date.now() - cache.at > 3600_000)) cache = { at: Date.now(), models: await fetchModels().catch(() => cache?.models ?? []) };
+  const router = key ? (cache?.models ?? []) : [];
   // Your own plans, connected on the Dashboard: listed first, they need no OpenRouter credits.
   const on = enabled();
   const claude: ModelInfo[] = on.claude && claudeAvailable()
@@ -33,10 +35,12 @@ export async function listModels(key = process.env.OPENROUTER_API_KEY): Promise<
   const codex: ModelInfo[] = on.codex && agentState("codex").installed
     ? [{ id: "codex/default", name: "ChatGPT (your subscription, via Codex)", free: true, inPerM: 0, outPerM: 0 }]
     : [];
-  const models = [...claude, ...codex, ...cache.models];
+  const models = [...claude, ...codex, ...router];
   const c = await credits(key);
-  // No credits yet: start on the best free model so the AI works out of the box.
-  const recommended = c !== null && c <= 0 ? (cache.models.find((m) => m.free)?.id ?? DEFAULT_MODEL) : DEFAULT_MODEL;
+  // A plan you connected comes first (Claude, then ChatGPT): that's what the connectors are for.
+  // Only with no plan: OpenRouter, on the best free model when there are no credits.
+  const plan = claude[0] ?? codex[0];
+  const recommended = plan ? plan.id : c !== null && c <= 0 ? (router.find((m) => m.free)?.id ?? DEFAULT_MODEL) : DEFAULT_MODEL;
   return { models, credits: c, recommended };
 }
 

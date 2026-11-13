@@ -3,6 +3,7 @@
 // that do the editing: your Claude plan, your ChatGPT plan, or an OpenRouter key.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
+import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import type { AgentId, AgentState, Connections } from "../src/chatTypes.ts";
 import { Icon } from "./icons.tsx";
 import { Orb } from "./Orb.tsx";
@@ -123,7 +124,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             {conn && !connected && (
               <button className="prompt-connect" onClick={() => openHome("connections")}>No AI connected · Connect</button>
             )}
-            {conn && connected && <ModelLine conn={conn} />}
+            {conn && connected && <HomeModel />}
             <button className="prompt-go" title="Start (Enter)" onClick={() => void start()}><Icon name="arrowUp" size={15} /></button>
           </div>
         </div>
@@ -157,10 +158,10 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
   );
 }
 
-/** Which of your accounts the chat will use, in one line. */
-function ModelLine({ conn }: { conn: Connections }) {
-  const names = [ready(conn.claude) && conn.enabled.claude && "Claude", ready(conn.codex) && conn.enabled.codex && "ChatGPT", conn.openrouter && "OpenRouter"].filter(Boolean);
-  return <span className="prompt-model mono"><i />{names.join(" · ") || "Connected"}</span>;
+/** The model that will edit: the same choice as the chat's menu, your connected plan by default. */
+function HomeModel() {
+  const [model, setModel] = useModelChoice();
+  return <span className="prompt-model"><i /><ModelPicker value={model} onChange={setModel} /></span>;
 }
 
 const AGENTS: { id: AgentId; name: string; via: string; mark: string; what: string }[] = [
