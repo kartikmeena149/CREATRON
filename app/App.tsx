@@ -17,7 +17,7 @@ import { useTabs } from "./tabs.ts";
 import { ClipMenu } from "./ClipMenu.tsx";
 import * as act from "./clipActions.ts";
 import { isAudio, isImage } from "./format.ts";
-import { Splitter, defaultSize, useLayoutSizes } from "./Splitter.tsx";
+import { MIN, Splitter, defaultSize, fitLayout, useLayoutRoom, useLayoutSizes } from "./Splitter.tsx";
 import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
 import { deleteSceneKey } from "./SceneLayers.tsx";
 import { hideShot, shotOf } from "./SceneShots.tsx";
@@ -33,6 +33,9 @@ export function App() {
   const [sizes, setSizes] = useLayoutSizes();
   // A multi-selection shows its own panel even when the left panel was hidden.
   const leftOpen = useEditor((s) => s.leftView !== null || s.picked.length + s.pickedIds.length > 1);
+  // The sizes as drawn: the viewer always keeps its room, whatever the window or the saved sizes.
+  const [win, editorRef] = useLayoutRoom();
+  const fit = fitLayout(sizes, { left: leftOpen, ai: aiOpen }, win);
   const home = useHome((h) => h.view);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
@@ -96,25 +99,25 @@ export function App() {
       <TopBar
         aiOpen={aiOpen} onToggleAi={() => setAiOpen(!aiOpen)} />
       {home && <Dashboard onOpenVideo={(p) => open(p)} />}
-      <div className="body" hidden={Boolean(home)} style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${sizes.ai}px` : "minmax(0, 1fr)" }}>
-        <div className="editor" style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${sizes.timeline}px` }}>
+      <div className="body" hidden={Boolean(home)} style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${fit.sizes.ai}px` : "minmax(0, 1fr)" }}>
+        <div className="editor" ref={editorRef} style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${fit.sizes.timeline}px` }}>
           <div className="workspace">
             <Rail />
             {leftOpen && <>
-              <div className="inspector-wrap" style={{ width: sizes.left }}>
+              <div className="inspector-wrap" style={{ width: fit.sizes.left }}>
                 <Inspector onOpen={() => addMedia()} onLink={(kind) => setLinkOpen(kind)} onOpenMain={open} />
               </div>
-              <Splitter dir="x" value={sizes.left} min={220} max={560} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
+              <Splitter dir="x" value={fit.sizes.left} min={MIN.left} max={fit.max.left} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
             </>}
             <main className="center">
               {project ? <Viewer /> : <Welcome onOpen={() => addMedia()} onAuto={() => setAutoOpen(true)} error={error} />}
             </main>
           </div>
-          <Splitter dir="y" value={sizes.timeline} min={150} max={Math.max(200, window.innerHeight - 260)} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
+          <Splitter dir="y" value={fit.sizes.timeline} min={MIN.timeline} max={fit.max.timeline} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
           <Timeline onOpenMain={(p) => open(p, true)} />
         </div>
         {aiOpen && <>
-          <Splitter dir="x" value={sizes.ai} min={300} max={680} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
+          <Splitter dir="x" value={fit.sizes.ai} min={MIN.ai} max={fit.max.ai} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
           <AIPanel onAuto={() => setAutoOpen(true)} />
         </>}
       </div>
