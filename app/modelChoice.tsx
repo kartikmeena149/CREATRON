@@ -2,6 +2,7 @@
 // remembered on this Mac. Until you pick, it is your own connected plan: Claude first, then
 // ChatGPT, and an OpenRouter model only when no plan is connected.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { openHome } from "./Dashboard.tsx";
 import type { ModelInfo } from "./env.d.ts";
@@ -77,8 +78,10 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
   const [up, setUp] = useState(false);
   const [active, setActive] = useState(0);
   const [room, setRoom] = useState(360);
-  const [left, setLeft] = useState(0);
+  const [place, setPlace] = useState<React.CSSProperties>({});
   const root = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const models = data?.models ?? [];
   const plans = models.filter(isPlan);
   const free = models.filter((m) => !isPlan(m) && m.free);
@@ -95,8 +98,12 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
     const above = r ? r.top - 90 : 0; // the app's top bar sits over the first 90 px
     const goUp = below < 460 && above > below;
     setUp(goUp);
-    // Starts at the button's left edge, moved left when it would run off the window.
-    setLeft(r ? Math.min(0, window.innerWidth - 12 - (r.left + MENU_W)) : 0);
+    // The menu floats over the whole window (the panels clip what sticks out of them): it starts at
+    // the button's left edge and stays 12 px inside the window.
+    if (r) {
+      const left = Math.max(12, Math.min(r.left, window.innerWidth - 12 - MENU_W));
+      setPlace(goUp ? { left, bottom: window.innerHeight - r.top + 10 } : { left, top: r.bottom + 10 });
+    }
     // The list fits the room on that side (head and foot take about 110 px).
     setRoom(Math.max(150, Math.min(380, (goUp ? above : below) - 130)));
     setActive(Math.max(0, order.findIndex((m) => m.id === value)));
@@ -106,7 +113,13 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
 
   useEffect(() => {
     if (!open) return;
-    const away = (e: MouseEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(false);
+    const away = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!root.current?.contains(t) && !menu.current?.contains(t)) setOpen(false);
+    };
+    // The menu is placed for where the button was: close it when the window changes size.
+    const resized = () => setOpen(false);
+    window.addEventListener("resize", resized);
     const keys = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
       else if (e.key === "ArrowDown") setActive((i) => Math.min(order.length - 1, i + 1));
@@ -119,13 +132,20 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", keys, true);
     return () => {
+      window.removeEventListener("resize", resized);
       document.removeEventListener("mousedown", away);
       document.removeEventListener("keydown", keys, true);
     };
   }, [open, active, order.length]);
 
+  // Keeps the highlighted row in view by scrolling the list only (scrollIntoView would also scroll
+  // the panels around it and shift the whole window).
   useEffect(() => {
-    if (open) root.current?.querySelector(".mp-row.active")?.scrollIntoView({ block: "nearest" });
+    const box = list.current;
+    const row = box?.querySelector<HTMLElement>(".mp-row.active");
+    if (!box || !row) return;
+    if (row.offsetTop < box.scrollTop) box.scrollTop = row.offsetTop - 8;
+    else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight + 8;
   }, [open, active]);
 
   const row = (m: ModelInfo) => {
@@ -158,15 +178,15 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
         <span className="mp-current">{short(current, value)}</span>
         <Icon name="chevronDown" size={12} />
       </button>
-      {open && (
-        <div className={`mp-menu ${up ? "up" : ""}`} role="listbox" style={{ left, width: MENU_W }}>
+      {open && createPortal(
+        <div ref={menu} className={`mp-menu ${up ? "up" : ""}`} role="listbox" style={{ ...place, width: MENU_W }}>
           <div className="mp-head">
             <span>Model</span>
             {data?.credits !== null && data?.credits !== undefined && (
               <span className={broke ? "low" : ""}>OpenRouter ${data.credits.toFixed(2)}</span>
             )}
           </div>
-          <div className="mp-list" style={{ maxHeight: room }}>
+          <div className="mp-list" ref={list} style={{ maxHeight: room }}>
             {plans.length > 0 && <p className="mp-group">Connected</p>}
             {plans.map(row)}
             {free.length + paid.length > 0 && <p className="mp-group"><Logo maker="openrouter" size={11} />OpenRouter</p>}
@@ -180,7 +200,8 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (id:
             <span>Manage connections</span>
             <Icon name="chevron" size={12} />
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -474,13 +474,13 @@ button.wide { width: 100%; margin-top: 8px; }
 
 /* The menu: a dark sheet, plans first, then OpenRouter. */
 .mp-menu {
-  position: absolute; z-index: 60; top: calc(100% + 10px); max-width: calc(100vw - 24px);
-  display: flex; flex-direction: column; background: rgba(20, 20, 20, 0.96); border: 1px solid #2c2c2c; border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6); backdrop-filter: blur(20px);
+  position: fixed; z-index: 1000; max-width: calc(100vw - 24px);
+  display: flex; flex-direction: column; background: #141414; border: 1px solid #2c2c2c; border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6);
   overflow: hidden; animation: mp-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
   transform-origin: top center;
 }
-.mp-menu.up { top: auto; bottom: calc(100% + 10px); transform-origin: bottom center; }
+.mp-menu.up { transform-origin: bottom center; }
 @keyframes mp-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 .mp-menu.up { animation-name: mp-in-up; }
 @keyframes mp-in-up { from { opacity: 0; transform: translateY(4px) scale(0.98); } }
