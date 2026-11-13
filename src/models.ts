@@ -28,12 +28,12 @@ export async function listModels(key = process.env.OPENROUTER_API_KEY): Promise<
   const on = enabled();
   const claude: ModelInfo[] = on.claude && claudeAvailable()
     ? [
-        { id: "claude-code/sonnet", name: "Claude Sonnet (your subscription)", free: true, inPerM: 0, outPerM: 0 },
-        { id: "claude-code/opus", name: "Claude Opus (your subscription)", free: true, inPerM: 0, outPerM: 0 },
+        { id: "claude-code/sonnet", name: "Claude Sonnet", free: true, inPerM: 0, outPerM: 0 },
+        { id: "claude-code/opus", name: "Claude Opus", free: true, inPerM: 0, outPerM: 0 },
       ]
     : [];
   const codex: ModelInfo[] = on.codex && agentState("codex").installed
-    ? [{ id: "codex/default", name: "ChatGPT (your subscription, via Codex)", free: true, inPerM: 0, outPerM: 0 }]
+    ? [{ id: "codex/default", name: "ChatGPT", free: true, inPerM: 0, outPerM: 0 }]
     : [];
   const models = [...claude, ...codex, ...router];
   const c = await credits(key);

@@ -161,7 +161,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
 /** The model that will edit: the same choice as the chat's menu, your connected plan by default. */
 function HomeModel() {
   const [model, setModel] = useModelChoice();
-  return <span className="prompt-model"><i /><ModelPicker value={model} onChange={setModel} /></span>;
+  return <span className="prompt-model"><ModelPicker value={model} onChange={setModel} /></span>;
 }
 
 const AGENTS: { id: AgentId; name: string; via: string; mark: string; what: string }[] = [
