@@ -11,6 +11,8 @@
   background: transparent; color: var(--grey-2); font: inherit; cursor: pointer; touch-action: manipulation;
 }
 .games button:hover { color: var(--white); }
+/* The newest game leads, on its own row. */
+.games button:first-child { grid-column: 1 / -1; }
 .games button[aria-selected="true"] { background: var(--white); color: var(--ink); border-color: var(--white); }
 
 /* The stage: a square sheet of frames. No scrolling or zooming while a finger is on it. */
