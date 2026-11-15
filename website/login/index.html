@@ -45,8 +45,6 @@
             Continue with Google
           </button>
           <p class="status" id="status" role="status" aria-live="polite"></p>
-          <p class="fine">We only use your name and email from Google. No posting, no access to your files.</p>
-          <p class="switch mono"><a href="../demo/">Try the editor without an account &gt;</a></p>
         </div>
 
         <!-- Signed in: who you are, and your place on the list. -->
@@ -62,7 +60,7 @@
           <p class="muted" id="joined">You're on the early-access list. We'll email you when the Mac app is ready for you.</p>
           <p class="status" id="status-in" role="status" aria-live="polite"></p>
           <div class="in-actions">
-            <a class="btn" href="../demo/">Open the demo</a>
+            <a class="btn" href="../play/">Play the games</a>
             <button class="btn line plain" type="button" id="out-btn">Sign out</button>
           </div>
         </div>
@@ -104,10 +102,21 @@
         }
       }
 
+      // A page that needs sign-in (the games) sends people here with ?next=play; it's kept across the
+      // trip to Google, because Supabase only returns to this page's own address.
+      const NEXT = { play: "../play/" };
+      const asked = new URLSearchParams(location.search).get("next");
+      try { if (NEXT[asked]) sessionStorage.setItem("creatro.next", asked); } catch {}
+      const next = () => { try { const n = sessionStorage.getItem("creatro.next"); sessionStorage.removeItem("creatro.next"); return NEXT[n]; } catch { return undefined; } };
+
       const problem = takeReturn();
       if (problem) say("status", `Sign-in didn't finish: ${problem}`, true);
       const user = await currentUser().catch(() => null);
-      user ? showIn(user) : showOut();
+      if (user) {
+        const to = next();
+        if (to) { joinWaitlist(user).catch(() => {}).finally(() => location.replace(to)); }
+        else showIn(user);
+      } else showOut();
 
       $("google").addEventListener("click", () => {
         say("status", "Opening Google…");

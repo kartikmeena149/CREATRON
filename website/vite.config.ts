@@ -1,4 +1,5 @@
-// The website: a landing page and the editor's browser demo (demo/), built to plain static files.
+// The website: the landing page, sign-in and the games, built to plain static files. The editor's
+// browser demo (demo/) is kept in the source but not built or deployed until launch.
 // npm run site:dev to work on it, npm run site:build to make website/dist for any static host.
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
@@ -16,6 +17,6 @@ export default defineConfig({
   build: {
     outDir: resolve(here, "dist"),
     emptyOutDir: true,
-    rollupOptions: { input: { index: resolve(here, "index.html"), demo: resolve(here, "demo/index.html"), login: resolve(here, "login/index.html"), brand: resolve(here, "brand/index.html"), play: resolve(here, "play/index.html"), notFound: resolve(here, "404.html") } },
+    rollupOptions: { input: { index: resolve(here, "index.html"), login: resolve(here, "login/index.html"), brand: resolve(here, "brand/index.html"), play: resolve(here, "play/index.html"), notFound: resolve(here, "404.html") } },
   },
 });

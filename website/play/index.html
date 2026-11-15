@@ -34,6 +34,17 @@
           <h1>Ten frames.<br />One light.</h1>
           <p class="lead muted">The Creatro mark is ten white frames and one red light. Here they are as six small games.</p>
 
+          <!-- The games are for people who have signed in (and so joined the early-access list). -->
+          <div class="gate" id="gate">
+            <p class="mono muted" id="gate-state">Checking sign-in…</p>
+            <div id="gate-out" hidden>
+              <h2>Sign in to play.</h2>
+              <p class="muted">Six games for people on the early-access list. Sign in with Google and you're in.</p>
+              <a class="btn light" href="../login/?next=play" id="gate-btn">Sign in to play</a>
+            </div>
+          </div>
+
+          <div id="arcade" hidden>
           <div class="games mono" id="games" role="tablist" aria-label="Games"></div>
 
           <div class="stage" id="stage" tabindex="0" aria-label="Game. Tap or press space to start.">
@@ -47,6 +58,8 @@
           </div>
           <div class="meta mono"><span id="score">Score 0</span><span id="best">Best 0</span></div>
           <p class="hint muted" id="hint"></p>
+          <p class="who mono muted"><span id="who"></span> · <button type="button" id="signout">Sign out</button></p>
+          </div>
         </div>
       </section>
     </main>

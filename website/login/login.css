@@ -23,9 +23,8 @@ input:focus-visible { border-color: var(--ink); outline: none; }
 
 .status { min-height: 22px; margin-top: 16px; font-size: 14px; color: var(--ink); }
 .status.bad { color: var(--red); }
-.switch { margin-top: 12px; }
-.switch a, button.link { color: var(--ink); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.switch a:hover, button.link:hover { color: var(--red); }
+button.link { color: var(--ink); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+button.link:hover { color: var(--red); }
 .foot { margin-top: auto; }
 
 /* The picture: a viewfinder recording the demo clip, and the frames it has used so far. */
@@ -58,7 +57,6 @@ input:focus-visible { border-color: var(--ink); outline: none; }
 /* Signed out: the one Google button; signed in: who you are and your place on the list. */
 .form-box h1 { margin: 18px 0 12px; }
 .form-box > p.muted { margin-bottom: 28px; }
-.fine { margin: 14px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--grey); }
 .me { display: flex; align-items: center; gap: 16px; margin: 18px 0 16px; }
 .me img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line); }
 .me h1 { margin: 0 0 6px; font-size: clamp(32px, 4vw, 44px); }

@@ -1,4 +1,7 @@
-// Six games made from the Creatro mark: ten white frames and one red light.
+// Six games made from the Creatro mark: ten white frames and one red light, for people who have
+// signed in (signing in is joining the early-access list, see ../auth.ts).
+import { currentUser, hasSession, signOut } from "../auth.ts";
+
 // One square canvas, 600 x 600 logical units. Mouse, keyboard and touch all work; nothing leaves the page.
 const stage = document.getElementById("stage");
 const cv = document.getElementById("board");
@@ -418,7 +421,22 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
-begin(cut);
-requestAnimationFrame(frame);
+// Sign-in first: signed out, the gate sends people to sign in and back here; signed in, the games run.
+async function unlock() {
+  const user = hasSession() ? await currentUser().catch(() => null) : null;
+  if (!user) {
+    document.getElementById("gate-state").hidden = true;
+    document.getElementById("gate-out").hidden = false;
+    return;
+  }
+  document.getElementById("gate").hidden = true;
+  document.getElementById("arcade").hidden = false;
+  document.getElementById("who").textContent = `Playing as ${user.name.split(" ")[0]}`;
+  document.getElementById("signout").addEventListener("click", async () => { await signOut(); location.reload(); });
+  fit();
+  begin(cut);
+  requestAnimationFrame(frame);
+}
+unlock();
 // For automated tests only: /play/?test exposes the games.
 if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, get G() { return G; }, get score() { return score; } };
