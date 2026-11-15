@@ -50,7 +50,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: "#0d0e11",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 14 },
+    trafficLightPosition: { x: 14, y: 17 }, // the buttons centred on the 48 pt top bar (.app in styles.css)
     // No background throttling: playback and export progress keep updating behind other windows.
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/preload.cjs"),

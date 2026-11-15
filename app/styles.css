@@ -1519,7 +1519,16 @@ kbd, .tc, .tl-toolbar .tc, .cap-time, .xp-pct, .xp-specs, .slider .value, .num-b
    labels, red only for something live.
    --------------------------------------------------------------------------------------------- */
 .body[hidden] { display: none; }
-.home-tab { gap: 7px; }
+.brand {
+  height: 32px; padding: 0 12px 0 9px; margin-right: 4px; gap: 9px; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: 9px;
+  color: var(--text); font: 700 12px/1 var(--mono); letter-spacing: 0.16em;
+  transition: background 0.15s, border-color 0.15s;
+}
+.brand:hover { background: #1c1c1c; border-color: var(--line); }
+.brand.on { background: #262626; border-color: #3d3d3d; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
+.brand .orb .light { r: 0.72px; }
+.brand.on .orb .light { filter: drop-shadow(0 0 2px var(--accent)); }
 .dash { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; background: var(--bg); }
 .dash-side { display: flex; flex-direction: column; gap: 8px; padding: 16px 12px; background: var(--chrome); border-right: 1px solid var(--line-soft); }
 .dash-side nav { display: grid; gap: 2px; }

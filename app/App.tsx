@@ -153,8 +153,7 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   }, []);
   return (
     <header className="topbar">
-      <div className="brand" title="Creatro"><Orb size={16} still /> Creatro</div>
-      <HomeTab />
+      <BrandHome />
       <ProjectTabs />
       <div className="grow" />
       {project && (
@@ -174,13 +173,12 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   );
 }
 
-/** The Dashboard, as the first tab. */
-function HomeTab() {
+/** The mark is Home: lit, with the red light blinking, while the dashboard is open. */
+function BrandHome() {
   const home = useHome((h) => h.view);
   return (
-    <button className={`doc-tab home-tab ${home ? "on" : ""}`} title="Dashboard: start a video, open projects, connect your AI" onClick={() => (home ? closeHome() : openHome())}>
-      <Icon name="grid" size={14} />
-      <span>Home</span>
+    <button className={`brand ${home ? "on" : ""}`} title="Home: start a video, open projects, connect your AI" onClick={() => openHome()}>
+      <Orb size={17} still={!home} calm /> Creatro
     </button>
   );
 }
