@@ -19,6 +19,8 @@ build/
 *.m4a
 *.wav
 *.mp3
+# The Play page's sound effects ship with the site.
+!website/public/play/sfx/*.mp3
 renders/
 samples/
 
