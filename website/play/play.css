@@ -21,19 +21,6 @@
 .stage canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; cursor: crosshair; }
 .stage:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 
-/* Direction pad: only for Snake on touch screens. */
-.pad { display: none; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(2, 56px); gap: 6px; justify-content: center; margin-top: 12px; }
-.pad.on { display: grid; }
-.pad button {
-  border: 1px solid var(--line-2); border-radius: var(--r-control); background: var(--ink-2); color: var(--white);
-  font: 400 20px/1 var(--font-mono); touch-action: manipulation; cursor: pointer;
-}
-.pad button:active { background: var(--white); color: var(--ink); }
-.pad [data-d="up"] { grid-column: 2; grid-row: 1; }
-.pad [data-d="left"] { grid-column: 1; grid-row: 2; }
-.pad [data-d="down"] { grid-column: 2; grid-row: 2; }
-.pad [data-d="right"] { grid-column: 3; grid-row: 2; }
-
 /* Signed out: one panel where the board would be. */
 .gate { border: 1px solid var(--line-2); border-radius: var(--r-card); padding: 40px 28px; background: var(--ink-2); }
 .gate h2 { margin: 0 0 12px; }

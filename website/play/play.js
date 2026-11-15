@@ -193,45 +193,94 @@ const fly = {
 };
 
 // ---------- 3. Snake ----------
+// Phone first: tap the left or right half to turn that way (one thumb), or swipe. The edges are
+// open: leave one side and come back on the other. One undo per game rewinds a crash, like an edit.
 const snake = {
-  id: "snake", name: "Snake", pad: true,
-  hint: TOUCH ? "Swipe on the board or use the arrows below. Eat the red light; don't hit the wall or yourself." : "Arrow keys or WASD. Eat the red light; don't hit the wall or yourself.",
-  start: TOUCH ? "Tap, then swipe to steer" : "Press an arrow key to start",
+  id: "snake", name: "Snake",
+  hint: TOUCH ? "Tap the left or right half of the board to turn that way, or swipe. Eat the red light; the edges let you through. One undo per game." : "Arrow keys or WASD. Eat the red light; the edges let you through. One undo per game, when you crash.",
+  start: TOUCH ? "Tap to start · tap left or right to turn" : "Press an arrow key to start",
   N: 18, C: 30, O: 30,
-  init() { this.body = [[9, 9], [8, 9], [7, 9]]; this.prev = this.body.map((p) => [...p]); this.dir = [1, 0]; this.q = []; this.acc = 0; this.step = 0.14; this.over = false; this.food = this.place(); },
-  place() { let f; do f = [Math.floor(Math.random() * this.N), Math.floor(Math.random() * this.N)]; while (this.body.some((p) => p[0] === f[0] && p[1] === f[1])); return f; },
-  turn(d) { const last = this.q.length ? this.q[this.q.length - 1] : this.dir; if (d[0] === -last[0] && d[1] === -last[1]) return; if (d[0] === last[0] && d[1] === last[1]) return; if (this.q.length < 3) this.q.push(d); },
+  init() {
+    this.body = [[9, 9], [8, 9], [7, 9]]; this.prev = this.body.map((p) => [...p]); this.dir = [1, 0]; this.q = [];
+    this.acc = 0; this.step = 0.17; this.over = false; this.points = 0; this.eaten = 0; this.grow = 0;
+    this.food = this.place(); this.big = null; this.undo = 1; this.hist = []; this.pause = 0; this.flash = 0; this.pops = [];
+  },
+  place() { let f; do f = [Math.floor(Math.random() * this.N), Math.floor(Math.random() * this.N)]; while (this.body.some((p) => p[0] === f[0] && p[1] === f[1]) || (this.food && f[0] === this.food[0] && f[1] === this.food[1])); return f; },
+  heading() { return this.q.length ? this.q[this.q.length - 1] : this.dir; },
+  turn(d) { const last = this.heading(); if (d[0] === -last[0] && d[1] === -last[1]) return; if (d[0] === last[0] && d[1] === last[1]) return; if (this.q.length < 3) this.q.push(d); },
+  turnSide(side) { const [x, y] = this.heading(); this.turn(side < 0 ? [y, -x] : [-y, x]); },
   key(k) { const d = { ArrowUp: [0, -1], w: [0, -1], ArrowDown: [0, 1], s: [0, 1], ArrowLeft: [-1, 0], a: [-1, 0], ArrowRight: [1, 0], d: [1, 0] }[k]; if (d) this.turn(d); },
-  dir4(name) { this.turn({ up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[name]); },
+  go() { this.skipUp = true; },
+  press() { this.swiped = false; },
   // A swipe turns as soon as the finger has moved far enough, and one drag can turn more than once.
   move() {
     if (!ptr.down) return;
     const dx = ptr.x - ptr.sx, dy = ptr.y - ptr.sy;
     if (Math.hypot(dx, dy) < 34) return;
+    this.swiped = true;
     this.turn(Math.abs(dx) > Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)]);
     ptr.sx = ptr.x; ptr.sy = ptr.y;
   },
+  // A tap (no swipe): left half turns left, right half turns right, relative to where the snake goes.
+  release() {
+    if (this.skipUp) { this.skipUp = false; return; }
+    if (this.over || this.swiped) return;
+    this.turnSide(ptr.x < S / 2 ? -1 : 1);
+  },
+  save() { this.hist.push({ body: this.body.map((p) => [...p]), dir: [...this.dir], food: [...this.food], big: this.big && { ...this.big }, points: this.points, grow: this.grow, step: this.step }); if (this.hist.length > 8) this.hist.shift(); },
+  crash() {
+    if (this.undo > 0 && this.hist.length) {
+      // Undo: back about a second, a short freeze to get your bearings, and on you go.
+      const h = this.hist[0]; this.undo--;
+      this.body = h.body; this.prev = this.body.map((p) => [...p]); this.dir = h.dir; this.food = h.food; this.big = h.big; this.points = h.points; this.grow = h.grow; this.step = h.step;
+      this.q = []; this.hist = []; this.acc = 0; this.pause = 1.1; this.flash = 1.1; setScore(this.points);
+      return;
+    }
+    this.over = true;
+  },
+  eat(n, at) { this.points += n; this.grow += n - 1; setScore(this.points); this.step = Math.max(0.075, this.step * 0.975); this.pops.push({ x: at[0], y: at[1], t: 0, s: "+" + n }); },
   update(dt) {
+    for (const q of this.pops) q.t += dt;
+    this.pops = this.pops.filter((q) => q.t < 0.8);
+    if (this.flash > 0) this.flash -= dt;
     if (this.over) return;
+    if (this.pause > 0) { this.pause -= dt; return; }
+    if (this.big) { this.big.t -= dt; if (this.big.t <= 0) this.big = null; }
     this.acc += dt;
     while (this.acc >= this.step) {
       this.acc -= this.step;
+      this.save();
       if (this.q.length) this.dir = this.q.shift();
-      const h = [this.body[0][0] + this.dir[0], this.body[0][1] + this.dir[1]];
-      if (h[0] < 0 || h[1] < 0 || h[0] >= this.N || h[1] >= this.N || this.body.slice(0, -1).some((p) => p[0] === h[0] && p[1] === h[1])) { this.over = true; return; }
+      const N = this.N, h = [(this.body[0][0] + this.dir[0] + N) % N, (this.body[0][1] + this.dir[1] + N) % N];
+      if (this.body.slice(0, this.grow > 0 ? this.body.length : -1).some((p) => p[0] === h[0] && p[1] === h[1])) { this.crash(); return; }
       this.prev = this.body.map((p) => [...p]);
-      const ate = h[0] === this.food[0] && h[1] === this.food[1];
       this.body.unshift(h);
-      if (!ate) this.body.pop();
-      else { this.prev.push(this.prev[this.prev.length - 1]); setScore(this.body.length - 3); this.food = this.place(); this.step = Math.max(0.065, this.step * 0.97); }
+      if (h[0] === this.food[0] && h[1] === this.food[1]) {
+        this.eaten++; this.eat(1, h); this.food = this.place();
+        if (this.eaten % 5 === 0 && !this.big) { const f = this.place(); this.big = { x: f[0], y: f[1], t: 6 }; }
+        this.grow++;
+      } else if (this.big && h[0] === this.big.x && h[1] === this.big.y) { this.eat(3, h); this.big = null; this.grow++; }
+      if (this.grow > 0) { this.grow--; this.prev.push(this.prev[this.prev.length - 1]); } else this.body.pop();
     }
   },
   draw() {
-    const P = (c) => this.O + c * this.C + this.C / 2, k = this.over ? 1 : this.acc / this.step;
-    ctx.strokeStyle = LINE; ctx.strokeRect(this.O - 0.5, this.O - 0.5, this.N * this.C + 1, this.N * this.C + 1);
-    light(P(this.food[0]), P(this.food[1]), 11);
-    this.body.forEach((p, i) => { const q = this.prev[i] || p; dot(P(q[0] + (p[0] - q[0]) * k), P(q[1] + (p[1] - q[1]) * k), 12, WHITE, 1 - Math.min(0.7, i * 0.035)); });
-    if (this.over) veil("Game over", `length ${this.body.length} · tap to restart`);
+    const P = (c) => this.O + c * this.C + this.C / 2, k = this.over || this.pause > 0 ? 1 : this.acc / this.step;
+    // Open edges: a dashed border.
+    ctx.strokeStyle = LINE; ctx.setLineDash([6, 8]); ctx.strokeRect(this.O - 0.5, this.O - 0.5, this.N * this.C + 1, this.N * this.C + 1); ctx.setLineDash([]);
+    if (TOUCH && !this.over) { ctx.fillStyle = "rgba(255,255,255,.025)"; ctx.fillRect(S / 2, this.O, 1, this.N * this.C); }
+    light(P(this.food[0]), P(this.food[1]), 10);
+    if (this.big) { const pulse = 1 + 0.15 * Math.sin(this.big.t * 10); light(P(this.big.x), P(this.big.y), 15 * pulse); text(String(Math.ceil(this.big.t)), P(this.big.x), P(this.big.y) - 30, { size: 16, col: GREY }); }
+    this.body.forEach((p, i) => {
+      const q = this.prev[i] || p, jump = Math.abs(p[0] - q[0]) > 1 || Math.abs(p[1] - q[1]) > 1;
+      const x = jump ? p[0] : q[0] + (p[0] - q[0]) * k, y = jump ? p[1] : q[1] + (p[1] - q[1]) * k;
+      dot(P(x), P(y), 12, WHITE, 1 - Math.min(0.7, i * 0.03));
+    });
+    for (const q of this.pops) text(q.s, P(q.x), P(q.y) - 24 - q.t * 30, { size: 18, a: 1 - q.t / 0.8 });
+    text(String(this.points), 16, 14, { size: 20, align: "left" });
+    text("UNDO", S - 36, 14, { size: 16, col: this.undo ? WHITE : "#3a3a3a", align: "right" });
+    dot(S - 22, 14, 6, this.undo ? RED : "#3a3a3a");
+    if (this.flash > 0) text("UNDO · REWOUND", S / 2, S / 2, { size: 30, a: Math.min(1, this.flash), track: 2 });
+    if (this.over) veil("Game over", `${this.points} lights · length ${this.body.length} · tap to restart`);
   },
 };
 
@@ -435,28 +484,19 @@ const catchLight = {
 // ---------- the page ----------
 const GAMES = [keep, fly, snake, dodge, seq, catchLight];
 const list = document.getElementById("games");
-const pad = document.getElementById("pad");
 for (const g of GAMES) {
   const b = document.createElement("button");
   b.type = "button"; b.setAttribute("role", "tab"); b.textContent = g.name;
   b.addEventListener("click", () => { begin(g); stage.focus({ preventScroll: true }); });
   g.tab = b; list.appendChild(b);
 }
-pad.addEventListener("pointerdown", (e) => {
-  const d = e.target.closest("button")?.dataset.d;
-  if (!d || G !== snake) return;
-  e.preventDefault();
-  if (snake.waiting) { snake.waiting = false; }
-  if (snake.over) { begin(snake); snake.waiting = false; }
-  snake.dir4(d);
-});
+
 
 function begin(g) {
   G = g;
   for (const x of GAMES) x.tab.setAttribute("aria-selected", String(x === g));
   best = store.get(g.id); setScore(0);
   g.init(); g.waiting = true;
-  pad.classList.toggle("on", TOUCH && !!g.pad);
   document.getElementById("hint").textContent = g.hint;
 }
 
