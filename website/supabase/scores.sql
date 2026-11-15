@@ -27,24 +27,40 @@ create table if not exists public.players (
   name text not null check (char_length(name) between 2 and 16),
   updated_at timestamptz not null default now()
 );
+-- A chosen name belongs to one player: "Ashu", "ashu" and "ASHU" are the same name.
+create unique index if not exists players_name_unique on public.players (lower(name));
 alter table public.players enable row level security;
 revoke all on public.players from anon, authenticated;
 
 -- The name a player shows on the boards: the one they chose, or "First L." from their Google account.
+-- A "First L." that someone else has chosen as their name gets a number ("Ashu M. 2"), so a chosen
+-- name is only ever on one player.
 create or replace function public.shown_name(uid uuid)
 returns text
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
-  select coalesce(
-    (select p.name from public.players p where p.user_id = uid),
-    (select coalesce(nullif(split_part(trim(n), ' ', 1), ''), 'Player')
-        || coalesce(' ' || nullif(upper(left(split_part(trim(n), ' ', 2), 1)), '') || '.', '')
-     from (select coalesce(u.raw_user_meta_data ->> 'full_name', u.raw_user_meta_data ->> 'name', '') as n
-           from auth.users u where u.id = uid) x),
-    'Player');
+declare
+  chosen text;
+  base text;
+  k int := 1;
+begin
+  select p.name into chosen from public.players p where p.user_id = uid;
+  if chosen is not null then return chosen; end if;
+  select coalesce(nullif(split_part(trim(x.n), ' ', 1), ''), 'Player')
+         || coalesce(' ' || nullif(upper(left(split_part(trim(x.n), ' ', 2), 1)), '') || '.', '')
+    into base
+    from (select coalesce(u.raw_user_meta_data ->> 'full_name', u.raw_user_meta_data ->> 'name', '') as n
+          from auth.users u where u.id = uid) x;
+  base := coalesce(base, 'Player');
+  while exists (select 1 from public.players p
+                where lower(p.name) = lower(base || case when k = 1 then '' else ' ' || k end) and p.user_id <> uid) loop
+    k := k + 1;
+  end loop;
+  return base || case when k = 1 then '' else ' ' || k end;
+end;
 $$;
 
 -- Your name on the boards.
@@ -56,8 +72,9 @@ security definer
 set search_path = public
 as $$ select case when auth.uid() is null then null else public.shown_name(auth.uid()) end; $$;
 
--- Choose your name: 2 to 16 letters, numbers, spaces, dots, dashes or underscores. It changes on
--- every board at once. Returns the name as saved.
+-- Choose your name: 2 to 16 letters, numbers, spaces, dots, dashes or underscores, and not a name
+-- another player has chosen or already shows on a board. It changes on every board at once. Returns
+-- the name as saved.
 create or replace function public.set_name(p_name text)
 returns text
 language plpgsql
@@ -71,8 +88,16 @@ begin
   if uid is null then raise exception 'Sign in first.'; end if;
   if char_length(clean) < 2 or char_length(clean) > 16 then raise exception 'Use 2 to 16 characters.'; end if;
   if clean !~ '^[A-Za-z0-9 ._-]+$' then raise exception 'Use letters, numbers, spaces, dots, dashes or underscores.'; end if;
-  insert into public.players (user_id, name) values (uid, clean)
-  on conflict (user_id) do update set name = excluded.name, updated_at = now();
+  if exists (select 1 from public.players p where lower(p.name) = lower(clean) and p.user_id <> uid)
+     or exists (select 1 from public.scores s where lower(s.name) = lower(clean) and s.user_id <> uid) then
+    raise exception 'That name is taken. Try another.';
+  end if;
+  begin
+    insert into public.players (user_id, name) values (uid, clean)
+    on conflict (user_id) do update set name = excluded.name, updated_at = now();
+  exception when unique_violation then
+    raise exception 'That name is taken. Try another.';
+  end;
   update public.scores set name = clean where user_id = uid;
   return clean;
 end;

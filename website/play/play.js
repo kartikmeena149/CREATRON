@@ -110,8 +110,8 @@ cv.addEventListener("pointerdown", (e) => {
   cv.setPointerCapture(e.pointerId);
   Object.assign(ptr, toBoard(e), { down: true, type: e.pointerType });
   ptr.sx = ptr.x; ptr.sy = ptr.y;
-  if (G.waiting) { G.waiting = false; sound.play("start"); G.go?.(); return; }
-  if (G.over) { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
+  if (G.waiting) { G.waiting = false; sound.play("start"); G.go?.(); settle(); return; }
+  if (G.over) { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); settle(); return; }
   G.press?.();
   ended();
 });
@@ -119,6 +119,28 @@ cv.addEventListener("pointermove", (e) => { Object.assign(ptr, toBoard(e), { typ
 cv.addEventListener("pointerup", () => { if (!ptr.down) return; ptr.down = false; G.release?.(); });
 cv.addEventListener("pointercancel", () => { ptr.down = false; });
 cv.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// No accidental swipes on a phone: while a round is on, a finger that lands on the board or just around
+// it (where a thumb slips off the edge) moves the game, never the page. Further away, the page scrolls
+// as usual, so the leaderboard is always a swipe away.
+const MARGIN = 56;
+let guard = false;
+const live = () => G && !G.waiting && !G.over;
+document.addEventListener("touchstart", (e) => {
+  const t = e.touches[0], b = stage.getBoundingClientRect();
+  guard = live() && !!t && t.clientX > b.left - MARGIN && t.clientX < b.right + MARGIN && t.clientY > b.top - MARGIN && t.clientY < b.bottom + MARGIN;
+}, { passive: true });
+document.addEventListener("touchmove", (e) => { if (guard || e.target === cv) e.preventDefault(); }, { passive: false });
+document.addEventListener("touchend", (e) => { if (!e.touches.length) guard = false; }, { passive: true });
+// Double-tap zoom and the long-press menu stay off the board too.
+stage.addEventListener("touchstart", (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+stage.addEventListener("dblclick", (e) => e.preventDefault());
+// When a round starts on a phone, bring the whole board on screen so nothing needs a scroll mid-game.
+function settle() {
+  if (ptr.type !== "touch") return;
+  const b = stage.getBoundingClientRect();
+  if (b.top < 64 || b.bottom > innerHeight - 8) scrollBy({ top: b.top - Math.max(64, (innerHeight - b.height) / 2), behavior: "smooth" });
+}
 
 stage.addEventListener("keydown", (e) => {
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
