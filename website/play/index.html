@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Creatro: Play</title>
+    <meta name="description" content="Six small games made from the Creatro mark: ten white frames and one red light." />
+    <link rel="canonical" href="https://creatro.in/play/" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Creatro" />
+    <meta property="og:title" content="Creatro: Play" />
+    <meta property="og:description" content="Ten white frames, one red light, six games." />
+    <meta property="og:image" content="https://creatro-opal.vercel.app/share.png" />
+    <meta property="og:url" content="https://creatro.in/play/" />
+    <!-- Vercel Web Analytics: no cookies, counts visits once it is switched on in the Vercel project. -->
+    <script defer src="/_vercel/insights/script.js"></script>
+    <link rel="icon" href="../brand/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../brand/app-icon-180.png" />
+    <link rel="stylesheet" href="../site.css" />
+    <link rel="stylesheet" href="./play.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="../" aria-label="Creatro"><img src="../brand/mark.svg" alt="" /><span>Creatro</span></a>
+      <nav class="links mono"><a href="../#film">Film</a><a href="../#editor">Editor</a><a href="../brand/">Brand</a></nav>
+      <a class="btn" href="../">Site</a>
+    </header>
+
+    <main>
+      <section class="band ink play">
+        <div class="wrap">
+          <p class="dot muted">( Play )</p>
+          <h1>Ten frames.<br />One light.</h1>
+          <p class="lead muted">The Creatro mark is ten white frames and one red light. Here they are as six small games.</p>
+
+          <div class="games mono" id="games" role="tablist" aria-label="Games"></div>
+
+          <div class="stage" id="stage" tabindex="0" aria-label="Game. Tap or press space to start.">
+            <canvas id="board" width="600" height="600"></canvas>
+          </div>
+          <div class="pad" id="pad" aria-label="Direction buttons">
+            <button data-d="up" aria-label="Up">↑</button>
+            <button data-d="left" aria-label="Left">←</button>
+            <button data-d="down" aria-label="Down">↓</button>
+            <button data-d="right" aria-label="Right">→</button>
+          </div>
+          <div class="meta mono"><span id="score">Score 0</span><span id="best">Best 0</span></div>
+          <p class="hint muted" id="hint"></p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="band ink">
+      <nav class="foot-words">
+        <a href="../#film">Film</a>
+        <a href="../login/">Join</a>
+        <a href="../brand/">Brand</a>
+      </nav>
+      <div class="foot-line mono">
+        <span>Creatro · creatro.in · Your footage stays on your Mac.</span>
+        <img src="../brand/mark-small-white.svg" width="18" height="18" alt="" />
+      </div>
+    </footer>
+
+    <script type="module" src="./play.js"></script>
+  </body>
+</html>
