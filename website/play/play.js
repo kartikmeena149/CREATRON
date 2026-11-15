@@ -1,6 +1,6 @@
 // Seven games made from the Creatro mark: ten white frames and one red light, for people who have
 // signed in (signing in is joining the early-access list, see ../auth.ts).
-import { currentUser, hasSession, signOut } from "../auth.ts";
+import { currentUser, hasSession, leaderboard, signOut, submitScore } from "../auth.ts";
 
 // One square canvas, 600 x 600 logical units. Mouse, keyboard and touch all work; nothing leaves the page.
 const stage = document.getElementById("stage");
@@ -113,6 +113,7 @@ cv.addEventListener("pointerdown", (e) => {
   if (G.waiting) { G.waiting = false; sound.play("start"); G.go?.(); return; }
   if (G.over) { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.press?.();
+  ended();
 });
 cv.addEventListener("pointermove", (e) => { Object.assign(ptr, toBoard(e), { type: e.pointerType }); G.move?.(); });
 cv.addEventListener("pointerup", () => { if (!ptr.down) return; ptr.down = false; G.release?.(); });
@@ -127,6 +128,7 @@ stage.addEventListener("keydown", (e) => {
   if (G.waiting && (e.key === " " || e.key.startsWith("Arrow"))) { G.waiting = false; sound.play("start"); G.go?.(); if (e.key === " ") return; }
   if (G.over && e.key === " ") { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.key?.(e.key);
+  ended();
 });
 stage.addEventListener("keyup", (e) => { keys[e.key] = false; G.keyup?.(e.key); });
 
@@ -160,6 +162,8 @@ const climb = {
     this.aiming = false; this.ang = Math.PI / 2 - 0.45; this.pow = 0; this.cam = this.h - 180; this.clock = 0;
     this.pops = []; this.fromH = this.h; this.reset = 0; this.over = false;
     setScore(Math.floor(this.h / 10));
+    // A height climbed before (or before the leaderboard existed) goes on the board too.
+    if (this.top > this.r + 10) { clearTimeout(this.sendT); this.sendT = setTimeout(() => sendScore("climb", Math.floor(this.top / 10)), 800); }
   },
   // Ledges are made upward as the climb needs them: higher means narrower, further apart, and moving.
   grow(toH) {
@@ -264,6 +268,7 @@ const climb = {
     if (this.h > this.top + 1) {
       const passed = Math.floor(this.top / 1000) < Math.floor(this.h / 1000);
       this.top = this.h;
+      clearTimeout(this.sendT); this.sendT = setTimeout(() => sendScore("climb", Math.floor(this.top / 10)), 1500);
       if (passed) { this.pops.push({ x: S / 2, h: this.h + 70, t: 0, s: `${Math.floor(this.h / 1000) * 100} M`, big: true }); sound.play("best"); }
     }
     this.keep();
@@ -817,11 +822,56 @@ for (const g of GAMES) {
 }
 
 
-let startBest = 0, wasOver = false;
+// ---------- leaderboards ----------
+const UNIT = { climb: "best height · m", keep: "bounces", fly: "points", snake: "points", dodge: "points", seq: "rounds", catch: "caught" };
+let boardAsk = 0;
+async function showBoard(id) {
+  const rows = document.getElementById("board-rows"), note = document.getElementById("board-note");
+  document.getElementById("board-game").textContent = `${GAMES.find((g) => g.id === id).name} · ${UNIT[id]}`.toUpperCase();
+  const ask = ++boardAsk;
+  note.textContent = rows.childElementCount ? "" : "Loading…";
+  try {
+    const list = await leaderboard(id);
+    if (ask !== boardAsk) return;
+    const items = [];
+    list.forEach((r, i) => {
+      if (i > 0 && r.rank > list[i - 1].rank + 1) { const gap = document.createElement("li"); gap.className = "gap"; gap.textContent = "·  ·  ·"; items.push(gap); }
+      const li = document.createElement("li");
+      if (r.me) li.className = "me";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = `#${r.rank}`;
+      const who = document.createElement("span"); who.textContent = r.me ? `${r.name} · you` : r.name;
+      const sc = document.createElement("span"); sc.className = "s"; sc.textContent = String(r.best);
+      li.append(n, who, sc); items.push(li);
+    });
+    rows.replaceChildren(...items);
+    const mine = list.find((r) => r.me);
+    note.textContent = !list.length ? "No scores yet. Be the first on the board." : mine ? (mine.rank === 1 ? "You're #1." : `You're #${mine.rank}.`) : "Play a round to get on the board.";
+  } catch (e) {
+    if (ask !== boardAsk) return;
+    rows.replaceChildren(); note.textContent = e.message;
+  }
+}
+async function sendScore(id, value) {
+  if (!value || value < 1) return;
+  try { await submitScore(id, value); } catch { return; }
+  if (G.id === id) showBoard(id);
+}
+
+let startBest = 0, wasOver = false, boardShown = null;
+// When a round ends (after a frame, a tap or a key): a bloom for a new best, and the score goes to the
+// leaderboard (only a new best changes it).
+function ended() {
+  if (G.over && !wasOver) {
+    if (score > startBest && startBest > 0) setTimeout(() => sound.play("best"), 650);
+    sendScore(G.id, score);
+  }
+  wasOver = !!G.over;
+}
 function begin(g) {
   G = g;
   for (const x of GAMES) x.tab.setAttribute("aria-selected", String(x === g));
   best = store.get(g.id); startBest = best; wasOver = false; setScore(0);
+  if (G !== g || !document.getElementById("board-rows").childElementCount || boardShown !== g.id) { boardShown = g.id; showBoard(g.id); }
   g.init(); g.waiting = true;
   document.getElementById("hint").textContent = g.hint;
 }
@@ -833,8 +883,7 @@ function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000); last = now;
   if (visible && !document.hidden) {
     if (!G.waiting) G.update(dt);
-    if (G.over && !wasOver && score > startBest && startBest > 0) setTimeout(() => sound.play("best"), 650);
-    wasOver = !!G.over;
+    ended();
     sheet(); G.draw();
     if (G.waiting) veil(G.name.toUpperCase(), G.start);
   }
@@ -862,4 +911,4 @@ async function unlock() {
 }
 unlock();
 // For automated tests only: /play/?test exposes the games.
-if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, sound, get G() { return G; }, get score() { return score; } };
+if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, sound, showBoard, get G() { return G; }, get score() { return score; } };

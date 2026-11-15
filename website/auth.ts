@@ -108,3 +108,24 @@ export async function signOut() {
   write(null);
   if (s) await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method: "POST", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${s.access_token}` } }).catch(() => {});
 }
+
+// ---------- leaderboards (website/supabase/scores.sql) ----------
+export type BoardRow = { rank: number; name: string; best: number; me: boolean };
+
+async function rpc<T>(fn: string, body: Record<string, unknown>): Promise<T> {
+  const s = await fresh();
+  if (!s) throw new Error("You're signed out.");
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${s.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 404 ? "The leaderboard isn't set up yet." : `Leaderboard error (${r.status}).`);
+  return r.json();
+}
+
+/** Saves a score for a game; returns your best there. */
+export const submitScore = (game: string, score: number) => rpc<number>("submit_score", { p_game: game, p_score: Math.floor(score) });
+
+/** The top 10 for a game, plus your own row when you're further down. */
+export const leaderboard = (game: string) => rpc<BoardRow[]>("leaderboard", { p_game: game });
