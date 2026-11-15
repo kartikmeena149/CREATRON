@@ -16,6 +16,6 @@ export default defineConfig({
   build: {
     outDir: resolve(here, "dist"),
     emptyOutDir: true,
-    rollupOptions: { input: { index: resolve(here, "index.html"), demo: resolve(here, "demo/index.html"), login: resolve(here, "login/index.html"), brand: resolve(here, "brand/index.html"), notFound: resolve(here, "404.html") } },
+    rollupOptions: { input: { index: resolve(here, "index.html"), demo: resolve(here, "demo/index.html"), login: resolve(here, "login/index.html"), brand: resolve(here, "brand/index.html"), play: resolve(here, "play/index.html"), notFound: resolve(here, "404.html") } },
   },
 });
