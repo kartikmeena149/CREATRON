@@ -5,13 +5,17 @@
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderFrames, renderStill, selectComposition } from "@remotion/renderer";
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { cpus, homedir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { cpus, freemem, homedir, totalmem } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { customFiles, customVersion, writeCustomEntry } from "./customcode.ts";
 import type { OverlayProps } from "./motion.ts";
 import { ROOT } from "./tools.ts";
 
 const served = new Map<string, Promise<string>>();
+
+/** On a Mac, Chrome draws with the GPU (ANGLE on Metal): about 5x faster than its software drawing. */
+const chromiumOptions = process.platform === "darwin" ? { gl: "angle" as const } : {};
 
 /**
  * The bundled templates, plus this project's custom animations (custom/) when it has any.
@@ -37,14 +41,14 @@ async function browserAndComposition(props: OverlayProps, custom?: string) {
   const browser = await ensureBrowser();
   if (!("path" in browser)) throw new Error("Couldn't download the browser Remotion draws animations with. Check your internet connection and export again.");
   const browserExecutable = chromeOutsideProtectedFolders(browser.path);
-  const composition = await selectComposition({ serveUrl, id: "Overlay", inputProps: props, browserExecutable });
+  const composition = await selectComposition({ serveUrl, id: "Overlay", inputProps: props, browserExecutable, chromiumOptions });
   return { serveUrl, browserExecutable, composition };
 }
 
 /** One frame of the layer as a see-through PNG (the AI's own check of what it made). */
 export async function renderOverlayStill(props: OverlayProps, frame: number, out: string, custom?: string): Promise<string> {
   const { serveUrl, browserExecutable, composition } = await browserAndComposition(props, custom);
-  await renderStill({ composition, serveUrl, inputProps: props, frame, output: out, imageFormat: "png", browserExecutable, overwrite: true });
+  await renderStill({ composition, serveUrl, inputProps: props, frame, output: out, imageFormat: "png", browserExecutable, chromiumOptions, overwrite: true });
   return out;
 }
 
@@ -64,12 +68,54 @@ export async function renderOverlay(
     inputProps: props,
     imageFormat: "png",
     outputDir: dir,
-    concurrency: cpus().length,
+    concurrency: renderBudget(cpus().length, 0.4).workers, // these tabs draw shapes and text, no video
     browserExecutable,
+    chromiumOptions,
     onStart: () => {},
     onFrameUpdate: (done) => onProgress(done / composition.durationInFrames),
   });
   return join(dir, "element-*.png");
+}
+
+const GB = 2 ** 30;
+
+/**
+ * The memory other work could take right now without the Mac running out. macOS keeps this as a
+ * percentage (the number Activity Monitor's memory pressure is drawn from); Node's own freemem()
+ * counts only untouched pages there and reads close to zero on a healthy Mac.
+ */
+export function freeMemory(): number {
+  if (process.platform === "darwin") {
+    const r = spawnSync("/usr/sbin/sysctl", ["-n", "kern.memorystatus_level"], { encoding: "utf8", timeout: 2000 });
+    const percent = Number(r.stdout);
+    if (r.status === 0 && percent > 0 && percent <= 100) return (percent / 100) * totalmem();
+    return totalmem() / 4; // can't tell: assume little
+  }
+  return process.availableMemory?.() ?? freemem();
+}
+
+/**
+ * What a render may use right now. Each worker is a Chrome tab with its own decoder and frame
+ * cache, so workers and caches are sized from the memory that is free at this moment, not from
+ * what the Mac has: a render started while Chrome and other apps are open slows down instead of
+ * pushing the Mac out of memory. 1.5 GB always stays with the rest of the Mac.
+ */
+export function renderBudget(maxWorkers: number, workerGB = 1) {
+  const free = freeMemory();
+  const spare = Math.max(0, free - 1.5 * GB);
+  const cap = Math.max(1, Math.min(maxWorkers, Math.floor((totalmem() / GB) * (3 / 8) / workerGB)));
+  const workers = Math.max(1, Math.min(cap, Math.floor(spare / (workerGB * GB))));
+  const within = (n: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, n)));
+  return {
+    workers,
+    /** True when even one worker is more than what is spare: the render goes on, as lightly as it can. */
+    tight: spare < workerGB * GB,
+    freeGB: free / GB,
+    /** Each tab's own cache of decoded frames (Remotion's default is half the memory, per tab). */
+    mediaCache: within(spare / workers / 3, 96 * 2 ** 20, 512 * 2 ** 20),
+    /** The shared decoder's cache, for the videos that fall back to it. */
+    offthreadCache: within(spare / 6, 128 * 2 ** 20, 512 * 2 ** 20),
+  };
 }
 
 /**

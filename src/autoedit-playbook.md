@@ -58,6 +58,8 @@ or use another way. Never try to get around the sandbox itself. Never print, rea
 - `$T still <seconds> <name>`: render one frame of the video to `notes/checks/<name>.png` (seconds of the
   final video). Fast: use it a lot while building, then Read the PNG and look.
 - `$T render`: render the project to `Export/<Name>.mp4` (a few minutes), level the audio to -14 LUFS, then run check.
+  It renders in 10-second pieces and keeps the finished ones: if it stops with an error, run `$T render` again
+  (it continues where it stopped; don't change the project in between). Run it in the background, it can take a while.
 - `$T check`: first "EDITABLE: yes/NO" with what to fix, then length, loudness (LUFS, true peak, clipped samples)
   and `notes/checks/sheet.jpg` (12 frames).
 - `ffmpeg`, `ffprobe`: to LOOK and MEASURE (extract frames, probe files), and to make a new asset file in assets/
@@ -133,7 +135,10 @@ without you. So:
      "remotion", "@remotion/media-utils", `./creatron/*` and your own files. Inline styles only. System fonts only
      (e.g. "SF Pro Display", "Helvetica Neue", "Avenir Next", "Futura", "Georgia", "Menlo", "Marker Felt", "Chalkboard SE").
    - Media: `<Footage />` for the recording (it carries the voice: use it exactly once un-muted, `<Footage muted />`
-     for extra copies), `<OffthreadVideo muted src={staticFile("assets/broll/x.mp4")} />` for B-roll,
+     for extra copies; when your scenes cover the whole frame for the whole video, the voice copy is
+     `<Footage soundOnly />` so the hidden picture isn't decoded), `<Video muted src={staticFile("assets/broll/x.mp4")} />`
+     from `./creatron/Video` for B-roll and any other clip. Never `<OffthreadVideo>` or `<Video>` from "remotion":
+     they render 3-5x slower. `./creatron/Video` takes the same props (style with objectFit, trimBefore, transparent).
      `<Sequence from={...} durationInFrames={...} name="...">` for timing, `toOutput(sourceSeconds)` from
      `./creatron/timeline` to place something on a spoken word.
    - Deterministic: no Math.random()/Date (use `random(seed)` from remotion). Animate with spring/interpolate (clamp).

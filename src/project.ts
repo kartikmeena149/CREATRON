@@ -224,3 +224,11 @@ export function validateProject(dir: string, opts: { needExport?: boolean } = {}
   if (opts.needExport && !existsSync(finalFile(dir, t.name))) problems.push(`The finished video isn't in Export/${t.name}.mp4 yet: run the render command.`);
   return problems;
 }
+
+/**
+ * The tool-belt commands that need what an AI job's sandbox blocks (headless Chrome, the Vision
+ * helper). In a job they run in the app (autoedit-broll.ts), asked for by the tool belt.
+ */
+export const APP_COMMANDS = ["render", "still", "cutout"];
+/** The last line the app sends back for a command it ran for the tool belt: its exit code. */
+export const EXIT_MARK = "\u0000creatro-exit ";

@@ -1,34 +1,94 @@
 // B-roll for Auto Edit, served by the app to the agent's tool belt (autoedit-tools.ts broll ...).
 // It runs inside Creatro, which holds the API keys, so the keys never reach Claude's folder or
 // its sandbox. Listens on 127.0.0.1 only, behind a random token, and writes only into the job folder.
+//
+// It also runs the tool-belt commands that can't work inside the agent's sandbox (render, still,
+// cutout: headless Chrome and the Vision helper are blocked there). The tool belt asks for them
+// here (POST /tool), so they run under the app however the agent wrote its command line. Letting
+// the command out of the sandbox by its exact text (excludedCommands) broke whenever the agent
+// chained it ("cd x && render | tail"), and the edit ended without a video.
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { homedir, tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { type Orientation, type StockClip, downloadStock, searchStock, stockAvailable } from "./stock.ts";
+import { APP_COMMANDS, EXIT_MARK } from "./project.ts";
 import { ROOT, round, run } from "./tools.ts";
 import { downloadLink, findMoment, searchWeb, ytdlpAvailable } from "./webvideo.ts";
 
 /** Starts the B-roll service for one job folder. Returns its address (with token) and a stop function. */
 export async function startBroker(dir: string): Promise<{ url: string; stop: () => void }> {
   const token = randomBytes(16).toString("hex");
+  const running = new Set<ChildProcess>();
+  let turn: Promise<unknown> = Promise.resolve(); // one heavy command at a time: two renders at once is how a Mac runs out of memory
+  let url = "";
   const server = createServer(async (req, res) => {
     const reply = (status: number, text: string) => (res.writeHead(status, { "Content-Type": "text/plain" }), res.end(text));
-    const match = req.url?.match(/^\/([0-9a-f]+)\/broll\/(search|get)$/);
+    const match = req.url?.match(/^\/([0-9a-f]+)\/(broll\/search|broll\/get|tool)$/);
     if (req.method !== "POST" || !match || match[1] !== token) return reply(404, "not found");
     let body = "";
     for await (const chunk of req) body += chunk;
+    if (match[2] === "tool") {
+      let args: string[];
+      try {
+        args = (JSON.parse(body).args as unknown[]).map(String);
+      } catch {
+        return reply(400, "bad request");
+      }
+      if (!APP_COMMANDS.includes(args[0]!)) return reply(400, `"${args[0]}" doesn't run in the app`);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      let gone = false;
+      let child: ChildProcess | undefined;
+      res.on("close", () => ((gone = true), child?.kill("SIGTERM"))); // the agent's command was stopped: stop the work too
+      const mine = turn.then(() => new Promise<void>((done) => {
+        if (gone) return done();
+        child = spawn("node", [TOOL_BELT, ...args], {
+          cwd: dir, stdio: ["ignore", "pipe", "pipe"],
+          // The same bare environment the agent has (no keys): a render runs the project's own code.
+          env: {
+            HOME: homedir(), USER: process.env.USER ?? "", LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: tmpdir(),
+            PATH: `${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin`,
+            ...(process.env.CREATRON_BREAK ? { CREATRON_BREAK: process.env.CREATRON_BREAK } : {}),
+            CREATRON_AUTOEDIT_DIR: dir, CREATRON_ROOT: ROOT, CREATRON_BROKER: url, CREATRON_IN_APP: "1",
+          },
+        });
+        running.add(child);
+        const end = (code: number, note = "") => {
+          running.delete(child!);
+          if (!res.writableEnded) res.end(`${note}${EXIT_MARK}${code}\n`);
+          done();
+        };
+        child.stdout!.on("data", (d) => res.write(d));
+        child.stderr!.on("data", (d) => res.write(d));
+        child.on("error", (e) => end(1, `error: couldn't start the tool belt: ${e.message}\n`));
+        child.on("close", (code, signal) => end(code ?? 1, signal ? `stopped (${signal})\n` : ""));
+      }));
+      turn = mine;
+      return;
+    }
     try {
       const args: string[] = JSON.parse(body).args ?? [];
-      reply(200, match[2] === "search" ? await search(dir, args) : await get(dir, args));
+      reply(200, match[2] === "broll/search" ? await search(dir, args) : await get(dir, args));
     } catch (e) {
       reply(400, e instanceof Error ? e.message.split("\n").slice(0, 4).join("\n") : String(e));
     }
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   const port = (server.address() as { port: number }).port;
-  return { url: `http://127.0.0.1:${port}/${token}`, stop: () => server.close() };
+  url = `http://127.0.0.1:${port}/${token}`;
+  return {
+    url,
+    stop: () => {
+      for (const c of running) c.kill("SIGTERM");
+      server.close();
+      server.closeAllConnections();
+    },
+  };
 }
+
+const TOOL_BELT = join(ROOT, "src", "autoedit-tools.ts");
 
 const flag = (args: string[], name: string) => args.includes(`--${name}`);
 const option = (args: string[], name: string) => {
