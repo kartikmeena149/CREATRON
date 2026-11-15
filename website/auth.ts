@@ -139,3 +139,6 @@ export const myName = () => rpc<string>("my_name", {});
 
 /** Choose your name on the boards (2 to 16 letters, numbers, spaces, . _ -); returns it as saved. */
 export const setName = (name: string) => rpc<string>("set_name", { p_name: name });
+
+/** A current access token for the live channel (play/live.ts), renewed when it has run out; null when signed out. */
+export const accessToken = async () => (await fresh())?.access_token ?? null;

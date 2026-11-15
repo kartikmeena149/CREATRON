@@ -45,6 +45,12 @@
           </div>
 
           <div id="arcade" hidden>
+          <div class="live-bar mono" id="live-bar" hidden aria-live="polite">
+            <span class="live-tag"><i class="live-dot"></i>Live</span>
+            <span><b id="online">1</b> online</span>
+            <span><b id="playing">0</b> playing now</span>
+            <span class="ticker" id="ticker"></span>
+          </div>
           <div class="games mono" id="games" role="tablist" aria-label="Games"></div>
 
           <div class="arena">
@@ -65,7 +71,7 @@
             </div>
 
             <aside class="lb" id="board-list" aria-live="polite">
-              <div class="lb-head"><p class="dot">( Leaderboard )</p><span class="mono muted" id="board-game"></span></div>
+              <div class="lb-head"><p class="dot">( Leaderboard )</p><span class="lb-live mono" id="lb-live" hidden><i class="live-dot"></i>Live</span><span class="mono muted" id="board-game"></span></div>
               <div class="lb-you">
                 <div class="you-stat"><small class="mono">Your rank</small><b id="you-rank">–</b><span class="mono muted" id="you-of"></span></div>
                 <div class="you-stat"><small class="mono">Your best</small><b id="you-best">–</b></div>

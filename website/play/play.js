@@ -1,6 +1,7 @@
 // Seven games made from the Creatro mark: ten white frames and one red light, for people who have
 // signed in (signing in is joining the early-access list, see ../auth.ts).
 import { currentUser, hasSession, leaderboard, myName, setName, signOut, submitScore } from "../auth.ts";
+import { connectLive } from "./live.ts";
 
 // One square canvas, 600 x 600 logical units. Mouse, keyboard and touch all work; nothing leaves the page.
 const stage = document.getElementById("stage");
@@ -104,7 +105,9 @@ function toBoard(e) {
   const b = cv.getBoundingClientRect();
   return { x: ((e.clientX - b.left) / b.width) * S, y: ((e.clientY - b.top) / b.height) * S };
 }
+let lastInput = 0;
 cv.addEventListener("pointerdown", (e) => {
+  lastInput = performance.now();
   e.preventDefault(); stage.focus({ preventScroll: true });
   sound.wake();
   cv.setPointerCapture(e.pointerId);
@@ -125,10 +128,10 @@ cv.addEventListener("contextmenu", (e) => e.preventDefault());
 // as usual, so the leaderboard is always a swipe away.
 const MARGIN = 56;
 let guard = false;
-const live = () => G && !G.waiting && !G.over;
+const roundOn = () => G && !G.waiting && !G.over;
 document.addEventListener("touchstart", (e) => {
   const t = e.touches[0], b = stage.getBoundingClientRect();
-  guard = live() && !!t && t.clientX > b.left - MARGIN && t.clientX < b.right + MARGIN && t.clientY > b.top - MARGIN && t.clientY < b.bottom + MARGIN;
+  guard = roundOn() && !!t && t.clientX > b.left - MARGIN && t.clientX < b.right + MARGIN && t.clientY > b.top - MARGIN && t.clientY < b.bottom + MARGIN;
 }, { passive: true });
 document.addEventListener("touchmove", (e) => { if (guard || e.target === cv) e.preventDefault(); }, { passive: false });
 document.addEventListener("touchend", (e) => { if (!e.touches.length) guard = false; }, { passive: true });
@@ -143,6 +146,7 @@ function settle() {
 }
 
 stage.addEventListener("keydown", (e) => {
+  lastInput = performance.now();
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
   keys[e.key] = true;
   sound.wake();
@@ -838,7 +842,9 @@ const GAMES = [climb, keep, fly, snake, dodge, seq, catchLight];
 const list = document.getElementById("games");
 for (const g of GAMES) {
   const b = document.createElement("button");
-  b.type = "button"; b.setAttribute("role", "tab"); b.textContent = g.name;
+  b.type = "button"; b.setAttribute("role", "tab");
+  const cnt = document.createElement("span"); cnt.className = "cnt"; cnt.hidden = true;
+  b.append(document.createTextNode(g.name), cnt); g.cnt = cnt;
   b.addEventListener("click", () => { begin(g); stage.focus({ preventScroll: true }); });
   g.tab = b; list.appendChild(b);
 }
@@ -864,13 +870,16 @@ async function showBoard(id) {
       if (i > 0 && r.rank > list[i - 1].rank + 1) items.push(el("li", "gap", "· · ·"));
       const li = el("li", [r.me && "me", r.rank <= 3 && "top t" + r.rank].filter(Boolean).join(" "));
       const n = el("span", "n"); n.append(el("i", "pip"), document.createTextNode(String(r.rank)));
+      li.dataset.name = r.name;
       const who = el("span", "who-n", r.name);
       if (r.me) who.append(el("em", "", "you"));
       li.append(n, who, el("span", "s", String(r.best)));
       items.push(li);
     });
     rows.replaceChildren(...items);
+    markPlaying();
     const mine = list.find((r) => r.me), players = list[0]?.players ?? 0;
+    boardBest[id] = mine?.best ?? 0;
     $("you-rank").textContent = mine ? "#" + mine.rank : "–";
     $("rank").textContent = mine ? "#" + mine.rank : "–";
     $("you-of").textContent = players ? `of ${players} ${players === 1 ? "player" : "players"}` : "";
@@ -897,8 +906,68 @@ async function showBoard(id) {
 }
 async function sendScore(id, value) {
   if (!value || value < 1) return;
-  try { await submitScore(id, value); } catch { return; }
+  let saved;
+  try { saved = await submitScore(id, value); } catch { return; }
+  // A new best goes out to everyone on the page (they check it against the board before showing it).
+  if (saved === value && value > (boardBest[id] ?? 0)) { boardBest[id] = value; liveCh?.announce({ game: id, name: shownName, best: value }); }
   if (G.id === id) showBoard(id);
+}
+
+// ---------- live: who's online and playing, new scores as they land (play/live.ts) ----------
+const boardBest = {};
+let liveCh = null, shownName = "", people = new Map(), lastMeta = "";
+function playingNow() { return roundOn() && !document.hidden && performance.now() - lastInput < 45000; }
+function markPlaying() {
+  const here = new Set([...people.values()].filter((m) => m.playing && m.game === G?.id).map((m) => m.name));
+  for (const li of $("board-rows").children) li.classList.toggle("on", here.has(li.dataset.name) && !li.classList.contains("me"));
+}
+function renderLive() {
+  const all = [...people.values()], playing = all.filter((m) => m.playing);
+  $("online").textContent = Math.max(1, all.length);
+  $("playing").textContent = playing.length;
+  for (const g of GAMES) {
+    const n = playing.filter((m) => m.game === g.id).length;
+    g.cnt.hidden = !n; g.cnt.textContent = n; g.cnt.title = `${n} playing now`;
+  }
+  markPlaying();
+}
+let tickT = 0;
+function tick(text) {
+  const t = $("ticker");
+  t.textContent = text; t.classList.remove("in"); void t.offsetWidth; t.classList.add("in");
+  clearTimeout(tickT); tickT = setTimeout(() => t.classList.remove("in"), 9000);
+}
+async function scoreLanded(s) {
+  const game = GAMES.find((g) => g.id === s.game);
+  if (!game) return;
+  // Only what the board confirms is shown: a top-10 row with that name and that score.
+  const list = await leaderboard(s.game).catch(() => []);
+  const row = list.find((r) => r.name === s.name && r.best === s.best && r.rank <= 10);
+  if (!row) return;
+  tick(`${s.name} just hit ${s.best} ${UNIT[s.game]} in ${game.name}, now #${row.rank}`);
+  if (G.id !== s.game) return;
+  await showBoard(s.game);
+  const light = () => {
+    const li = [...$("board-rows").children].find((x) => x.dataset.name === s.name);
+    if (!li) return false;
+    li.classList.remove("flash"); void li.offsetWidth; li.classList.add("flash"); return true;
+  };
+  if (!light()) setTimeout(light, 400);
+}
+function startLive(uid) {
+  liveCh = connectLive(uid, {
+    people(p) { people = p; renderLive(); },
+    score: scoreLanded,
+    status(up) { $("live-bar").hidden = !up; $("lb-live").hidden = !up; },
+  });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) liveCh.away(); else lastMeta = ""; });
+}
+// Called every frame: tell the channel only when what you're doing changes.
+function liveFrame() {
+  if (!liveCh || document.hidden || !shownName) return;
+  const m = { game: G.id, playing: playingNow(), name: shownName };
+  const k = m.game + m.playing + m.name;
+  if (k !== lastMeta) { lastMeta = k; liveCh.track(m); }
 }
 // While the page is open and on screen, the board keeps up with other players.
 setInterval(() => { if (G && !document.hidden && !$("arcade").hidden) showBoard(G.id); }, 30000);
@@ -908,7 +977,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && G 
 function nameUI() {
   const row = $("name-row"), form = $("name-form"), input = $("name-input"), err = $("name-err"), shown = $("you-name");
   const close = () => { form.hidden = true; row.hidden = false; err.textContent = ""; };
-  const show = (n) => { shown.textContent = n; $("who").textContent = `Playing as ${n}`; };
+  const show = (n) => { shown.textContent = n; shownName = n; $("who").textContent = `Playing as ${n}`; };
   myName().then((n) => n && show(n)).catch(() => {});
   $("name-edit").addEventListener("click", () => {
     input.value = shown.textContent === "…" ? "" : shown.textContent;
@@ -959,6 +1028,7 @@ function frame(now) {
     sheet(); G.draw();
     if (G.waiting) veil(G.name.toUpperCase(), G.start);
   }
+  liveFrame();
   requestAnimationFrame(frame);
 }
 // Sign-in first: signed out, the gate sends people to sign in and back here; signed in, the games run.
@@ -980,6 +1050,7 @@ async function unlock() {
   const how = $("howto-btn"), hint = $("hint");
   how.addEventListener("click", () => { hint.hidden = !hint.hidden; how.setAttribute("aria-expanded", String(!hint.hidden)); how.textContent = hint.hidden ? "How to play" : "Hide help"; });
   nameUI();
+  startLive(user.id);
   $("rank-link").addEventListener("click", (e) => { e.preventDefault(); $("board-list").scrollIntoView({ behavior: "smooth", block: "start" }); });
   fit();
   begin(climb);

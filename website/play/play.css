@@ -5,6 +5,20 @@
 .play h1 { margin: 18px 0 18px; font-size: clamp(44px, 9vw, 88px); }
 .play .lead { margin-bottom: 36px; }
 
+/* Live: who's online, who's playing, the latest score. Shown only while the live channel is up. */
+.live-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; min-height: 40px; padding: 8px 14px; margin-bottom: 10px;
+  border: 1px solid var(--line-2); border-radius: var(--r-card); background: #0e0e0e; color: var(--grey-2);
+}
+.live-bar b { color: var(--white); font-weight: 600; font-variant-numeric: tabular-nums; }
+.live-tag, .lb-live { display: inline-flex; align-items: center; gap: 7px; color: var(--white); }
+.live-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--red); flex: none; }
+.live-dot::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid var(--red); animation: live-ping 1.8s ease-out infinite; }
+@keyframes live-ping { from { transform: scale(0.5); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+.ticker { margin-left: auto; color: var(--white); text-transform: none; opacity: 0; transform: translateY(4px); transition: opacity 0.4s, transform 0.4s; }
+.ticker.in { opacity: 1; transform: none; }
+.lb-live { font-size: 11px; margin-right: auto; margin-left: 4px; }
+
 /* Game picker: exact controls, one lit at a time. */
 .games { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
 .games button {
@@ -14,6 +28,13 @@
 .games button:hover { color: var(--white); }
 /* The newest game leads, on its own row. */
 .games button:first-child { grid-column: 1 / -1; }
+.games button { position: relative; }
+.games .cnt {
+  position: absolute; top: 50%; right: 10px; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--white);
+}
+.games .cnt::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 6px var(--red); }
+.games button[aria-selected="true"] .cnt { color: var(--ink); }
 .games button[aria-selected="true"] { background: var(--white); color: var(--ink); border-color: var(--white); }
 
 /* The stage: a square sheet of frames. No scrolling or zooming while a finger is on it. */
@@ -108,11 +129,19 @@
 .lb li.me.top .pip { background: var(--ink); }
 .lb li.me.t1 .pip { background: var(--red); }
 .lb li.gap { height: 16px; background: none; display: flex; justify-content: center; color: var(--grey); letter-spacing: 0.3em; }
+/* Someone on the list is playing this game right now; a row that just changed lights up. */
+.lb li.on .who-n::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: var(--red); vertical-align: 2px; animation: on-blink 1.4s ease-in-out infinite; }
+@keyframes on-blink { 50% { opacity: 0.25; } }
+.lb li.flash { animation: row-flash 2.4s ease-out; }
+@keyframes row-flash { 0%, 25% { background: rgba(229, 35, 27, 0.35); } }
+@media (prefers-reduced-motion: reduce) { .live-dot::after, .lb li.on .who-n::after, .lb li.flash { animation: none; } }
 .board-note { margin-top: 10px; }
 .board-note:empty { display: none; }
 
 @media (max-width: 900px) {
   .arena { grid-template-columns: 1fr; padding: 12px; }
+  .ticker { margin-left: 0; flex-basis: 100%; }
+  .ticker:not(.in) { display: none; }
   .lb { position: static; margin: 16px 0 0; padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--line-2); }
 }
 
