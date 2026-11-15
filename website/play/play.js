@@ -153,46 +153,42 @@ const keep = {
   },
 };
 
-// ---------- 2. Chain reaction ----------
-// Ten frames drift. One tap: the red light bursts, and every frame it touches bursts too.
-const BURST = 95;
-const burstR = (t) => (t < 0.25 ? BURST * (t / 0.25) : t < 1.1 ? BURST : BURST * (1 - (t - 1.1) / 0.3));
-const chain = {
-  id: "chain", name: "Chain reaction",
-  hint: "Ten frames drift around. Tap once: the red light bursts, and every frame it touches bursts too. Reach the goal to go up a level.",
-  start: "Tap to start, then tap where to burst",
-  init() { this.level = 1; this.total = 0; this.setup(); },
-  setup() {
-    this.ws = [];
-    for (let i = 0; i < 10; i++) { const a = rnd(0, TAU), s = rnd(50, 95) + this.level * 6; this.ws.push({ x: rnd(40, S - 40), y: rnd(70, S - 40), vx: Math.cos(a) * s, vy: Math.sin(a) * s, st: 0 }); }
-    this.goal = Math.min(9, this.level + 2); this.tapped = false; this.bursts = []; this.done = 0; this.end = 0; this.over = false; this.won = false;
-  },
-  go() {},
-  press() { if (this.end > 0 || this.tapped) return; this.tapped = true; this.bursts.push({ x: ptr.x, y: ptr.y, t: 0 }); },
+// ---------- 2. Through the cut ----------
+// Walls of white frames scroll past, each with a cut in it. Tap to lift the red light through.
+const fly = {
+  id: "fly", name: "Through the cut",
+  hint: TOUCH ? "Tap to lift the red light. Every wall of frames has a cut in it: fly through." : "Click, tap or press space to lift the red light. Every wall of frames has a cut in it: fly through.",
+  start: TOUCH ? "Tap to fly" : "Click or press space to fly",
+  SLOTS: 11, PITCH: 54.6, X: 150,
+  init() { this.y = S / 2; this.vy = 0; this.walls = []; this.next = 0.9; this.over = false; this.passed = 0; this.speed = 190; this.out = 0; },
+  flap() { if (!this.over) this.vy = -330; },
+  go() { this.flap(); },
+  press() { this.flap(); },
+  key(k) { if (k === " " || k === "ArrowUp") this.flap(); },
+  slotY(i) { return 27 + i * this.PITCH; },
   update(dt) {
-    for (const w of this.ws) { if (w.st) continue; w.x += w.vx * dt; w.y += w.vy * dt; if (w.x < 14 || w.x > S - 14) w.vx *= -1; if (w.y < 60 || w.y > S - 14) w.vy *= -1; }
-    for (const b of this.bursts) b.t += dt;
-    for (const b of this.bursts) {
-      if (b.t > 1.4) continue;
-      const r = burstR(b.t);
-      for (const w of this.ws) if (!w.st && Math.hypot(w.x - b.x, w.y - b.y) < r + 12) { w.st = 1; this.done++; setScore(this.total + this.done); this.bursts.push({ x: w.x, y: w.y, t: 0 }); }
+    this.vy += 1100 * dt;
+    if (this.over) { this.out += dt; this.y = Math.min(S + 40, this.y + this.vy * dt); return; }
+    this.y += this.vy * dt;
+    this.next -= dt;
+    if (this.next <= 0) { this.walls.push({ x: S + 40, gap: Math.floor(rnd(1, this.SLOTS - 3)), passed: false }); this.next = Math.max(1.05, 1.55 - this.passed * 0.02); }
+    this.speed = Math.min(300, 190 + this.passed * 4);
+    for (const w of this.walls) { w.x -= this.speed * dt; if (!w.passed && w.x < this.X) { w.passed = true; this.passed++; setScore(this.passed); } }
+    this.walls = this.walls.filter((w) => w.x > -40);
+    if (this.y < 12 || this.y > S - 12) { this.over = true; return; }
+    for (const w of this.walls) {
+      if (Math.abs(w.x - this.X) > 40) continue;
+      for (let i = 0; i < this.SLOTS; i++) {
+        if (i === w.gap || i === w.gap + 1) continue;
+        if (Math.hypot(w.x - this.X, this.slotY(i) - this.y) < 30) { this.over = true; return; }
+      }
     }
-    if (this.tapped && this.end === 0 && this.bursts.every((b) => b.t > 1.4)) { this.won = this.done >= this.goal; this.end = 0.001; }
-    if (this.end > 0) { this.end += dt; if (this.end > 1.4) { if (this.won) { this.total += this.done; this.level++; this.setup(); } else this.over = true; } }
   },
   draw() {
-    for (const b of this.bursts) {
-      if (b.t > 1.4) continue;
-      const r = burstR(b.t);
-      ctx.fillStyle = "rgba(229,35,27,.16)"; ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, TAU); ctx.fill();
-      ctx.strokeStyle = "rgba(229,35,27,.6)"; ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
-      dot(b.x, b.y, 10, RED);
-    }
-    for (const w of this.ws) if (!w.st) dot(w.x, w.y, 12, WHITE);
-    text(`LEVEL ${this.level}`, 16, 28, { size: 20, col: GREY, align: "left" });
-    text(`${this.done} / ${this.goal}`, S - 16, 28, { size: 20, col: this.done >= this.goal ? WHITE : GREY, align: "right" });
-    if (this.end > 0 && !this.over && this.won) text("NEXT LEVEL", S / 2, S / 2, { size: 32, a: cl(this.end * 2), track: 2 });
-    if (this.over) veil(`Level ${this.level}`, `${this.done} of ${this.goal} burst · tap to start over`);
+    for (const w of this.walls) for (let i = 0; i < this.SLOTS; i++) if (i !== w.gap && i !== w.gap + 1) dot(w.x, this.slotY(i), 18, WHITE);
+    light(this.X, this.y, 12);
+    text(String(score), S / 2, 60, { size: 48 });
+    if (this.over && this.out > 0.5) veil("Hit a frame", `${score} walls · tap to fly again`);
   },
 };
 
@@ -358,7 +354,7 @@ const catchLight = {
 };
 
 // ---------- the page ----------
-const GAMES = [keep, chain, snake, dodge, seq, catchLight];
+const GAMES = [keep, fly, snake, dodge, seq, catchLight];
 const list = document.getElementById("games");
 const pad = document.getElementById("pad");
 for (const g of GAMES) {
