@@ -136,6 +136,7 @@ kbd { font: 400 11px/1 var(--font-mono); border: 1px solid currentColor; border-
 pre { margin: 0; padding: 22px 24px; border-radius: var(--r-card); background: var(--ink-2); overflow-x: auto; }
 code { font: 400 13px/1.8 var(--font-mono); color: var(--white); }
 pre .muted { color: var(--grey-2); }
+.get-mark { width: min(260px, 60%); height: auto; margin: 0 auto; }
 
 /* Footer: big dot words, a narrow list, one line of small links. */
 footer.band { padding: 120px 24px 32px; text-align: center; }

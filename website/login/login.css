@@ -27,31 +27,16 @@ button.link { color: var(--ink); background: none; border: 0; padding: 0; font: 
 button.link:hover { color: var(--red); }
 .foot { margin-top: auto; }
 
-/* The picture: a viewfinder recording the demo clip, and the frames it has used so far. */
-.show-side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 48px 32px; }
-.viewfinder { position: relative; height: min(66vh, 620px); aspect-ratio: 9 / 16; border-radius: var(--r-card); overflow: hidden; background: #000; }
-.viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.hud { position: absolute; inset: 14px 14px auto; display: flex; justify-content: space-between; z-index: 1; color: var(--white); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
-.recdot { display: flex; align-items: center; gap: 7px; }
-.recdot i { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: rec 2.4s steps(1) infinite; }
-.corner { position: absolute; width: 18px; height: 18px; border: 0 solid rgba(255, 255, 255, 0.8); }
-.corner.tl { top: 8px; left: 8px; border-top-width: 1px; border-left-width: 1px; }
-.corner.tr { top: 8px; right: 8px; border-top-width: 1px; border-right-width: 1px; }
-.corner.bl { bottom: 8px; left: 8px; border-bottom-width: 1px; border-left-width: 1px; }
-.corner.br { bottom: 8px; right: 8px; border-bottom-width: 1px; border-right-width: 1px; }
-.chip { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); white-space: nowrap; font: 500 15px var(--font-text); text-transform: uppercase; letter-spacing: 0.02em; color: #fff; text-shadow: 0 1px 0 #000, 0 0 10px rgba(0, 0, 0, 0.7); }
-.chip b { font-weight: 500; color: var(--white); background: var(--red); padding: 0 4px; text-shadow: none; }
-.frames { display: flex; gap: 6px; }
-.frames i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); transition: background 0.2s; }
-.frames i.on { background: var(--white); }
+/* The picture: the mark, its red light recording, and what it's waiting for. */
+.show-side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 48px 32px; text-align: center; }
+.soon-mark { width: min(220px, 40vw); height: auto; margin-bottom: 18px; }
 .said { color: var(--grey-2); }
 
 @media (max-width: 900px) {
   .split { grid-template-columns: 1fr; }
   .form-side { padding: 16px 20px 24px; min-height: 100vh; }
   .form-box { padding: 32px 0; }
-  .viewfinder { height: 460px; }
-  .frames i { width: 6px; height: 6px; }
+  .show-side { min-height: 60vh; }
 }
 
 /* Signed out: the one Google button; signed in: who you are and your place on the list. */

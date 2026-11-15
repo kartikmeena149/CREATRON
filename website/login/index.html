@@ -68,16 +68,11 @@
         <p class="mono muted foot">Your footage stays on your Mac.</p>
       </section>
 
-      <!-- What you sign in to: the demo clip, recording, with the timeline under it. -->
+      <!-- What you're waiting for: the mark, its red light recording. -->
       <section class="show-side band ink" aria-hidden="true">
-        <div class="viewfinder">
-          <div class="hud mono"><span class="recdot"><i></i>Rec</span><span id="tc">00:00:00:00</span></div>
-          <video id="clip" src="../sample/video.mp4" muted loop autoplay playsinline preload="metadata"></video>
-          <span class="chip">fruit fly's <b>entire</b> brain</span>
-          <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-        </div>
-        <div class="frames" id="frames"></div>
-        <p class="mono muted said">&gt; Make it a tight reel with captions</p>
+        <svg class="soon-mark" id="mark" viewBox="0 0 100 100"></svg>
+        <p class="dot muted">( Coming soon )</p>
+        <p class="mono muted said">Creatro for Mac</p>
       </section>
     </main>
 
@@ -128,22 +123,17 @@
         say("status", "Signed out.");
       });
     </script>
-    <script>
-      const $ = (id) => document.getElementById(id);
-      // The timecode runs with the clip, and a strip of frames under it fills as it plays.
-      const clip = $("clip");
-      const frames = $("frames");
-      const N = 24;
-      for (let i = 0; i < N; i++) frames.appendChild(document.createElement("i"));
-      const pad = (n) => String(Math.floor(n)).padStart(2, "0");
-      const tick = () => {
-        const t = clip.currentTime || 0;
-        $("tc").textContent = `00:${pad(t / 60)}:${pad(t % 60)}:${pad((t % 1) * 30)}`;
-        const at = clip.duration ? Math.floor((t / clip.duration) * N) : 0;
-        [...frames.children].forEach((f, i) => f.classList.toggle("on", i <= at));
-        requestAnimationFrame(tick);
-      };
-      tick();
+    <script type="module">
+      // The mark is the logo file itself, with its red light blinking like a camera recording.
+      try {
+        const svg = await (await fetch("../brand/mark-white.svg")).text();
+        const doc = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
+        const mark = document.getElementById("mark");
+        for (const c of [...doc.querySelectorAll("circle")]) {
+          if (c.getAttribute("fill").toLowerCase() === "#e5231b") c.setAttribute("class", "rec");
+          mark.appendChild(document.importNode(c, true));
+        }
+      } catch {}
     </script>
   </body>
 </html>
