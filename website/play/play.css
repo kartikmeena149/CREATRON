@@ -1,9 +1,24 @@
 /* The Play page: seven games on one stage, a leaderboard beside it. Rules: docs/DESIGN.md. */
-.play { min-height: 100vh; padding-top: 128px; }
+.play { min-height: 100vh; padding-top: 120px; }
 .play .wrap { max-width: 1040px; }
-.play .lead, .gate { max-width: 600px; }
-.play h1 { margin: 18px 0 18px; font-size: clamp(44px, 9vw, 88px); }
-.play .lead { margin-bottom: 36px; }
+.gate { max-width: 600px; }
+
+/* The header: the mark as a row of dots, a short title whose full stop is the red light, one line of why. */
+.play-head {
+  display: grid; grid-template-columns: 1fr minmax(0, 340px); align-items: end; gap: 20px 48px;
+  padding-bottom: 28px; margin-bottom: 28px; border-bottom: 1px solid var(--line-2);
+}
+.play-eyebrow { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; color: var(--grey-2); letter-spacing: 0.12em; }
+.frames { display: inline-flex; gap: 4px; }
+.frames i { width: 5px; height: 5px; border-radius: 50%; background: var(--white); opacity: 0.85; }
+.frames i.red { margin-left: 4px; background: var(--red); opacity: 1; box-shadow: 0 0 8px var(--red); }
+.play h1 { margin: 0; font-size: clamp(40px, 6.4vw, 76px); line-height: 0.95; letter-spacing: -0.04em; }
+.play h1 .period {
+  display: inline-block; width: 0.15em; height: 0.15em; margin-left: 0.05em; border-radius: 50%;
+  background: var(--red); box-shadow: 0 0 0.18em rgba(229, 35, 27, 0.7);
+}
+.play-head .lead { margin: 0 0 6px; font-size: 16px; line-height: 1.55; max-width: 340px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Live: who's online, who's playing, the latest score. Shown only while the live channel is up. */
 .live-bar {
@@ -147,5 +162,8 @@
 
 @media (max-width: 860px) {
   .play { padding-top: 96px; }
+  .play-head { grid-template-columns: 1fr; padding-bottom: 22px; margin-bottom: 22px; }
+  .play-eyebrow { margin-bottom: 16px; }
+  .play-head .lead { font-size: 15px; }
   .games { grid-template-columns: repeat(2, 1fr); }
 }

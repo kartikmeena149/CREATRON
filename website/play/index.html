@@ -30,9 +30,13 @@
     <main>
       <section class="band ink play">
         <div class="wrap">
-          <p class="dot muted">( Play )</p>
-          <h1>Ten frames.<br />One light.</h1>
-          <p class="lead muted">The Creatro mark is ten white frames and one red light. Here they are as seven small games.</p>
+          <header class="play-head">
+            <div>
+              <p class="play-eyebrow mono" aria-label="Play"><span class="frames" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="red"></i></span>Play</p>
+              <h1>Ten frames.<br />One light<span class="period" aria-hidden="true"></span><span class="sr-only">.</span></h1>
+            </div>
+            <p class="lead muted">Seven small games made from the Creatro mark. Set a best, climb the board, see who's playing.</p>
+          </header>
 
           <!-- The games are for people who have signed in (and so joined the early-access list). -->
           <div class="gate" id="gate">
