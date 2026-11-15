@@ -138,14 +138,15 @@ function setScore(v) {
 }
 
 // ---------- 0. Climb ----------
-// Hold to charge, let go to jump: up-left or up-right. Miss a ledge and you fall until one catches
+// Pull back to aim, like a slingshot: the direction sets the angle, the distance sets the power, and a
+// dotted path shows where you'll go. Let go to jump. Miss a ledge and you fall until one catches
 // you, then climb on from there. There is no game over, and where you stand is saved on this device.
 // The ledges come from a fixed seed, so the climb is the same every time and every ledge can be reached.
 function seeded(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const climb = {
   id: "climb", name: "Climb", r: 12, G: 1300, PITCH: 26, DOT: 11,
-  hint: TOUCH ? "Hold the left or right half of the board to charge, let go to jump that way. Fall, and you climb on from wherever you land. Your height is saved." : "Hold the left or right arrow (or press and hold on a side of the board) to charge, let go to jump. Fall, and you climb on from wherever you land. Your height is saved.",
-  start: TOUCH ? "Tap to climb · hold a side, let go to jump" : "Click to climb · hold an arrow, let go to jump",
+  hint: TOUCH ? "Press anywhere and pull back, like a slingshot: the direction is the angle, the distance is the power, the dots show your path. Let go to jump. Fall, and you climb on from where you land. Your height is saved." : "Press and pull back with the mouse (or arrows: left and right aim, up and down power, space jumps). The dots show your path. Fall, and you climb on from where you land. Your height is saved.",
+  start: TOUCH ? "Tap to climb · then pull back and let go" : "Click to climb · then pull back and let go",
   KEY: "creatro_play_climb",
   load() { try { return JSON.parse(localStorage.getItem(this.KEY) || "null"); } catch { return null; } },
   keep() { try { localStorage.setItem(this.KEY, JSON.stringify({ x: this.x, h: this.h, top: this.top })); } catch { /* private mode */ } },
@@ -156,7 +157,7 @@ const climb = {
     this.x = saved?.x ?? S / 2; this.h = saved?.h ?? this.r; this.top = saved?.top ?? 0;
     this.grow(this.h + 1200);
     this.vx = 0; this.vy = 0; this.on = this.findUnder() ?? this.ledges[0]; this.h = this.on.y + this.r;
-    this.charge = 0; this.side = 0; this.charging = false; this.cam = this.h - 180; this.clock = 0;
+    this.aiming = false; this.ang = Math.PI / 2 - 0.45; this.pow = 0; this.cam = this.h - 180; this.clock = 0;
     this.pops = []; this.fromH = this.h; this.reset = 0; this.over = false;
     setScore(Math.floor(this.h / 10));
   },
@@ -189,28 +190,47 @@ const climb = {
   shift(L) { return L.amp ? L.amp * Math.sin(this.clock * L.w + L.ph) : 0; },
   span(L) { const o = this.shift(L); return [L.x0 + o - this.DOT, L.x0 + o + (L.n - 1) * this.PITCH + this.DOT]; },
   findUnder() { let best = null; for (const L of this.ledges) { const [a, b] = this.span(L); if (this.x >= a && this.x <= b && L.y <= this.h - this.r + 1 && (!best || L.y > best.y)) best = L; } return best; },
-  begin(side) { if (!this.on || this.charging) return; this.charging = true; this.side = side; this.charge = 0; },
+  // Aim: an angle (0 = right, PI = left, always at least a little upward) and a power from 0 to 1.
+  MINA: 0.2, speedOf(p) { return 260 + 760 * p; },
+  aimFromPull() {
+    const dx = this.ax - ptr.x, dy = this.ay - ptr.y, len = Math.hypot(dx, dy);
+    this.pow = cl(len / 170, 0, 1);
+    if (len > 6) this.ang = cl(Math.atan2(-dy, dx), this.MINA, Math.PI - this.MINA);
+  },
   jump() {
-    if (!this.charging || !this.on) { this.charging = false; return; }
-    const c = this.charge; this.charging = false;
-    this.vy = 430 + 520 * c; this.vx = this.side * (120 + 170 * c); this.fromH = this.h; this.on = null;
-    sound.play("flap", { rate: 0.85 + c * 0.4 });
+    if (!this.aiming || !this.on) { this.aiming = false; return; }
+    this.aiming = false;
+    if (this.pow < 0.1) { this.pow = 0; return; } // pulled back to the start: cancelled
+    const v = this.speedOf(this.pow);
+    this.vx = Math.cos(this.ang) * v; this.vy = Math.sin(this.ang) * v; this.fromH = this.h; this.on = null;
+    sound.play("flap", { rate: 0.85 + this.pow * 0.4 });
+    this.pow = 0;
   },
   go() {},
   press() {
     // The little "start over" in the corner: two taps to be sure.
     if (ptr.x > S - 150 && ptr.y < 50) { if (this.reset > 0) this.restart(); else this.reset = 2; return; }
-    this.begin(ptr.x < S / 2 ? -1 : 1);
+    if (!this.on) return;
+    this.aiming = true; this.ax = ptr.x; this.ay = ptr.y; this.pow = 0;
   },
+  move() { if (this.aiming && ptr.down) this.aimFromPull(); },
   release() { this.jump(); },
-  key(k) { if (k === "r" || k === "R") return; if (k === "ArrowLeft" || k === "a") this.begin(-1); if (k === "ArrowRight" || k === "d") this.begin(1); if (k === "ArrowUp" || k === " ") this.begin(this.side || 1); },
-  keyup(k) { if (["ArrowLeft", "ArrowRight", "ArrowUp", " ", "a", "d"].includes(k)) this.jump(); },
+  // Keyboard: left and right turn the aim, up and down set the power, space or enter jumps.
+  key(k) {
+    if (!this.on) return;
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s"].includes(k) && !this.aiming) { this.aiming = true; this.pow = this.kpow || 0.5; }
+    if (k === "ArrowLeft" || k === "a") this.ang = Math.min(Math.PI - this.MINA, this.ang + 0.06);
+    if (k === "ArrowRight" || k === "d") this.ang = Math.max(this.MINA, this.ang - 0.06);
+    if (k === "ArrowUp" || k === "w") this.pow = Math.min(1, this.pow + 0.04);
+    if (k === "ArrowDown" || k === "s") this.pow = Math.max(0.1, this.pow - 0.04);
+    if ((k === " " || k === "Enter") && this.aiming) { this.kpow = this.pow; this.jump(); }
+  },
+  keyup() {},
   restart() { try { localStorage.removeItem(this.KEY); } catch { /* private mode */ } this.init(); this.pops.push({ x: this.x, h: this.h + 40, t: 0, s: "FROM THE GROUND" }); },
   update(dt) {
     this.clock += dt; if (this.reset > 0) this.reset -= dt;
     for (const q of this.pops) q.t += dt;
     this.pops = this.pops.filter((q) => q.t < 1.4);
-    if (this.charging) this.charge = Math.min(1, this.charge + dt / 0.65);
     if (this.on) {
       const sh = this.shift(this.on); // ride a moving ledge
       this.x += sh - (this.onShift ?? sh); this.onShift = sh;
@@ -272,13 +292,29 @@ const climb = {
       for (let i = 0; i < L.n; i++) dot(L.x0 + o + i * this.PITCH, y, L.floor ? this.DOT * 0.8 : this.DOT, WHITE, L.ground ? 0.35 : L.floor ? 0.55 : 1);
     }
     const px = this.x, py = this.sy(this.h);
-    if (this.charging) {
-      // The charge: a ring filling around the light, and which way it will go.
-      ctx.strokeStyle = RED; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(px, py, 22, -Math.PI / 2, -Math.PI / 2 + TAU * this.charge); ctx.stroke(); ctx.lineWidth = 1;
-      const len = 26 + 40 * this.charge; ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.setLineDash([3, 5]);
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + this.side * len * 0.55, py - len); ctx.stroke(); ctx.setLineDash([]);
+    if (this.aiming && this.on) {
+      // The pull: a band behind the light, a power ring, and the dotted path the jump will take
+      // (about two thirds of a second of it, and a ring where it would land if that comes sooner).
+      const v = this.speedOf(this.pow), vx = Math.cos(this.ang) * v, vy = Math.sin(this.ang) * v;
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - Math.cos(this.ang) * 46 * this.pow, py + Math.sin(this.ang) * 46 * this.pow); ctx.stroke();
+      ctx.strokeStyle = RED; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(px, py, 22, -Math.PI / 2, -Math.PI / 2 + TAU * this.pow); ctx.stroke(); ctx.lineWidth = 1;
+      if (this.pow >= 0.1) {
+        let x = this.x, h = this.h, sx = vx, sv = vy;
+        for (let i = 1; i <= 42; i++) {
+          const prev = h - this.r;
+          sv -= this.G / 60; x += sx / 60; h += sv / 60;
+          if (x < this.r) { x = this.r; sx = Math.abs(sx) * 0.5; }
+          if (x > S - this.r) { x = S - this.r; sx = -Math.abs(sx) * 0.5; }
+          let landed = false;
+          if (sv <= 0) for (const L of this.ledges) { if (L === this.on) continue; if (L.y > prev + 0.5 || L.y < h - this.r - 0.5) continue; const [a2, b2] = this.span(L); if (x >= a2 && x <= b2) { landed = true; break; } }
+          if (landed) { ctx.strokeStyle = "rgba(255,255,255,.8)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, this.sy(h), 9, 0, TAU); ctx.stroke(); ctx.lineWidth = 1; break; }
+          if (i % 3 === 0) dot(x, this.sy(h), 3.2, WHITE, 0.85 - i / 60);
+        }
+      }
+      text(`${Math.round(this.pow * 100)}%`, px, py + 40, { size: 14, col: GREY });
     }
-    const sq = this.charging ? this.charge * 0.25 : 0;
+    const sq = this.aiming ? this.pow * 0.22 : 0;
     ctx.save(); ctx.translate(px, py + sq * 6); ctx.scale(1 + sq, 1 - sq); light(0, 0, this.r); ctx.restore();
     for (const q of this.pops) text(q.s, q.x, this.sy(q.h) - q.t * 30, { size: q.big ? 34 : 20, a: 1 - q.t / 1.4, col: q.red ? RED : WHITE, track: 2 });
     text(`${Math.floor(this.h / 10)} M`, S / 2, 34, { size: 30 });
