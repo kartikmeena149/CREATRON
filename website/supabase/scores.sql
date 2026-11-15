@@ -1,10 +1,11 @@
 -- Leaderboards for the games on creatro.in/play/ (website/play/play.js, website/auth.ts).
 -- Run once in Supabase: SQL Editor -> New query -> paste -> Run. Safe to run again.
 --
--- One row per person per game: their best. The website never touches the table directly; it can only
--- call two functions. submit_score keeps a score only when it beats your own best and is within a
+-- One row per person per game: their best. The website never touches the tables directly; it can only
+-- call the functions below. submit_score keeps a score only when it beats your own best and is within a
 -- believable range for that game. leaderboard returns the top 10 and your own place. Names are a
--- first name and an initial ("Kartik M."); emails are never stored here or shown.
+-- first name and an initial ("Kartik M.") until a player picks their own with set_name; emails are
+-- never stored here or shown.
 
 create table if not exists public.scores (
   user_id uuid not null references auth.users (id) on delete cascade,
@@ -20,6 +21,63 @@ create index if not exists scores_board on public.scores (game, best desc, updat
 alter table public.scores enable row level security;
 revoke all on public.scores from anon, authenticated;
 
+-- A name a player chose for the boards (set_name). Without one, it's their first name and an initial.
+create table if not exists public.players (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  name text not null check (char_length(name) between 2 and 16),
+  updated_at timestamptz not null default now()
+);
+alter table public.players enable row level security;
+revoke all on public.players from anon, authenticated;
+
+-- The name a player shows on the boards: the one they chose, or "First L." from their Google account.
+create or replace function public.shown_name(uid uuid)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select p.name from public.players p where p.user_id = uid),
+    (select coalesce(nullif(split_part(trim(n), ' ', 1), ''), 'Player')
+        || coalesce(' ' || nullif(upper(left(split_part(trim(n), ' ', 2), 1)), '') || '.', '')
+     from (select coalesce(u.raw_user_meta_data ->> 'full_name', u.raw_user_meta_data ->> 'name', '') as n
+           from auth.users u where u.id = uid) x),
+    'Player');
+$$;
+
+-- Your name on the boards.
+create or replace function public.my_name()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$ select case when auth.uid() is null then null else public.shown_name(auth.uid()) end; $$;
+
+-- Choose your name: 2 to 16 letters, numbers, spaces, dots, dashes or underscores. It changes on
+-- every board at once. Returns the name as saved.
+create or replace function public.set_name(p_name text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+  clean text := regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g');
+begin
+  if uid is null then raise exception 'Sign in first.'; end if;
+  if char_length(clean) < 2 or char_length(clean) > 16 then raise exception 'Use 2 to 16 characters.'; end if;
+  if clean !~ '^[A-Za-z0-9 ._-]+$' then raise exception 'Use letters, numbers, spaces, dots, dashes or underscores.'; end if;
+  insert into public.players (user_id, name) values (uid, clean)
+  on conflict (user_id) do update set name = excluded.name, updated_at = now();
+  update public.scores set name = clean where user_id = uid;
+  return clean;
+end;
+$$;
+
 -- Save a score. Returns your best for that game.
 create or replace function public.submit_score(p_game text, p_score integer)
 returns integer
@@ -30,7 +88,6 @@ as $$
 declare
   uid uuid := auth.uid();
   cap integer;
-  full_name text;
   shown text;
   result integer;
 begin
@@ -42,10 +99,7 @@ begin
   if cap is null then raise exception 'Unknown game.'; end if;
   if p_score is null or p_score < 0 or p_score > cap then raise exception 'Score out of range.'; end if;
 
-  select coalesce(u.raw_user_meta_data ->> 'full_name', u.raw_user_meta_data ->> 'name', '') into full_name
-  from auth.users u where u.id = uid;
-  shown := coalesce(nullif(split_part(trim(full_name), ' ', 1), ''), 'Player')
-    || coalesce(' ' || nullif(upper(left(split_part(trim(full_name), ' ', 2), 1)), '') || '.', '');
+  shown := public.shown_name(uid);
 
   insert into public.scores (user_id, game, best, name) values (uid, p_game, p_score, shown)
   on conflict (user_id, game) do update
@@ -58,21 +112,29 @@ begin
 end;
 $$;
 
--- The top 10 for a game, plus your own row when you're further down. Ties go to whoever got there first.
+-- The top 10 for a game, plus your own row when you're further down, and how many play it. Ties go to
+-- whoever got there first.
+drop function if exists public.leaderboard(text);
 create or replace function public.leaderboard(p_game text)
-returns table (rank bigint, name text, best integer, me boolean)
+returns table (rank bigint, name text, best integer, me boolean, players bigint)
 language sql
 stable
 security definer
 set search_path = public
 as $$
   with ranked as (
-    select rank() over (order by s.best desc, s.updated_at asc) as rank, s.name, s.best, s.user_id = auth.uid() as me
+    select rank() over (order by s.best desc, s.updated_at asc) as rank, s.name, s.best, s.user_id = auth.uid() as me,
+      count(*) over () as players
     from public.scores s where s.game = p_game
   )
-  select r.rank, r.name, r.best, r.me from ranked r where r.rank <= 10 or r.me order by r.rank;
+  select r.rank, r.name, r.best, r.me, r.players from ranked r where r.rank <= 10 or r.me order by r.rank;
 $$;
 
+revoke all on function public.shown_name(uuid) from public, anon, authenticated;
+revoke all on function public.my_name() from public, anon;
+revoke all on function public.set_name(text) from public, anon;
+grant execute on function public.my_name() to authenticated;
+grant execute on function public.set_name(text) to authenticated;
 revoke all on function public.submit_score(text, integer) from public, anon;
 revoke all on function public.leaderboard(text) from public, anon;
 grant execute on function public.submit_score(text, integer) to authenticated;

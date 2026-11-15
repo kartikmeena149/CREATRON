@@ -47,16 +47,43 @@
           <div id="arcade" hidden>
           <div class="games mono" id="games" role="tablist" aria-label="Games"></div>
 
-          <div class="stage" id="stage" tabindex="0" aria-label="Game. Tap or press space to start.">
-            <canvas id="board" width="600" height="600"></canvas>
+          <div class="arena">
+            <div class="play-col">
+              <div class="statbar">
+                <b class="sb-name" id="game-name">Climb</b>
+                <div class="sb-stats mono">
+                  <span><small>Score</small><b id="score">0</b></span>
+                  <span><small>Best</small><b id="best">0</b></span>
+                  <a href="#board-list" id="rank-link" title="See the leaderboard"><small>Rank</small><b id="rank">–</b></a>
+                </div>
+                <button type="button" class="howto-btn mono" id="howto-btn" aria-expanded="false" aria-controls="hint">How to play</button>
+              </div>
+              <p class="howto" id="hint" hidden></p>
+              <div class="stage" id="stage" tabindex="0" aria-label="Game. Tap or press space to start.">
+                <canvas id="board" width="600" height="600"></canvas>
+              </div>
+            </div>
+
+            <aside class="lb" id="board-list" aria-live="polite">
+              <div class="lb-head"><p class="dot">( Leaderboard )</p><span class="mono muted" id="board-game"></span></div>
+              <div class="lb-you">
+                <div class="you-stat"><small class="mono">Your rank</small><b id="you-rank">–</b><span class="mono muted" id="you-of"></span></div>
+                <div class="you-stat"><small class="mono">Your best</small><b id="you-best">–</b></div>
+                <p class="you-next mono" id="you-next"></p>
+                <div class="you-name">
+                  <small class="mono">Name on the board</small>
+                  <div class="name-row" id="name-row"><span id="you-name">…</span><button type="button" class="mono" id="name-edit">Edit</button></div>
+                  <form class="name-form" id="name-form" hidden>
+                    <input id="name-input" maxlength="16" autocomplete="nickname" spellcheck="false" aria-label="Your name on the board" />
+                    <button type="submit" class="mono">Save</button><button type="button" class="mono" id="name-cancel">Cancel</button>
+                  </form>
+                  <p class="name-err mono" id="name-err" role="alert"></p>
+                </div>
+              </div>
+              <ol id="board-rows"></ol>
+              <p class="mono muted board-note" id="board-note"></p>
+            </aside>
           </div>
-          <div class="meta mono"><span id="score">Score 0</span><span id="best">Best 0</span></div>
-          <p class="hint muted" id="hint"></p>
-          <section class="board" id="board-list" aria-live="polite">
-            <div class="board-head"><p class="dot muted">( Leaderboard )</p><span class="mono muted" id="board-game"></span></div>
-            <ol id="board-rows"></ol>
-            <p class="mono muted board-note" id="board-note"></p>
-          </section>
           <p class="who mono muted"><span id="who"></span> · <button type="button" id="sound" aria-pressed="true">Sound on</button> · <button type="button" id="signout">Sign out</button></p>
           </div>
         </div>

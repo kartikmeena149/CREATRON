@@ -110,7 +110,7 @@ export async function signOut() {
 }
 
 // ---------- leaderboards (website/supabase/scores.sql) ----------
-export type BoardRow = { rank: number; name: string; best: number; me: boolean };
+export type BoardRow = { rank: number; name: string; best: number; me: boolean; players: number };
 
 async function rpc<T>(fn: string, body: Record<string, unknown>): Promise<T> {
   const s = await fresh();
@@ -120,7 +120,11 @@ async function rpc<T>(fn: string, body: Record<string, unknown>): Promise<T> {
     headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${s.access_token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(r.status === 404 ? "The leaderboard isn't set up yet." : `Leaderboard error (${r.status}).`);
+  if (!r.ok) {
+    if (r.status === 404) throw new Error("The leaderboard isn't set up yet.");
+    const why = await r.json().catch(() => null);
+    throw new Error(why?.message ?? `Leaderboard error (${r.status}).`);
+  }
   return r.json();
 }
 
@@ -129,3 +133,9 @@ export const submitScore = (game: string, score: number) => rpc<number>("submit_
 
 /** The top 10 for a game, plus your own row when you're further down. */
 export const leaderboard = (game: string) => rpc<BoardRow[]>("leaderboard", { p_game: game });
+
+/** Your name on the boards: the one you chose, or your first name and an initial. */
+export const myName = () => rpc<string>("my_name", {});
+
+/** Choose your name on the boards (2 to 16 letters, numbers, spaces, . _ -); returns it as saved. */
+export const setName = (name: string) => rpc<string>("set_name", { p_name: name });

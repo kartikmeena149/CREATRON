@@ -1,6 +1,6 @@
 // Seven games made from the Creatro mark: ten white frames and one red light, for people who have
 // signed in (signing in is joining the early-access list, see ../auth.ts).
-import { currentUser, hasSession, leaderboard, signOut, submitScore } from "../auth.ts";
+import { currentUser, hasSession, leaderboard, myName, setName, signOut, submitScore } from "../auth.ts";
 
 // One square canvas, 600 x 600 logical units. Mouse, keyboard and touch all work; nothing leaves the page.
 const stage = document.getElementById("stage");
@@ -134,9 +134,9 @@ stage.addEventListener("keyup", (e) => { keys[e.key] = false; G.keyup?.(e.key); 
 
 function setScore(v) {
   score = v;
-  document.getElementById("score").textContent = "Score " + v;
+  document.getElementById("score").textContent = v;
   if (v > best) { best = v; store.set(G.id, v); }
-  document.getElementById("best").textContent = "Best " + best;
+  document.getElementById("best").textContent = best;
 }
 
 // ---------- 0. Climb ----------
@@ -823,29 +823,51 @@ for (const g of GAMES) {
 
 
 // ---------- leaderboards ----------
-const UNIT = { climb: "best height · m", keep: "bounces", fly: "points", snake: "points", dodge: "points", seq: "rounds", catch: "caught" };
+const UNIT = { climb: "m", keep: "bounces", fly: "points", snake: "points", dodge: "points", seq: "rounds", catch: "caught" };
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 let boardAsk = 0;
+// The list beside the board: top 10 (gold-red light for #1, white for #2 and #3), your row lit, and your
+// place, your best and who you pass next in the card above it.
 async function showBoard(id) {
-  const rows = document.getElementById("board-rows"), note = document.getElementById("board-note");
-  document.getElementById("board-game").textContent = `${GAMES.find((g) => g.id === id).name} · ${UNIT[id]}`.toUpperCase();
+  const rows = $("board-rows"), note = $("board-note"), unit = UNIT[id];
+  $("board-game").textContent = GAMES.find((g) => g.id === id).name;
   const ask = ++boardAsk;
-  note.textContent = rows.childElementCount ? "" : "Loading…";
+  if (!rows.childElementCount) note.textContent = "Loading…";
   try {
     const list = await leaderboard(id);
     if (ask !== boardAsk) return;
     const items = [];
     list.forEach((r, i) => {
-      if (i > 0 && r.rank > list[i - 1].rank + 1) { const gap = document.createElement("li"); gap.className = "gap"; gap.textContent = "·  ·  ·"; items.push(gap); }
-      const li = document.createElement("li");
-      if (r.me) li.className = "me";
-      const n = document.createElement("span"); n.className = "n"; n.textContent = `#${r.rank}`;
-      const who = document.createElement("span"); who.textContent = r.me ? `${r.name} · you` : r.name;
-      const sc = document.createElement("span"); sc.className = "s"; sc.textContent = String(r.best);
-      li.append(n, who, sc); items.push(li);
+      if (i > 0 && r.rank > list[i - 1].rank + 1) items.push(el("li", "gap", "· · ·"));
+      const li = el("li", [r.me && "me", r.rank <= 3 && "top t" + r.rank].filter(Boolean).join(" "));
+      const n = el("span", "n"); n.append(el("i", "pip"), document.createTextNode(String(r.rank)));
+      const who = el("span", "who-n", r.name);
+      if (r.me) who.append(el("em", "", "you"));
+      li.append(n, who, el("span", "s", String(r.best)));
+      items.push(li);
     });
     rows.replaceChildren(...items);
-    const mine = list.find((r) => r.me);
-    note.textContent = !list.length ? "No scores yet. Be the first on the board." : mine ? (mine.rank === 1 ? "You're #1." : `You're #${mine.rank}.`) : "Play a round to get on the board.";
+    const mine = list.find((r) => r.me), players = list[0]?.players ?? 0;
+    $("you-rank").textContent = mine ? "#" + mine.rank : "–";
+    $("rank").textContent = mine ? "#" + mine.rank : "–";
+    $("you-of").textContent = players ? `of ${players} ${players === 1 ? "player" : "players"}` : "";
+    $("you-best").textContent = mine ? `${mine.best} ${unit}` : "–";
+    let next = "";
+    if (!list.length) next = "No one's on this board yet. Play a round and it's yours.";
+    else if (!mine) next = players < 10 ? "Play a round to get on the board." : `Beat ${list.at(-1).best} to make the top 10.`;
+    else if (mine.rank === 1) {
+      const second = list.find((r) => r.rank > 1);
+      next = second ? `You lead by ${mine.best - second.best} ${unit}.` : "You lead. Nobody else has played yet.";
+    } else {
+      // Above you on the list: the player just ahead, or (further down than the top 10) the #10 spot.
+      const above = list[list.indexOf(mine) - 1];
+      next = above.rank === mine.rank - 1 || above.rank === mine.rank
+        ? `${above.best - mine.best + 1} more to pass ${above.name.replace(/\.$/, "")}.`
+        : `${above.best - mine.best + 1} more to reach the top 10.`;
+    }
+    $("you-next").textContent = next;
+    note.textContent = players > 10 ? `Top 10 of ${players}.` : "";
   } catch (e) {
     if (ask !== boardAsk) return;
     rows.replaceChildren(); note.textContent = e.message;
@@ -855,6 +877,33 @@ async function sendScore(id, value) {
   if (!value || value < 1) return;
   try { await submitScore(id, value); } catch { return; }
   if (G.id === id) showBoard(id);
+}
+// While the page is open and on screen, the board keeps up with other players.
+setInterval(() => { if (G && !document.hidden && !$("arcade").hidden) showBoard(G.id); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && G && !$("arcade").hidden) showBoard(G.id); });
+
+// Your name on the boards: shown in the card, changed in place.
+function nameUI() {
+  const row = $("name-row"), form = $("name-form"), input = $("name-input"), err = $("name-err"), shown = $("you-name");
+  const close = () => { form.hidden = true; row.hidden = false; err.textContent = ""; };
+  const show = (n) => { shown.textContent = n; $("who").textContent = `Playing as ${n}`; };
+  myName().then((n) => n && show(n)).catch(() => {});
+  $("name-edit").addEventListener("click", () => {
+    input.value = shown.textContent === "…" ? "" : shown.textContent;
+    row.hidden = true; form.hidden = false; input.focus(); input.select();
+  });
+  $("name-cancel").addEventListener("click", close);
+  input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") close(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = input.value.trim().replace(/\s+/g, " ");
+    if (v.length < 2 || v.length > 16) { err.textContent = "Use 2 to 16 characters."; return; }
+    if (!/^[A-Za-z0-9 ._-]+$/.test(v)) { err.textContent = "Letters, numbers, spaces, dots, dashes or underscores only."; return; }
+    const btn = form.querySelector("[type=submit]"); btn.disabled = true; err.textContent = "";
+    try { show(await setName(v)); close(); showBoard(G.id); }
+    catch (x) { err.textContent = x.message; }
+    finally { btn.disabled = false; }
+  });
 }
 
 let startBest = 0, wasOver = false, boardShown = null;
@@ -873,7 +922,8 @@ function begin(g) {
   best = store.get(g.id); startBest = best; wasOver = false; setScore(0);
   if (G !== g || !document.getElementById("board-rows").childElementCount || boardShown !== g.id) { boardShown = g.id; showBoard(g.id); }
   g.init(); g.waiting = true;
-  document.getElementById("hint").textContent = g.hint;
+  $("hint").textContent = g.hint;
+  $("game-name").textContent = g.name;
 }
 
 // Run only while the board is on screen and the tab is visible.
@@ -905,6 +955,10 @@ async function unlock() {
   const showSound = () => { sw.textContent = sound.on ? "Sound on" : "Sound off"; sw.setAttribute("aria-pressed", String(sound.on)); };
   sw.addEventListener("click", () => { sound.set(!sound.on); sound.wake(); showSound(); if (sound.on) sound.play("start"); });
   showSound();
+  const how = $("howto-btn"), hint = $("hint");
+  how.addEventListener("click", () => { hint.hidden = !hint.hidden; how.setAttribute("aria-expanded", String(!hint.hidden)); how.textContent = hint.hidden ? "How to play" : "Hide help"; });
+  nameUI();
+  $("rank-link").addEventListener("click", (e) => { e.preventDefault(); $("board-list").scrollIntoView({ behavior: "smooth", block: "start" }); });
   fit();
   begin(climb);
   requestAnimationFrame(frame);
