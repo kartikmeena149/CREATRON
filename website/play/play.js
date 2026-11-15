@@ -111,7 +111,7 @@ cv.addEventListener("pointerdown", (e) => {
   Object.assign(ptr, toBoard(e), { down: true, type: e.pointerType });
   ptr.sx = ptr.x; ptr.sy = ptr.y;
   if (G.waiting) { G.waiting = false; sound.play("start"); G.go?.(); return; }
-  if (G.over) { begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
+  if (G.over) { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.press?.();
 });
 cv.addEventListener("pointermove", (e) => { Object.assign(ptr, toBoard(e), { type: e.pointerType }); G.move?.(); });
@@ -125,7 +125,7 @@ stage.addEventListener("keydown", (e) => {
   sound.wake();
   if (e.key === "r" || e.key === "R") { begin(G); return; }
   if (G.waiting && (e.key === " " || e.key.startsWith("Arrow"))) { G.waiting = false; sound.play("start"); G.go?.(); if (e.key === " ") return; }
-  if (G.over && e.key === " ") { begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
+  if (G.over && e.key === " ") { if (G.ready && !G.ready()) return; begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.key?.(e.key);
 });
 stage.addEventListener("keyup", (e) => { keys[e.key] = false; });
@@ -146,6 +146,7 @@ const keep = {
   start: TOUCH ? "Tap, then drag to turn the ring" : "Click, then point to turn the ring",
   R: 200, rd: 22,
   init() { this.rot = Math.PI; this.target = Math.PI; this.b = { x: S / 2, y: S / 2, vx: 0, vy: 0 }; this.speed = 240; this.over = false; this.flash = []; this.trail = []; this.out = 0; },
+  ready() { return this.out > 0.5; },
   go() { this.move(); const a = rnd(0, TAU); this.b.vx = Math.cos(a) * this.speed; this.b.vy = Math.sin(a) * this.speed; },
   move() { if (ptr.type === "mouse" || ptr.down) this.target = Math.atan2(ptr.y - S / 2, ptr.x - S / 2) + Math.PI; },
   update(dt) {
@@ -191,41 +192,136 @@ const keep = {
 };
 
 // ---------- 2. Through the cut ----------
-// Walls of white frames scroll past, each with a cut in it. Tap to lift the red light through.
+// Walls of frames scroll past, each with a cut. Tap to lift the red light through. Thread the middle
+// for a PERFECT; three in a row is FEVER (double points). Cuts start to slide, sparks float between
+// walls, and every 15 walls gravity flips for five.
 const fly = {
   id: "fly", name: "Through the cut",
-  hint: TOUCH ? "Tap to lift the red light. Every wall of frames has a cut in it: fly through." : "Click, tap or press space to lift the red light. Every wall of frames has a cut in it: fly through.",
+  hint: TOUCH ? "Tap to lift the red light through each cut. Hit the middle for PERFECT, three in a row for FEVER. Grab sparks. Watch for the gravity flip." : "Click, tap or space to lift the red light through each cut. Hit the middle for PERFECT, three in a row for FEVER. Grab sparks. Watch for the gravity flip.",
   start: TOUCH ? "Tap to fly" : "Click or press space to fly",
-  SLOTS: 11, PITCH: 54.6, X: 150,
-  init() { this.y = S / 2; this.vy = 0; this.walls = []; this.next = 0.9; this.over = false; this.passed = 0; this.speed = 190; this.out = 0; },
-  flap() { if (!this.over) { this.vy = -330; sound.play("flap", { rate: rnd(0.94, 1.08) }); } },
+  X: 150, PITCH: 54.6, HALF: 84, G: 1100, LIFT: 330,
+  init() {
+    this.y = S / 2; this.vy = 0; this.walls = []; this.sparks = []; this.bits = []; this.trail = []; this.pops = [];
+    this.next = 0.9; this.over = false; this.dead = 0; this.passed = 0; this.points = 0; this.speed = 190;
+    this.streak = 0; this.fever = false; this.flip = 0; this.banner = null; this.shake = 0; this.scroll = 0; this.squash = 0; this.clock = 0;
+  },
+  ready() { return this.dead > 1.3; },
+  flap() {
+    if (this.over) return;
+    this.vy = this.flip ? this.LIFT : -this.LIFT; this.squash = 1;
+    sound.play("flap", { rate: rnd(0.94, 1.08) });
+    for (let k = 0; k < 4; k++) this.bits.push({ x: this.X - 8, y: this.y, vx: rnd(-160, -60), vy: rnd(-40, 40) + (this.flip ? -60 : 60), t: 0, life: 0.35, r: 2.5, col: RED });
+  },
   go() { this.flap(); },
   press() { this.flap(); },
   key(k) { if (k === " " || k === "ArrowUp") this.flap(); },
-  slotY(i) { return 27 + i * this.PITCH; },
+  // Where a wall's cut is now: some slide up and down once you're past the first few.
+  cutY(w) { return cl(w.c + w.amp * Math.sin(this.clock * w.w + w.ph), this.HALF + 26, S - this.HALF - 26); },
+  wallDots(w) {
+    const c = this.cutY(w), out = [];
+    for (let y = c - this.HALF; y > -30; y -= this.PITCH) out.push(y);
+    for (let y = c + this.HALF; y < S + 30; y += this.PITCH) out.push(y);
+    return out;
+  },
+  say(text, t = 1.1) { this.banner = { text, t, life: t }; },
+  burst(x, y, n, col, speed = 220) { for (let k = 0; k < n; k++) { const a = rnd(0, TAU), v = rnd(0.3, 1) * speed; this.bits.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, life: rnd(0.35, 0.7), r: rnd(1.5, 3.5), col }); } },
+  crash() {
+    if (this.over) return;
+    this.over = true; this.dead = 0; this.shake = 16; sound.play("crash");
+    // The frames you hit fly apart, and the light shatters.
+    for (const w of this.walls) if (Math.abs(w.x - this.X) < 70) for (const y of this.wallDots(w)) if (Math.abs(y - this.y) < 130) { const a = Math.atan2(y - this.y, w.x - this.X); this.bits.push({ x: w.x, y, vx: Math.cos(a) * rnd(150, 320), vy: Math.sin(a) * rnd(150, 320), t: 0, life: 1.2, r: 14, col: WHITE }); w.broke = true; }
+    this.burst(this.X, this.y, 26, RED, 320);
+  },
   update(dt) {
-    this.vy += 1100 * dt;
-    if (this.over) { this.out += dt; this.y = Math.min(S + 40, this.y + this.vy * dt); return; }
-    this.y += this.vy * dt;
+    for (const b of this.bits) { b.t += dt; b.x += b.vx * dt; b.y += b.vy * dt; b.vx *= 0.97; b.vy *= 0.97; }
+    this.bits = this.bits.filter((b) => b.t < b.life);
+    for (const q of this.pops) q.t += dt;
+    this.pops = this.pops.filter((q) => q.t < 0.8);
+    if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
+    this.shake = Math.max(0, this.shake - dt * 40); this.squash = Math.max(0, this.squash - dt * 5);
+    if (this.over) { this.dead += dt; dt *= 0.25; if (this.dead > 1.3) return; } // slow motion as it breaks
+    this.clock += dt; this.scroll += this.speed * dt;
+    this.vy += (this.flip ? -this.G : this.G) * dt; this.y += this.vy * dt;
+    if (!this.over) this.trail.push({ x: this.X, y: this.y });
+    for (const p of this.trail) p.x -= this.speed * dt;
+    this.trail = this.trail.filter((p) => p.x > this.X - 110);
+    if (this.over) { for (const w of this.walls) w.x -= this.speed * dt * 0.3; return; }
     this.next -= dt;
-    if (this.next <= 0) { this.walls.push({ x: S + 40, gap: Math.floor(rnd(1, this.SLOTS - 3)), passed: false }); this.next = Math.max(1.05, 1.55 - this.passed * 0.02); }
-    this.speed = Math.min(300, 190 + this.passed * 4);
-    for (const w of this.walls) { w.x -= this.speed * dt; if (!w.passed && w.x < this.X) { w.passed = true; this.passed++; setScore(this.passed); sound.play("pass", { rate: Math.min(1.5, 1 + this.passed * 0.015) }); } }
-    this.walls = this.walls.filter((w) => w.x > -40);
-    if (this.y < 12 || this.y > S - 12) { this.over = true; sound.play("crash"); return; }
+    if (this.next <= 0) {
+      const moving = this.passed >= 6 && Math.random() < Math.min(0.75, 0.3 + this.passed * 0.015);
+      this.walls.push({ x: S + 40, c: rnd(this.HALF + 40, S - this.HALF - 40), amp: moving ? rnd(40, 90) : 0, w: rnd(1.4, 2.4), ph: rnd(0, TAU), passed: false });
+      // A spark halfway to the next wall, now and then.
+      if (this.passed >= 2 && Math.random() < 0.45) this.sparks.push({ x: S + 40 + this.speed * 0.6, y: rnd(90, S - 90), t: 0 });
+      this.next = Math.max(1.05, 1.55 - this.passed * 0.02);
+    }
+    this.speed = Math.min(320, 190 + this.passed * 4);
+    for (const sp of this.sparks) { sp.x -= this.speed * dt; sp.t += dt; }
+    this.sparks = this.sparks.filter((sp) => {
+      if (sp.x < -20) return false;
+      if (Math.hypot(sp.x - this.X, sp.y - this.y) < 28) { this.score(3, sp.x, sp.y, "+3"); this.burst(sp.x, sp.y, 12, RED); sound.play("catch", { rate: 1.3 }); return false; }
+      return true;
+    });
     for (const w of this.walls) {
-      if (Math.abs(w.x - this.X) > 40) continue;
-      for (let i = 0; i < this.SLOTS; i++) {
-        if (i === w.gap || i === w.gap + 1) continue;
-        if (Math.hypot(w.x - this.X, this.slotY(i) - this.y) < 30) { this.over = true; sound.play("crash"); return; }
+      w.x -= this.speed * dt;
+      if (!w.passed && w.x < this.X) {
+        w.passed = true; this.passed++;
+        const c = this.cutY(w), perfect = Math.abs(this.y - c) < 24;
+        if (perfect) {
+          this.streak++;
+          this.score(2, this.X + 20, c - 30, "PERFECT");
+          this.burst(w.x, c, 16, WHITE, 260);
+          sound.play("spark", { rate: semis(Math.min(12, this.streak * 2) - 4) });
+          if (this.streak === 3 && !this.fever) { this.fever = true; this.say("FEVER  ×2"); sound.play("bigshow"); }
+        } else {
+          if (this.fever) this.say("FEVER OVER", 0.8);
+          this.streak = 0; this.fever = false;
+          this.score(1, this.X + 20, c - 30, "");
+          sound.play("pass", { rate: Math.min(1.5, 1 + this.passed * 0.015) });
+        }
+        // Every 15 walls, gravity flips for five.
+        if (this.passed % 15 === 0) { this.flip = 5; this.say("GRAVITY FLIP"); sound.play("ringwarn"); this.vy *= -0.3; }
+        else if (this.flip) { this.flip--; if (!this.flip) { this.say("GRAVITY BACK", 0.9); sound.play("escape"); this.vy *= -0.3; } }
       }
     }
+    this.walls = this.walls.filter((w) => w.x > -40);
+    if (this.y < 12 || this.y > S - 12) { this.crash(); return; }
+    for (const w of this.walls) {
+      if (Math.abs(w.x - this.X) > 40) continue;
+      for (const y of this.wallDots(w)) if (Math.hypot(w.x - this.X, y - this.y) < 30) { this.crash(); return; }
+    }
+  },
+  score(n, x, y, label) {
+    const v = n * (this.fever ? 2 : 1); this.points += v; setScore(this.points);
+    this.pops.push({ x, y, t: 0, s: label ? `${label} +${v}` : `+${v}` });
   },
   draw() {
-    for (const w of this.walls) for (let i = 0; i < this.SLOTS; i++) if (i !== w.gap && i !== w.gap + 1) dot(w.x, this.slotY(i), 18, WHITE);
-    light(this.X, this.y, 12);
-    text(String(score), S / 2, 60, { size: 48 });
-    if (this.over && this.out > 0.5) veil("Hit a frame", `${score} walls · tap to fly again`);
+    ctx.save();
+    if (this.shake > 0) ctx.translate(rnd(-1, 1) * this.shake, rnd(-1, 1) * this.shake);
+    // Speed: a second, looser field of dots streams past, and the ground tints while gravity is flipped.
+    if (this.flip) { ctx.fillStyle = "rgba(229,35,27,.06)"; ctx.fillRect(0, 0, S, S); }
+    if (this.fever) { ctx.fillStyle = `rgba(229,35,27,${0.05 + 0.04 * Math.sin(this.clock * 12)})`; ctx.fillRect(0, 0, S, S); }
+    ctx.fillStyle = "#2a2a2a";
+    const off = (this.scroll * 0.45) % 96;
+    for (let x = -off; x < S + 96; x += 96) for (let y = 40; y < S; y += 96) ctx.fillRect(x, y, 3, 3);
+    for (const w of this.walls) if (!w.broke) for (const y of this.wallDots(w)) dot(w.x, y, 18, WHITE);
+    for (const sp of this.sparks) light(sp.x, sp.y, 7 * (1 + 0.2 * Math.sin(sp.t * 9)));
+    this.trail.forEach((p, i) => dot(p.x, p.y, 9 * (i / this.trail.length), RED, (this.fever ? 0.55 : 0.28) * (i / this.trail.length)));
+    for (const b of this.bits) dot(b.x, b.y, b.r * (1 - b.t / b.life * 0.5), b.col, 1 - b.t / b.life);
+    if (!this.over) {
+      // Squash and stretch: long while moving fast, squashed on a flap.
+      const st = cl(Math.abs(this.vy) / 700, 0, 0.35), sq = this.squash * 0.25, r = this.fever ? 14 : 12;
+      ctx.save(); ctx.translate(this.X, this.y); ctx.scale(1 + sq - st * 0.4, 1 - sq + st);
+      if (this.fever) { const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 6); g.addColorStop(0, "rgba(229,35,27,.45)"); g.addColorStop(1, "rgba(229,35,27,0)"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 6, 0, TAU); ctx.fill(); }
+      light(0, 0, r); ctx.restore();
+    }
+    for (const q of this.pops) text(q.s, q.x, q.y - q.t * 40, { size: 18, a: 1 - q.t / 0.8, track: 1 });
+    ctx.restore();
+    text(String(this.points), S / 2, 56, { size: 48 });
+    text(`${this.passed} walls`, S / 2, 92, { size: 16, col: GREY });
+    if (this.fever) text("FEVER ×2", S - 16, 26, { size: 18, col: RED, align: "right", track: 2 });
+    if (this.flip) text(`FLIPPED · ${this.flip}`, 16, 26, { size: 18, col: RED, align: "left", track: 2 });
+    if (this.banner) { const b = this.banner, a = Math.min(1, b.t * 3, (b.life - b.t) * 6); text(b.text, S / 2, S / 2 - 120, { size: 34, a, track: 3, col: b.text.startsWith("GRAVITY F") || b.text.startsWith("FEVER  ") ? RED : WHITE }); }
+    if (this.over && this.dead > 1.3) veil(`${this.points} points`, `${this.passed} walls · tap to fly again`);
   },
 };
 
@@ -360,6 +456,7 @@ const dodge = {
     this.pops.push({ x, y, t: 0, s: `${label ? label + " " : ""}+${v}` });
   },
   combo() { this.mult = Math.min(5, this.mult + 1); this.comboT = 2.5; },
+  ready() { return this.dead > 1.2; },
   die() { this.over = true; this.dead = 0; this.shake = 14; sound.play("hit"); },
   update(dt) {
     for (const q of this.pops) q.t += dt;
