@@ -61,6 +61,40 @@ function veil(title, sub) {
 const RING = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const ringAt = (k, R, rot = 0) => [S / 2 + R * Math.cos(rot + Math.PI / 12 + (k * Math.PI) / 6), S / 2 + R * Math.sin(rot + Math.PI / 12 + (k * Math.PI) / 6)];
 
+// ---------- sound ----------
+// Sounds from earshot's bank (public/play/sfx), loaded after the first tap (phones only allow audio
+// after one). Each has a level in dB so ticks stay quiet and big moments land; a limiter on the
+// way out keeps stacked sounds from clipping. Sound on/off is remembered on this device.
+const SFX = {
+  start: 3, over: -5, best: -4, bounce: -1, flap: 0, pass: 9, crash: 1, eat: 0, bigeat: -8, bigshow: 2, undo: -1,
+  graze: 1, spark: -5, ringwarn: -9, escape: -5, hit: 1, note: -4, wrong: -4, catch: -1.5, miss: -2.5, turn: 2,
+};
+const sound = {
+  on: (() => { try { return localStorage.getItem("creatro_play_sound") !== "off"; } catch { return true; } })(),
+  ctx: null, out: null, bufs: {},
+  wake() {
+    if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    this.ctx = new AC();
+    const limit = this.ctx.createDynamicsCompressor();
+    limit.threshold.value = -10; limit.ratio.value = 12; limit.attack.value = 0.003; limit.release.value = 0.15;
+    this.out = this.ctx.createGain(); this.out.gain.value = 0.8;
+    this.out.connect(limit).connect(this.ctx.destination);
+    for (const n of Object.keys(SFX))
+      fetch(new URL(`./sfx/${n}.mp3`, location.href)).then((r) => r.arrayBuffer()).then((a) => this.ctx.decodeAudioData(a)).then((b) => { this.bufs[n] = b; }).catch(() => {});
+  },
+  play(n, { rate = 1, gain = 0 } = {}) {
+    if (!this.on || !this.ctx || !this.bufs[n]) return;
+    const src = this.ctx.createBufferSource(), g = this.ctx.createGain();
+    src.buffer = this.bufs[n]; src.playbackRate.value = rate;
+    g.gain.value = Math.pow(10, (SFX[n] + gain) / 20);
+    src.connect(g).connect(this.out); src.start();
+  },
+  set(on) { this.on = on; try { localStorage.setItem("creatro_play_sound", on ? "on" : "off"); } catch { /* private mode */ } },
+};
+const semis = (n) => Math.pow(2, n / 12);
+
 // ---------- input ----------
 const ptr = { x: S / 2, y: S / 2, down: false, sx: 0, sy: 0, type: "mouse" };
 const keys = {};
@@ -72,11 +106,12 @@ function toBoard(e) {
 }
 cv.addEventListener("pointerdown", (e) => {
   e.preventDefault(); stage.focus({ preventScroll: true });
+  sound.wake();
   cv.setPointerCapture(e.pointerId);
   Object.assign(ptr, toBoard(e), { down: true, type: e.pointerType });
   ptr.sx = ptr.x; ptr.sy = ptr.y;
-  if (G.waiting) { G.waiting = false; G.go?.(); return; }
-  if (G.over) { begin(G); G.waiting = false; G.go?.(); return; }
+  if (G.waiting) { G.waiting = false; sound.play("start"); G.go?.(); return; }
+  if (G.over) { begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.press?.();
 });
 cv.addEventListener("pointermove", (e) => { Object.assign(ptr, toBoard(e), { type: e.pointerType }); G.move?.(); });
@@ -87,9 +122,10 @@ cv.addEventListener("contextmenu", (e) => e.preventDefault());
 stage.addEventListener("keydown", (e) => {
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
   keys[e.key] = true;
+  sound.wake();
   if (e.key === "r" || e.key === "R") { begin(G); return; }
-  if (G.waiting && (e.key === " " || e.key.startsWith("Arrow"))) { G.waiting = false; G.go?.(); if (e.key === " ") return; }
-  if (G.over && e.key === " ") { begin(G); G.waiting = false; G.go?.(); return; }
+  if (G.waiting && (e.key === " " || e.key.startsWith("Arrow"))) { G.waiting = false; sound.play("start"); G.go?.(); if (e.key === " ") return; }
+  if (G.over && e.key === " ") { begin(G); G.waiting = false; sound.play("start"); G.go?.(); return; }
   G.key?.(e.key);
 });
 stage.addEventListener("keyup", (e) => { keys[e.key] = false; });
@@ -125,7 +161,7 @@ const keep = {
     const dx = b.x - S / 2, dy = b.y - S / 2, d = Math.hypot(dx, dy), wall = this.R - this.rd - 12;
     if (d < wall) return;
     const a = Math.atan2(dy, dx);
-    if (Math.abs(wrapAngle(a - this.rot)) < 0.42) { this.over = true; return; } // through the cut
+    if (Math.abs(wrapAngle(a - this.rot)) < 0.42) { this.over = true; sound.play("over"); return; } // through the cut
     const nx = dx / d, ny = dy / d, along = b.vx * nx + b.vy * ny;
     if (along <= 0) return;
     b.vx -= 2 * along * nx; b.vy -= 2 * along * ny;
@@ -135,6 +171,7 @@ const keep = {
     const m = Math.hypot(vx, vy); b.vx = (vx / m) * this.speed; b.vy = (vy / m) * this.speed;
     b.x = S / 2 + nx * (wall - 1); b.y = S / 2 + ny * (wall - 1);
     setScore(score + 1);
+    sound.play("bounce", { rate: 0.85 + ((this.speed - 240) / 380) * 0.75 }); // higher as it speeds up
     let k = 0, bd = 9;
     for (const i of RING) { const o = Math.abs(wrapAngle(a - (this.rot + Math.PI / 12 + (i * Math.PI) / 6))); if (o < bd) { bd = o; k = i; } }
     this.flash.push({ k, t: 0.25 });
@@ -161,7 +198,7 @@ const fly = {
   start: TOUCH ? "Tap to fly" : "Click or press space to fly",
   SLOTS: 11, PITCH: 54.6, X: 150,
   init() { this.y = S / 2; this.vy = 0; this.walls = []; this.next = 0.9; this.over = false; this.passed = 0; this.speed = 190; this.out = 0; },
-  flap() { if (!this.over) this.vy = -330; },
+  flap() { if (!this.over) { this.vy = -330; sound.play("flap", { rate: rnd(0.94, 1.08) }); } },
   go() { this.flap(); },
   press() { this.flap(); },
   key(k) { if (k === " " || k === "ArrowUp") this.flap(); },
@@ -173,14 +210,14 @@ const fly = {
     this.next -= dt;
     if (this.next <= 0) { this.walls.push({ x: S + 40, gap: Math.floor(rnd(1, this.SLOTS - 3)), passed: false }); this.next = Math.max(1.05, 1.55 - this.passed * 0.02); }
     this.speed = Math.min(300, 190 + this.passed * 4);
-    for (const w of this.walls) { w.x -= this.speed * dt; if (!w.passed && w.x < this.X) { w.passed = true; this.passed++; setScore(this.passed); } }
+    for (const w of this.walls) { w.x -= this.speed * dt; if (!w.passed && w.x < this.X) { w.passed = true; this.passed++; setScore(this.passed); sound.play("pass", { rate: Math.min(1.5, 1 + this.passed * 0.015) }); } }
     this.walls = this.walls.filter((w) => w.x > -40);
-    if (this.y < 12 || this.y > S - 12) { this.over = true; return; }
+    if (this.y < 12 || this.y > S - 12) { this.over = true; sound.play("crash"); return; }
     for (const w of this.walls) {
       if (Math.abs(w.x - this.X) > 40) continue;
       for (let i = 0; i < this.SLOTS; i++) {
         if (i === w.gap || i === w.gap + 1) continue;
-        if (Math.hypot(w.x - this.X, this.slotY(i) - this.y) < 30) { this.over = true; return; }
+        if (Math.hypot(w.x - this.X, this.slotY(i) - this.y) < 30) { this.over = true; sound.play("crash"); return; }
       }
     }
   },
@@ -207,7 +244,7 @@ const snake = {
   },
   place() { let f; do f = [Math.floor(Math.random() * this.N), Math.floor(Math.random() * this.N)]; while (this.body.some((p) => p[0] === f[0] && p[1] === f[1]) || (this.food && f[0] === this.food[0] && f[1] === this.food[1])); return f; },
   heading() { return this.q.length ? this.q[this.q.length - 1] : this.dir; },
-  turn(d) { const last = this.heading(); if (d[0] === -last[0] && d[1] === -last[1]) return; if (d[0] === last[0] && d[1] === last[1]) return; if (this.q.length < 3) this.q.push(d); },
+  turn(d) { const last = this.heading(); if (d[0] === -last[0] && d[1] === -last[1]) return; if (d[0] === last[0] && d[1] === last[1]) return; if (this.q.length < 3) { this.q.push(d); sound.play("turn"); } },
   turnSide(side) { const [x, y] = this.heading(); this.turn(side < 0 ? [y, -x] : [-y, x]); },
   key(k) { const d = { ArrowUp: [0, -1], w: [0, -1], ArrowDown: [0, 1], s: [0, 1], ArrowLeft: [-1, 0], a: [-1, 0], ArrowRight: [1, 0], d: [1, 0] }[k]; if (d) this.turn(d); },
   go() { this.skipUp = true; },
@@ -234,9 +271,10 @@ const snake = {
       const h = this.hist[0]; this.undo--;
       this.body = h.body; this.prev = this.body.map((p) => [...p]); this.dir = h.dir; this.food = h.food; this.big = h.big; this.points = h.points; this.grow = h.grow; this.step = h.step;
       this.q = []; this.hist = []; this.acc = 0; this.pause = 1.1; this.flash = 1.1; setScore(this.points);
+      sound.play("undo");
       return;
     }
-    this.over = true;
+    this.over = true; sound.play("crash");
   },
   eat(n, at) { this.points += n; this.grow += n - 1; setScore(this.points); this.step = Math.max(0.075, this.step * 0.975); this.pops.push({ x: at[0], y: at[1], t: 0, s: "+" + n }); },
   update(dt) {
@@ -257,9 +295,10 @@ const snake = {
       this.body.unshift(h);
       if (h[0] === this.food[0] && h[1] === this.food[1]) {
         this.eaten++; this.eat(1, h); this.food = this.place();
-        if (this.eaten % 5 === 0 && !this.big) { const f = this.place(); this.big = { x: f[0], y: f[1], t: 6 }; }
+        sound.play("eat", { rate: Math.min(1.6, 1 + this.eaten * 0.02) });
+        if (this.eaten % 5 === 0 && !this.big) { const f = this.place(); this.big = { x: f[0], y: f[1], t: 6 }; sound.play("bigshow"); }
         this.grow++;
-      } else if (this.big && h[0] === this.big.x && h[1] === this.big.y) { this.eat(3, h); this.big = null; this.grow++; }
+      } else if (this.big && h[0] === this.big.x && h[1] === this.big.y) { this.eat(3, h); this.big = null; this.grow++; sound.play("bigeat"); }
       if (this.grow > 0) { this.grow--; this.prev.push(this.prev[this.prev.length - 1]); } else this.body.pop();
     }
   },
@@ -321,7 +360,7 @@ const dodge = {
     this.pops.push({ x, y, t: 0, s: `${label ? label + " " : ""}+${v}` });
   },
   combo() { this.mult = Math.min(5, this.mult + 1); this.comboT = 2.5; },
-  die() { this.over = true; this.dead = 0; this.shake = 14; },
+  die() { this.over = true; this.dead = 0; this.shake = 14; sound.play("hit"); },
   update(dt) {
     for (const q of this.pops) q.t += dt;
     this.pops = this.pops.filter((q) => q.t < 0.9);
@@ -342,6 +381,7 @@ const dodge = {
         // The ring closes in around wherever you are; its cut points somewhere random.
         this.ring = { x: this.p.x, y: this.p.y, R: 270, rot: rnd(0, TAU), spin: rnd(-0.45, 0.45), warn: 1.4, out: false };
         this.nextRing = this.t + 14;
+        sound.play("ringwarn");
       }
       if (this.keysMode) {
         const v = 330 * dt;
@@ -365,12 +405,12 @@ const dodge = {
       const d = Math.hypot(w.x - p.x, w.y - p.y);
       if (d < 26) { this.die(); break; }
       // A near miss: close, but not touching. Scores once per pass.
-      if (d < 46 && !w.near) { w.near = true; this.gain(5, w.x, w.y - 26, ""); this.combo(); }
+      if (d < 46 && !w.near) { w.near = true; this.gain(5, w.x, w.y - 26, ""); this.combo(); sound.play("graze", { rate: 1 + (this.mult - 2) * 0.08 }); }
       if (d > 80) w.near = false;
     }
     for (const sp of this.sparks) sp.t += dt;
     if (!this.over) {
-      this.sparks = this.sparks.filter((sp) => { if (Math.hypot(sp.x - p.x, sp.y - p.y) < 26) { this.gain(10, sp.x, sp.y - 24, ""); this.combo(); return false; } return true; });
+      this.sparks = this.sparks.filter((sp) => { if (Math.hypot(sp.x - p.x, sp.y - p.y) < 26) { this.gain(10, sp.x, sp.y - 24, ""); this.combo(); sound.play("spark", { rate: semis((this.mult - 2) * 2) }); return false; } return true; });
     }
     const r = this.ring;
     if (r) {
@@ -378,7 +418,7 @@ const dodge = {
       else {
         r.R -= 64 * dt; r.rot += r.spin * dt;
         const dx = p.x - r.x, dy = p.y - r.y, d = Math.hypot(dx, dy);
-        if (!this.over && !r.out && d > r.R + 16) { r.out = true; this.gain(25, p.x, p.y - 30, "THROUGH THE CUT"); this.combo(); }
+        if (!this.over && !r.out && d > r.R + 16) { r.out = true; this.gain(25, p.x, p.y - 30, "THROUGH THE CUT"); this.combo(); sound.play("escape"); }
         if (!this.over && !r.out && Math.abs(d - r.R) < 16 && Math.abs(wrapAngle(Math.atan2(dy, dx) - r.rot)) > 0.42) this.die();
         if (r.R < 8) this.ring = null;
       }
@@ -417,6 +457,8 @@ const seq = {
   hint: "Watch the ring light up, then tap the frames in the same order. Each round adds one.",
   start: "Tap to watch the first frame",
   R: 180,
+  NOTES: [0, 2, 4, 7, 9, 12, 14, 16, 19, 21],
+  ping(n) { sound.play("note", { rate: semis(this.NOTES[n] - 5) }); },
   init() { this.list = []; this.state = "idle"; this.over = false; this.lit = -1; this.litT = 0; this.i = 0; this.wait = 0; this.wrong = -1; },
   go() { this.add(); },
   add() { this.list.push(Math.floor(Math.random() * 10)); this.state = "show"; this.i = 0; this.wait = 0.6; },
@@ -426,7 +468,8 @@ const seq = {
     RING.forEach((k, n) => { const [x, y] = ringAt(k, this.R), d = Math.hypot(ptr.x - x, ptr.y - y); if (d < bd) { bd = d; hit = n; } });
     if (hit < 0) return;
     this.lit = hit; this.litT = 0.22;
-    if (hit !== this.list[this.i]) { this.over = true; this.wrong = hit; return; }
+    if (hit !== this.list[this.i]) { this.over = true; this.wrong = hit; sound.play("wrong"); return; }
+    this.ping(hit);
     this.i++;
     if (this.i === this.list.length) { setScore(this.list.length); this.state = "pause"; this.wait = 0.7; }
   },
@@ -435,7 +478,7 @@ const seq = {
     if (this.over || this.state === "idle") return;
     this.wait -= dt;
     if (this.state === "show" && this.wait <= 0) {
-      if (this.i < this.list.length) { this.lit = this.list[this.i]; this.litT = 0.38; this.i++; this.wait = Math.max(0.32, 0.62 - this.list.length * 0.02); }
+      if (this.i < this.list.length) { this.lit = this.list[this.i]; this.litT = 0.38; this.ping(this.lit); this.i++; this.wait = Math.max(0.32, 0.62 - this.list.length * 0.02); }
       else { this.state = "input"; this.i = 0; }
     }
     if (this.state === "pause" && this.wait <= 0) this.add();
@@ -463,10 +506,10 @@ const catchLight = {
   press() {
     if (this.cur < 0) return;
     const [x, y] = this.P[this.cur];
-    if (Math.hypot(ptr.x - x, ptr.y - y) < 46) { setScore(score + 1); this.rings.push({ x, y, t: 0 }); this.win = Math.max(0.42, this.win * 0.95); this.jump(); }
+    if (Math.hypot(ptr.x - x, ptr.y - y) < 46) { setScore(score + 1); sound.play("catch", { rate: Math.min(1.7, 1 + score * 0.025) }); this.rings.push({ x, y, t: 0 }); this.win = Math.max(0.42, this.win * 0.95); this.jump(); }
     else this.miss();
   },
-  miss() { this.lives--; if (this.lives <= 0) this.over = true; else this.jump(); },
+  miss() { this.lives--; if (this.lives <= 0) { this.over = true; sound.play("over"); } else { sound.play("miss"); this.jump(); } },
   update(dt) {
     for (const r of this.rings) r.t += dt;
     this.rings = this.rings.filter((r) => r.t < 0.4);
@@ -492,10 +535,11 @@ for (const g of GAMES) {
 }
 
 
+let startBest = 0, wasOver = false;
 function begin(g) {
   G = g;
   for (const x of GAMES) x.tab.setAttribute("aria-selected", String(x === g));
-  best = store.get(g.id); setScore(0);
+  best = store.get(g.id); startBest = best; wasOver = false; setScore(0);
   g.init(); g.waiting = true;
   document.getElementById("hint").textContent = g.hint;
 }
@@ -507,6 +551,8 @@ function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000); last = now;
   if (visible && !document.hidden) {
     if (!G.waiting) G.update(dt);
+    if (G.over && !wasOver && score > startBest && startBest > 0) setTimeout(() => sound.play("best"), 650);
+    wasOver = !!G.over;
     sheet(); G.draw();
     if (G.waiting) veil(G.name.toUpperCase(), G.start);
   }
@@ -524,10 +570,14 @@ async function unlock() {
   document.getElementById("arcade").hidden = false;
   document.getElementById("who").textContent = `Playing as ${user.name.split(" ")[0]}`;
   document.getElementById("signout").addEventListener("click", async () => { await signOut(); location.reload(); });
+  const sw = document.getElementById("sound");
+  const showSound = () => { sw.textContent = sound.on ? "Sound on" : "Sound off"; sw.setAttribute("aria-pressed", String(sound.on)); };
+  sw.addEventListener("click", () => { sound.set(!sound.on); sound.wake(); showSound(); if (sound.on) sound.play("start"); });
+  showSound();
   fit();
   begin(keep);
   requestAnimationFrame(frame);
 }
 unlock();
 // For automated tests only: /play/?test exposes the games.
-if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, get G() { return G; }, get score() { return score; } };
+if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, sound, get G() { return G; }, get score() { return score; } };
