@@ -101,122 +101,98 @@ function setScore(v) {
   document.getElementById("best").textContent = "Best " + best;
 }
 
-// ---------- 1. Shoot the cut ----------
-const cut = {
-  id: "cut", name: "Shoot the cut",
-  hint: "Tap or press space to fire the red light out through the gap in the ring. Hit a frame and it's over.",
-  start: "Tap to fire through the cut",
-  init() { this.rot = 0; this.w = 1.3; this.dir = 1; this.rd = 0; this.fly = false; this.over = false; this.flash = 0; this.hit = -1; },
-  fire() { if (!this.fly && !this.over) { this.fly = true; this.checked = false; } },
-  go() { this.fire(); },
-  press() { this.fire(); },
-  key(k) { if (k === " ") this.fire(); },
+// ---------- 1. Keep the light ----------
+// The red light bounces inside the ring. The cut sits opposite your finger: point where the light
+// is heading and a frame is there to send it back. Out through the cut, and it's over.
+const keep = {
+  id: "keep", name: "Keep the light",
+  hint: TOUCH ? "The red light bounces inside the ring. Drag around the board toward where it's heading, so a frame catches it. Out through the cut, and it's over." : "The red light bounces inside the ring. Point toward where it's heading (or use the arrows) so a frame catches it. Out through the cut, and it's over.",
+  start: TOUCH ? "Tap, then drag to turn the ring" : "Click, then point to turn the ring",
+  R: 200, rd: 22,
+  init() { this.rot = Math.PI; this.target = Math.PI; this.b = { x: S / 2, y: S / 2, vx: 0, vy: 0 }; this.speed = 240; this.over = false; this.flash = []; this.trail = []; this.out = 0; },
+  go() { this.move(); const a = rnd(0, TAU); this.b.vx = Math.cos(a) * this.speed; this.b.vy = Math.sin(a) * this.speed; },
+  move() { if (ptr.type === "mouse" || ptr.down) this.target = Math.atan2(ptr.y - S / 2, ptr.x - S / 2) + Math.PI; },
   update(dt) {
-    this.flash = Math.max(0, this.flash - dt * 2.5);
-    if (this.over) return;
-    this.rot += this.w * this.dir * dt;
-    if (!this.fly) return;
-    this.rd += 760 * dt;
-    const R = 170;
-    if (!this.checked && this.rd >= R - 16) {
-      this.checked = true;
-      if (Math.abs(wrapAngle(-this.rot)) < 0.36) { setScore(score + 1); this.flash = 1; }
-      else {
-        this.over = true; this.rd = R - 26;
-        let bd = 9;
-        for (const k of RING) { const a = Math.abs(wrapAngle(this.rot + Math.PI / 12 + (k * Math.PI) / 6)); if (a < bd) { bd = a; this.hit = k; } }
-      }
-    }
-    if (this.rd > 330) { this.fly = false; this.rd = 0; this.w = Math.min(4.2, this.w * 1.08); if (Math.random() < 0.35) this.dir *= -1; }
+    if (keys.ArrowLeft) this.target -= 3.2 * dt;
+    if (keys.ArrowRight) this.target += 3.2 * dt;
+    this.rot += wrapAngle(this.target - this.rot) * Math.min(1, dt * 16);
+    for (const f of this.flash) f.t -= dt;
+    this.flash = this.flash.filter((f) => f.t > 0);
+    const b = this.b;
+    if (this.over) { this.out += dt; b.x += b.vx * dt; b.y += b.vy * dt; return; }
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    this.trail.push([b.x, b.y]); if (this.trail.length > 14) this.trail.shift();
+    const dx = b.x - S / 2, dy = b.y - S / 2, d = Math.hypot(dx, dy), wall = this.R - this.rd - 12;
+    if (d < wall) return;
+    const a = Math.atan2(dy, dx);
+    if (Math.abs(wrapAngle(a - this.rot)) < 0.42) { this.over = true; return; } // through the cut
+    const nx = dx / d, ny = dy / d, along = b.vx * nx + b.vy * ny;
+    if (along <= 0) return;
+    b.vx -= 2 * along * nx; b.vy -= 2 * along * ny;
+    // A little spin on every bounce, so no two rounds play the same.
+    const tw = rnd(-0.25, 0.25), c = Math.cos(tw), s = Math.sin(tw), vx = b.vx * c - b.vy * s, vy = b.vx * s + b.vy * c;
+    this.speed = Math.min(620, this.speed * 1.045);
+    const m = Math.hypot(vx, vy); b.vx = (vx / m) * this.speed; b.vy = (vy / m) * this.speed;
+    b.x = S / 2 + nx * (wall - 1); b.y = S / 2 + ny * (wall - 1);
+    setScore(score + 1);
+    let k = 0, bd = 9;
+    for (const i of RING) { const o = Math.abs(wrapAngle(a - (this.rot + Math.PI / 12 + (i * Math.PI) / 6))); if (o < bd) { bd = o; k = i; } }
+    this.flash.push({ k, t: 0.25 });
   },
   draw() {
-    const R = 170;
-    ctx.strokeStyle = LINE; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(S / 2, S / 2); ctx.lineTo(S - 24, S / 2); ctx.stroke(); ctx.setLineDash([]);
-    for (const k of RING) { const [x, y] = ringAt(k, R, this.rot); dot(x, y, 24, this.over && k === this.hit ? DIM : WHITE); }
-    if (this.flash > 0) { ctx.strokeStyle = `rgba(255,255,255,${this.flash * 0.5})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(S / 2, S / 2, R + (1 - this.flash) * 120, 0, TAU); ctx.stroke(); ctx.lineWidth = 1; }
-    light(S / 2 + this.rd, S / 2, 24);
-    text(String(score), S / 2, 60, { size: 44 });
-    if (this.over) veil("Hit a frame", `${score} through · tap to play again`);
+    const C = S / 2;
+    ctx.fillStyle = "rgba(229,35,27,.06)"; ctx.beginPath(); ctx.moveTo(C, C); ctx.arc(C, C, this.R + 40, this.rot - 0.42, this.rot + 0.42); ctx.closePath(); ctx.fill();
+    for (const i of RING) {
+      const a = this.rot + Math.PI / 12 + (i * Math.PI) / 6, hit = this.flash.some((f) => f.k === i);
+      dot(C + this.R * Math.cos(a), C + this.R * Math.sin(a), this.rd * (hit ? 1.18 : 1), WHITE);
+    }
+    this.trail.forEach(([x, y], i) => dot(x, y, 10 * (i / this.trail.length), RED, 0.25 * (i / this.trail.length)));
+    light(this.b.x, this.b.y, 12);
+    text(String(score), C, C, { size: 56, col: "#3a3a3a" });
+    if (this.over && this.out > 0.5) veil("Out through the cut", `${score} bounces · tap to play again`);
   },
 };
 
-// ---------- 2. Bowling ----------
-const bowl = {
-  id: "bowl", name: "Bowling",
-  hint: "Drag back from the red ball and let go, like a slingshot. Five frames, two rolls each.",
-  start: "Drag back from the ball, let go",
-  L: 170, Rr: 430,
-  init() { this.frame = 1; this.roll = 1; this.total = 0; this.msg = ""; this.msgT = 0; this.over = false; this.rack(); this.reset(); },
-  rack() {
-    this.pins = [];
-    for (let row = 0; row < 4; row++) for (let j = 0; j <= row; j++) {
-      const x = S / 2 + (j - row / 2) * 36, y = 190 - row * 31;
-      this.pins.push({ x, y, x0: x, y0: y, vx: 0, vy: 0, r: 13, m: 1, down: false, gone: false });
-    }
+// ---------- 2. Chain reaction ----------
+// Ten frames drift. One tap: the red light bursts, and every frame it touches bursts too.
+const BURST = 95;
+const burstR = (t) => (t < 0.25 ? BURST * (t / 0.25) : t < 1.1 ? BURST : BURST * (1 - (t - 1.1) / 0.3));
+const chain = {
+  id: "chain", name: "Chain reaction",
+  hint: "Ten frames drift around. Tap once: the red light bursts, and every frame it touches bursts too. Reach the goal to go up a level.",
+  start: "Tap to start, then tap where to burst",
+  init() { this.level = 1; this.total = 0; this.setup(); },
+  setup() {
+    this.ws = [];
+    for (let i = 0; i < 10; i++) { const a = rnd(0, TAU), s = rnd(50, 95) + this.level * 6; this.ws.push({ x: rnd(40, S - 40), y: rnd(70, S - 40), vx: Math.cos(a) * s, vy: Math.sin(a) * s, st: 0 }); }
+    this.goal = Math.min(9, this.level + 2); this.tapped = false; this.bursts = []; this.done = 0; this.end = 0; this.over = false; this.won = false;
   },
-  reset() { this.ball = { x: S / 2, y: 530, vx: 0, vy: 0, r: 17, m: 2.6 }; this.moving = false; this.t = 0; },
-  go() { /* the first drag is the first roll */ },
-  aiming() { return ptr.down && !this.moving && Math.hypot(ptr.sx - this.ball.x, ptr.sy - this.ball.y) <= 110; },
-  release() {
-    if (this.over || this.moving) return;
-    const b = this.ball, dx = ptr.sx - ptr.x, dy = ptr.sy - ptr.y, d = Math.hypot(dx, dy);
-    if (d < 14 || Math.hypot(ptr.sx - b.x, ptr.sy - b.y) > 110) return;
-    const p = Math.min(1, d / 160) * 1100;
-    b.vx = (dx / d) * p + rnd(-14, 14); b.vy = (dy / d) * p;
-    if (b.vy > -80) { b.vx = b.vy = 0; return; }
-    this.moving = true; this.t = 0;
-  },
+  go() {},
+  press() { if (this.end > 0 || this.tapped) return; this.tapped = true; this.bursts.push({ x: ptr.x, y: ptr.y, t: 0 }); },
   update(dt) {
-    if (this.msgT > 0) this.msgT -= dt;
-    if (!this.moving) return;
-    this.t += dt;
-    const n = 4, h = dt / n, all = [this.ball, ...this.pins.filter((p) => !p.gone)];
-    for (let s = 0; s < n; s++) {
-      for (const o of all) { o.x += o.vx * h; o.y += o.vy * h; const f = Math.pow(o === this.ball ? 0.7 : 0.06, h); o.vx *= f; o.vy *= f; }
-      for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
-        const a = all[i], b = all[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), m = a.r + b.r;
-        if (d >= m || d === 0) continue;
-        const nx = dx / d, ny = dy / d, o = m - d, ta = b.m / (a.m + b.m), tb = a.m / (a.m + b.m);
-        a.x -= nx * o * ta; a.y -= ny * o * ta; b.x += nx * o * tb; b.y += ny * o * tb;
-        const rv = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-        if (rv < 0) {
-          const e = a === this.ball || b === this.ball ? 0.55 : 0.4, J = (-(1 + e) * rv) / (1 / a.m + 1 / b.m);
-          a.vx -= (J * nx) / a.m; a.vy -= (J * ny) / a.m; b.vx += (J * nx) / b.m; b.vy += (J * ny) / b.m;
-        }
-      }
-      const b = this.ball;
-      if (b.x < this.L + b.r || b.x > this.Rr - b.r) { b.x = cl(b.x, this.L + b.r, this.Rr - b.r); b.vx = 0; }
-      for (const p of this.pins) if (!p.gone && (p.x < this.L - 4 || p.x > this.Rr + 4 || p.y < 20)) p.gone = true;
+    for (const w of this.ws) { if (w.st) continue; w.x += w.vx * dt; w.y += w.vy * dt; if (w.x < 14 || w.x > S - 14) w.vx *= -1; if (w.y < 60 || w.y > S - 14) w.vy *= -1; }
+    for (const b of this.bursts) b.t += dt;
+    for (const b of this.bursts) {
+      if (b.t > 1.4) continue;
+      const r = burstR(b.t);
+      for (const w of this.ws) if (!w.st && Math.hypot(w.x - b.x, w.y - b.y) < r + 12) { w.st = 1; this.done++; setScore(this.total + this.done); this.bursts.push({ x: w.x, y: w.y, t: 0 }); }
     }
-    const still = all.every((o) => Math.hypot(o.vx, o.vy) < 6);
-    if ((still && this.t > 0.4) || this.t > 6 || this.ball.y < -40) this.endRoll();
+    if (this.tapped && this.end === 0 && this.bursts.every((b) => b.t > 1.4)) { this.won = this.done >= this.goal; this.end = 0.001; }
+    if (this.end > 0) { this.end += dt; if (this.end > 1.4) { if (this.won) { this.total += this.done; this.level++; this.setup(); } else this.over = true; } }
   },
-  endRoll() {
-    this.moving = false;
-    const down = this.pins.filter((p) => !p.down && (p.gone || Math.hypot(p.x - p.x0, p.y - p.y0) > 9));
-    down.forEach((p) => (p.down = true));
-    const standing = this.pins.filter((p) => !p.down).length;
-    this.total += down.length; setScore(this.total);
-    if (this.roll === 1 && standing === 0) { this.msg = "Strike"; this.next(); }
-    else if (this.roll === 2) { this.msg = standing === 0 ? "Spare" : `${down.length} down`; this.next(); }
-    else { this.msg = `${down.length} down`; this.roll = 2; this.pins.forEach((p) => { if (p.down) p.gone = true; }); this.reset(); }
-    this.msgT = 1.4;
-  },
-  next() { if (this.frame === 5) { this.over = true; return; } this.frame++; this.roll = 1; this.rack(); this.reset(); },
   draw() {
-    ctx.fillStyle = "#111"; ctx.fillRect(this.L, 0, this.Rr - this.L, S);
-    ctx.strokeStyle = LINE; ctx.strokeRect(this.L + 0.5, -1, this.Rr - this.L - 1, S + 2);
-    ctx.fillStyle = LINE; ctx.fillRect(this.L, 470, this.Rr - this.L, 1);
-    for (const p of this.pins) if (!p.gone) dot(p.x, p.y, p.r, p.down ? DIM : WHITE);
-    const b = this.ball;
-    if (this.aiming()) {
-      const dx = ptr.sx - ptr.x, dy = ptr.sy - ptr.y;
-      ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x + dx * 2.2, b.y + dy * 2.2); ctx.stroke(); ctx.setLineDash([]);
+    for (const b of this.bursts) {
+      if (b.t > 1.4) continue;
+      const r = burstR(b.t);
+      ctx.fillStyle = "rgba(229,35,27,.16)"; ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, TAU); ctx.fill();
+      ctx.strokeStyle = "rgba(229,35,27,.6)"; ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
+      dot(b.x, b.y, 10, RED);
     }
-    light(b.x, b.y, b.r);
-    text(`Frame ${this.frame}/5 · Roll ${this.roll}`.toUpperCase(), 16, 26, { size: 20, col: GREY, align: "left" });
-    if (this.msgT > 0) text(this.msg.toUpperCase(), S / 2, 300, { size: 38, a: cl(this.msgT), track: 2 });
-    if (this.over) veil(`${this.total} pins`, "out of 50 · tap to bowl again");
+    for (const w of this.ws) if (!w.st) dot(w.x, w.y, 12, WHITE);
+    text(`LEVEL ${this.level}`, 16, 28, { size: 20, col: GREY, align: "left" });
+    text(`${this.done} / ${this.goal}`, S - 16, 28, { size: 20, col: this.done >= this.goal ? WHITE : GREY, align: "right" });
+    if (this.end > 0 && !this.over && this.won) text("NEXT LEVEL", S / 2, S / 2, { size: 32, a: cl(this.end * 2), track: 2 });
+    if (this.over) veil(`Level ${this.level}`, `${this.done} of ${this.goal} burst · tap to start over`);
   },
 };
 
@@ -382,7 +358,7 @@ const catchLight = {
 };
 
 // ---------- the page ----------
-const GAMES = [cut, bowl, snake, dodge, seq, catchLight];
+const GAMES = [keep, chain, snake, dodge, seq, catchLight];
 const list = document.getElementById("games");
 const pad = document.getElementById("pad");
 for (const g of GAMES) {
@@ -434,7 +410,7 @@ async function unlock() {
   document.getElementById("who").textContent = `Playing as ${user.name.split(" ")[0]}`;
   document.getElementById("signout").addEventListener("click", async () => { await signOut(); location.reload(); });
   fit();
-  begin(cut);
+  begin(keep);
   requestAnimationFrame(frame);
 }
 unlock();
