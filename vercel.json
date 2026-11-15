@@ -25,6 +25,21 @@
       "source": "/demo/(.*)",
       "destination": "/",
       "permanent": false
+    },
+    {
+      "source": "/brand",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/brand/",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/brand/index.html",
+      "destination": "/",
+      "permanent": false
     }
   ]
 }
