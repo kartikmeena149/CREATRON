@@ -53,6 +53,8 @@ let current: ChildProcess | undefined;
 let cancelled = false;
 
 export const autoEditDir = (video: string) => join(workDir(video), "autoedit");
+/** The agent's latest session in this folder, written as soon as it starts (a failed edit can be continued). */
+export const lastSessionFile = (dir: string) => join(projectPaths(dir).internal, "agent-session");
 
 /** Stops the edit that's running (if any). */
 export function cancelAutoEdit() {
@@ -373,7 +375,11 @@ function claude(
         } catch {
           continue;
         }
-        if (msg.session_id) sessionId = msg.session_id;
+        if (msg.session_id && msg.session_id !== sessionId) {
+          sessionId = msg.session_id;
+          // Kept on disk at once: if the edit fails later, the next request continues this session.
+          writeFileSync(lastSessionFile(dir), sessionId);
+        }
         if (msg.type === "result") result = msg;
         else if (msg.type === "assistant") for (const block of msg.message?.content ?? []) onBlock(block);
       }

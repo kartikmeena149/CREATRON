@@ -5,7 +5,7 @@
 // video go back to the same Auto Edit session.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AutoEditEvent, autoEdit, autoEditDir, autoEditFix, cancelAutoEdit } from "./autoedit.ts";
+import { type AutoEditEvent, autoEdit, autoEditDir, autoEditFix, cancelAutoEdit, lastSessionFile } from "./autoedit.ts";
 import type { ChatEvent, FullEditAsk, FullEditResult, Step } from "./chatTypes.ts";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -50,9 +50,23 @@ export async function runFullEdit(video: string, ask: FullEditAsk, model: string
     steps.end();
     writeFileSync(savedFile(video), JSON.stringify({ session: r.session, version: r.version, notes: r.notes, model } satisfies Saved, null, 1));
     return { dir: r.dir, project: r.project, final: r.final, notes: r.notes, version: r.version };
+  } catch (e) {
+    // A new edit that stopped part way still leaves its project and its session. Saved, the next
+    // request ("render it again", a change) continues that work instead of starting over for 20 minutes.
+    if (!change) keepUnfinished(video, model, e);
+    throw e;
   } finally {
     running = undefined;
   }
+}
+
+function keepUnfinished(video: string, model: string, e: unknown) {
+  const dir = autoEditDir(video);
+  const session = existsSync(lastSessionFile(dir)) ? readFileSync(lastSessionFile(dir), "utf8").trim() : "";
+  if (!session || !existsSync(join(dir, "project", "timeline.json")) || /^Stopped/.test(String((e as Error)?.message ?? e))) return;
+  const why = String(e instanceof Error ? e.message : e).split("\n")[0]!.slice(0, 200);
+  const notes = `NOT FINISHED: the last full edit stopped before it was done; its project is built and kept. Any request about this video (render it, finish it, a change) continues it: hand it over with "change", never a new "brief". It stopped because: ${why}`;
+  writeFileSync(savedFile(video), JSON.stringify({ session, version: fullEditInfo(video)?.version ?? 0, notes, model } satisfies Saved, null, 1));
 }
 
 /**
