@@ -35,7 +35,8 @@ export function AgentTurn({ m, index, last, onAnswer, onStop }: Props) {
           <span className="agent-time">{elapsed}</span>
           <button className="agent-stop" onClick={onStop} title="Stop Claude"><i /> Stop</button>
         </div>
-        {texts.at(-1) && <div className="agent-text">{texts.at(-1)}</div>}
+        {m.job && <JobCard job={m.job} now={now} />}
+        {!m.job && texts.at(-1) && <div className="agent-text">{texts.at(-1)}</div>}
       </div>
     );
   }
@@ -54,12 +55,58 @@ export function AgentTurn({ m, index, last, onAnswer, onStop }: Props) {
       </div>
       {open && <Details m={m} />}
       {m.error && <p className="agent-error">{m.error}</p>}
+      {m.result && <ResultCard r={m.result} />}
       {final && !open && <div className="agent-text">{final}</div>}
       {m.question && (m.answer !== undefined ? (
         <div className="agent-answered"><span>{m.question.question}</span><Icon name="chevron" size={10} /><b>{m.answer}</b></div>
       ) : (
         last && m.status === "waiting" && <QuestionCard q={m.question} onAnswer={onAnswer} />
       ))}
+    </div>
+  );
+}
+
+/** "12:05" or "1:02:05" */
+const clock = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+};
+const STAGES = ["look", "cut", "plan", "broll", "build", "render", "check", "fix"];
+
+/** A full edit at work: the step it's on, the time left, and a bar with one tick per step. */
+function JobCard({ job, now }: { job: NonNullable<AgentMessage["job"]>; now: number }) {
+  const since = now - job.at;
+  const left = job.remainingMs - since;
+  const at = STAGES.indexOf(job.stage);
+  return (
+    <div className="job">
+      <div className="job-top">
+        <span className="job-stage">{job.label}</span>
+        <span className="job-left">{left > 20_000 ? `about ${clock(left)} left` : "almost done"}</span>
+      </div>
+      <div className="job-bar"><i style={{ width: `${Math.round(Math.min(1, job.fraction) * 100)}%` }} /></div>
+      <div className="job-ticks">{STAGES.map((st, i) => <i key={st} className={i < at ? "done" : i === at ? "now" : ""} />)}</div>
+      <p className="job-note">Full edit · {clock(job.elapsedMs + since)} so far. Your footage stays on this Mac.</p>
+    </div>
+  );
+}
+
+/** A finished full edit: play it here, put it on the timeline as layers, or open its project folder. */
+function ResultCard({ r }: { r: NonNullable<AgentMessage["result"]> }) {
+  return (
+    <div className="job-result">
+      {r.url && <video src={r.url} controls playsInline preload="metadata" />}
+      <div className="job-actions">
+        <button className="primary" onClick={() => useEditor.setState({ sceneImport: r.project })} title="Bring the finished edit onto the timeline as layers you can move, trim and retype">
+          <Icon name="layers" size={12} /> Put it on the timeline
+        </button>
+        <button onClick={() => window.creatron.reveal(r.final)} title="The exported video and its open project folder">Show in Finder</button>
+        <span className="job-version">v{r.version}</span>
+      </div>
+      <p className="job-note">An open project: cuts, captions and music are values in project/timeline.json. Ask here for changes.</p>
     </div>
   );
 }

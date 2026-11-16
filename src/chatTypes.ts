@@ -6,16 +6,43 @@ export type StepIcon = "read" | "edit" | "code" | "look" | "search" | "think" | 
 export type Step = { id: string; icon: StepIcon; label: string; running: string; status: "running" | "done" | "failed"; ms?: number };
 export type Question = { question: string; detail?: string; options: { label: string; detail?: string }[] };
 
+/**
+ * Claude handing a request to the full edit (src/fulledit.ts): a whole finished video from the raw
+ * footage (`brief`), or a change to the finished video it made before (`change`).
+ */
+export type FullEditAsk = { brief?: string; change?: string; reference?: string };
+/** A finished full edit: the open project folder, the part the timeline imports, the exported video. */
+export type FullEditResult = { dir: string; project: string; final: string; notes: string; version: number; url?: string };
+/** Where a running full edit is: its step, how far along, and the time left. */
+export type FullEditProgress = { stage: string; label: string; fraction: number; elapsedMs: number; remainingMs: number };
+
 export type ChatEvent =
   | { type: "start" }
+  | { type: "handoff"; ask: FullEditAsk }
+  | { type: "job"; progress: FullEditProgress }
+  | { type: "result"; result: FullEditResult }
   | { type: "text"; delta: string }
   | { type: "step"; step: Step }
   | { type: "plan"; plan: EditPlan }
   | { type: "done"; plan?: EditPlan; question?: Question; changed: boolean }
   | { type: "error"; error: string };
 
-/** Claude's reply without its ask block, and the question in it. */
-export function splitAsk(text: string): { text: string; question?: Question } {
+/** Claude's reply without its hand-off block, and what it hands to the full edit. */
+export function splitFullEdit(text: string): { text: string; ask?: FullEditAsk } {
+  const m = text.match(/```fulledit\s*([\s\S]*?)(```|$)/);
+  if (!m) return { text };
+  let ask: FullEditAsk | undefined;
+  try {
+    const a = JSON.parse(m[1]);
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    if (str(a?.brief) || str(a?.change)) ask = { brief: str(a.brief), change: str(a.change), reference: str(a.reference) };
+  } catch {}
+  return { text: (text.slice(0, m.index) + text.slice((m.index ?? 0) + m[0].length)).trim(), ask };
+}
+
+/** Claude's reply without its ask block (or hand-off block), and the question in it. */
+export function splitAsk(full: string): { text: string; question?: Question } {
+  const text = splitFullEdit(full).text;
   const m = text.match(/```ask\s*([\s\S]*?)(```|$)/);
   if (!m) return { text };
   let question: Question | undefined;

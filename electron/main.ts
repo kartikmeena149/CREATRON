@@ -6,11 +6,11 @@ import { runAgent } from "../src/agent.ts";
 import { isDocument, readDocument } from "../src/documents.ts";
 import { type ChatEvent, chat, stop as stopChat } from "../src/chat.ts";
 import { analyze } from "../src/analyze.ts";
-import { type AutoEditEvent, type AutoEditMarker, autoEdit, autoEditFix, cancelAutoEdit } from "../src/autoedit.ts";
+import { runFullEdit, stopFullEdit } from "../src/fulledit.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
 import { type AgentId, INSTALL_COMMAND, agentState, cancel, enabled, install, openRouterKey, setEnabled, setOpenRouterKey, signIn, signOut } from "../src/agents.ts";
-import type { Connections } from "../src/chatTypes.ts";
+import type { Connections, FullEditAsk } from "../src/chatTypes.ts";
 import { type Attachment, type Focus, enhancePrompt, makePlan } from "../src/plan.ts";
 import { render } from "../src/render.ts";
 import type { EditPlan } from "../src/schema.ts";
@@ -50,7 +50,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: "#0d0e11",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 14 },
+    trafficLightPosition: { x: 14, y: 17 }, // the buttons centred on the 48 pt top bar (.app in styles.css)
     // No background throttling: playback and export progress keep updating behind other windows.
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/preload.cjs"),
@@ -171,15 +171,32 @@ ipcMain.handle(
   safe(async (path: string, message: string, current: EditPlan, model: string, focus?: Focus, answer?: boolean) => {
     const analysis = await analyze(path, () => {});
     if (focus?.attachments?.length) focus.attachments = await Promise.all(focus.attachments.map((a) => describeAttachment(a.path)));
+    let handoff: FullEditAsk | undefined;
     const emit = (event: ChatEvent) => {
+      // Claude handed the request to the full edit: run it below, in the same chat turn.
+      if (event.type === "handoff") return void (handoff = event.ask);
       // Like any AI edit, only cuts Claude just made snap onto quiet spots.
       if (event.type === "done" && event.plan) event = { ...event, plan: keepEdges(snapEdges(event.plan, analysis), event.plan, current) };
       send("chat-event", { path, event });
     };
     await chat(analysis, message, current, model, emit, { focus, answer });
+    if (!handoff) return;
+    try {
+      const result = await runFullEdit(path, handoff, model.replace(/^claude-code\//, ""), emit);
+      emit({ type: "result", result: { ...result, url: `${mediaUrl(result.final)}&v=${Date.now()}` } });
+      emit({ type: "text", delta: plainNotes(result.notes) || "Done." });
+      emit({ type: "done", changed: false });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      // Stopped by the user: the chat already shows the turn as stopped, so nothing more to say.
+      if (!/^Stopped/.test(error)) emit({ type: "error", error: `The full edit didn't finish: ${error}` });
+    }
   }),
 );
-ipcMain.handle("chat-stop", (_e, path: string) => stopChat(path));
+ipcMain.handle("chat-stop", (_e, path: string) => (stopFullEdit(path), stopChat(path)));
+
+/** Claude's summary without markdown marks (**bold**, `code`, # headings, bullets). */
+const plainNotes = (s: string) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^#+\s*/gm, "").replace(/^\s*[-*] /gm, "• ").trim();
 
 /** Snapped cuts, except edges that were already on the timeline before (they stay put). */
 function keepEdges(snapped: EditPlan, raw: EditPlan, before: EditPlan): EditPlan {
@@ -352,45 +369,6 @@ ipcMain.handle(
   }),
 );
 
-// ---- Auto Edit: Claude Code makes the whole video (src/autoedit.ts) ----
-// The job lives here, not in the window: the view can close or reload and pick it up again.
-type AutoJob = { running: boolean; fixing: boolean; video: string; model: string; log: AutoEditEvent[]; progress?: AutoEditEvent; result?: unknown; error?: string };
-let autoJob: AutoJob | undefined;
-const autoEvent = (e: AutoEditEvent) => {
-  if (autoJob) e.type === "progress" ? (autoJob.progress = e) : (autoJob.log = [...autoJob.log.slice(-300), e]);
-  send("autoedit-event", e);
-};
-const withUrl = <T extends { final: string }>(r: T) => ({ ...r, url: `${mediaUrl(r.final)}&v=${Date.now()}` });
-async function runAutoJob(job: Omit<AutoJob, "running" | "log">, work: () => Promise<{ final: string }>) {
-  if (autoJob?.running) throw new Error("An Auto Edit is already running.");
-  autoJob = { ...job, result: job.fixing ? autoJob?.result : undefined, running: true, log: [], error: undefined };
-  send("autoedit-state", autoJob);
-  try {
-    autoJob.result = withUrl(await work());
-  } catch (e) {
-    autoJob.error = e instanceof Error ? e.message : String(e);
-  }
-  autoJob.running = false;
-  autoJob.progress = undefined;
-  send("autoedit-state", autoJob);
-}
-
-ipcMain.handle("autoedit-state", () => autoJob);
-ipcMain.handle(
-  "autoedit-start",
-  safe(async (opts: { video: string; brief: string; reference?: string; model: string }) => {
-    void runAutoJob({ fixing: false, video: opts.video, model: opts.model }, () => autoEdit(opts, autoEvent));
-  }),
-);
-ipcMain.handle(
-  "autoedit-fix",
-  safe(async (opts: { video: string; session: string; model: string; message: string; markers: AutoEditMarker[] }) => {
-    void runAutoJob({ fixing: true, video: opts.video, model: opts.model }, () =>
-      autoEditFix(opts.video, opts.session, opts.model, opts.message, opts.markers, autoEvent),
-    );
-  }),
-);
-ipcMain.handle("autoedit-cancel", () => cancelAutoEdit());
 ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
   // Automated tests can't click the open dialog either.
   if (process.argv.includes("--creatron-debug") && process.env.CREATRON_PICK_PATH) return process.env.CREATRON_PICK_PATH;

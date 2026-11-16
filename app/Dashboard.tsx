@@ -3,6 +3,8 @@
 // that do the editing: your Claude plan, your ChatGPT plan, or an OpenRouter key.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
+import { Logo, type Maker } from "./logos.tsx";
+import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import type { AgentId, AgentState, Connections } from "../src/chatTypes.ts";
 import { Icon } from "./icons.tsx";
 import { Orb } from "./Orb.tsx";
@@ -16,6 +18,7 @@ export const openHome = (view: View = "home") => useHome.setState({ view });
 export const closeHome = () => useHome.setState({ view: null });
 
 const IDEAS: [string, string][] = [
+  ["Full edit", "Edit the whole video like a pro: a strong hook, B-roll, music, sound effects and motion graphics"],
   ["Reel", "Make it a tight 9:16 reel with bold captions, cut the pauses and retakes"],
   ["Talking head", "Clean up this talking-head video: cut dead air and retakes, add captions"],
   ["Podcast clip", "Find the best 45 seconds and make a vertical clip with captions"],
@@ -108,7 +111,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
         >
           <textarea
             value={text}
-            placeholder="Describe the video. For example: a 30-second reel with bold captions and the pauses cut"
+            placeholder="Describe the video. A quick fix, or the whole finished edit with B-roll, music and motion graphics"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), void start())}
             rows={3}
@@ -123,7 +126,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             {conn && !connected && (
               <button className="prompt-connect" onClick={() => openHome("connections")}>No AI connected · Connect</button>
             )}
-            {conn && connected && <ModelLine conn={conn} />}
+            {conn && connected && <HomeModel />}
             <button className="prompt-go" title="Start (Enter)" onClick={() => void start()}><Icon name="arrowUp" size={15} /></button>
           </div>
         </div>
@@ -157,15 +160,15 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
   );
 }
 
-/** Which of your accounts the chat will use, in one line. */
-function ModelLine({ conn }: { conn: Connections }) {
-  const names = [ready(conn.claude) && conn.enabled.claude && "Claude", ready(conn.codex) && conn.enabled.codex && "ChatGPT", conn.openrouter && "OpenRouter"].filter(Boolean);
-  return <span className="prompt-model mono"><i />{names.join(" · ") || "Connected"}</span>;
+/** The model that will edit: the same choice as the chat's menu, your connected plan by default. */
+function HomeModel() {
+  const [model, setModel] = useModelChoice();
+  return <span className="prompt-model"><ModelPicker value={model} onChange={setModel} /></span>;
 }
 
-const AGENTS: { id: AgentId; name: string; via: string; mark: string; what: string }[] = [
-  { id: "claude", name: "Claude", via: "Claude Code", mark: "C", what: "Your Claude plan (Pro or Max). Edits live in the chat and writes its own animations." },
-  { id: "codex", name: "ChatGPT", via: "Codex", mark: "G", what: "Your ChatGPT plan (Plus or Pro). Edits live in the chat through OpenAI's Codex." },
+const AGENTS: { id: AgentId; name: string; via: string; mark: Maker; what: string }[] = [
+  { id: "claude", name: "Claude", via: "Claude Code", mark: "claude", what: "Your Claude plan (Pro or Max). Edits live in the chat and writes its own animations." },
+  { id: "codex", name: "ChatGPT", via: "Codex", mark: "openai", what: "Your ChatGPT plan (Plus or Pro). Edits live in the chat through OpenAI's Codex." },
 ];
 
 function ConnectionsPage({ conn, setConn, refresh }: { conn?: Connections; setConn: (c: Connections) => void; refresh: () => void }) {
@@ -214,7 +217,7 @@ function AgentRow({ info, state, on, install, setConn }: {
   const act = (p: Promise<Connections>) => void p.then(setConn);
   return (
     <div className={`conn-row ${tone}`}>
-      <span className="conn-mark" aria-hidden="true">{info.mark}</span>
+      <span className="conn-mark" aria-hidden="true"><Logo maker={info.mark} size={22} /></span>
       <div className="conn-text">
         <div className="conn-name">{info.name} <span className="mono dim">via {info.via}{state?.version ? ` ${state.version}` : ""}</span></div>
         <div className="conn-status"><i />{status}</div>
@@ -256,7 +259,7 @@ function OpenRouterRow({ has, setConn }: { has?: boolean; setConn: (c: Connectio
   const save = async (k: string) => (setConn(await window.creatron.setOpenRouterKey(k)), setKey(""), setEditing(false));
   return (
     <div className={`conn-row ${has ? "ok" : "off"}`}>
-      <span className="conn-mark" aria-hidden="true">OR</span>
+      <span className="conn-mark" aria-hidden="true"><Logo maker="openrouter" size={20} /></span>
       <div className="conn-text">
         <div className="conn-name">OpenRouter <span className="mono dim">API key</span></div>
         <div className="conn-status"><i />{has ? "Key saved on this Mac" : "No key"}</div>

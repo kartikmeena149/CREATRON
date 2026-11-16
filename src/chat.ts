@@ -15,7 +15,8 @@ import { cleanEnv } from "./agents.ts";
 import { type Orientation, resolveStockBroll } from "./stock.ts";
 import { resolveSounds } from "./sfx.ts";
 import { outputSize } from "./frame.ts";
-import { type ChatEvent, type Question, type Step, splitAsk } from "./chatTypes.ts";
+import { type ChatEvent, type Question, type Step, splitAsk, splitFullEdit } from "./chatTypes.ts";
+import { fullEditInfo } from "./fulledit.ts";
 
 export type { ChatEvent } from "./chatTypes.ts";
 
@@ -39,6 +40,27 @@ don't guess: ask, and stop. End your reply with exactly one block like this and 
 \`\`\`
 2 to 4 options, short labels, a one-line detail each. The user can also type their own answer. Their answer
 comes as the next message. Ask at most once per request, and only when it matters; small things, just do.
+`;
+
+/**
+ * The full edit (Claude only: it runs on Claude Code). The chat's Claude decides which kind of request it
+ * has: changes to the timeline it makes itself; a whole finished video it hands to the full edit.
+ */
+const FULL_EDIT_RULES = `
+## A whole finished video: hand it to the full edit
+Some requests are bigger than timeline edits: make the WHOLE finished video from the raw footage, the way a
+professional editor would (B-roll, music and sound design, motion graphics and annotations, a polished
+export), or edit it "like" / "in the style of" an attached reference video. Those take a separate 10-30
+minute job (Creatro's full edit) that builds an editable project and reviews its own work. You don't do them
+in plan.json. Instead, say in under 10 words that you're starting the full edit, then end your reply with
+exactly one block and nothing after it:
+\`\`\`fulledit
+{"brief": "what to make, in the user's words plus anything you know about their goal", "reference": "/absolute/path/of/an/attached/reference/video (only if one was attached)"}
+\`\`\`
+When a full edit of this video already exists (the message says so) and the user wants that finished video
+changed, use {"change": "the change, precisely"} instead of "brief".
+Everything else (cuts, captions, a look, a few B-roll shots, sounds, text, speed, the shape) you do yourself
+in plan.json as usual. When it's unclear whether they want a full edit (it takes a while), ask first.
 `;
 
 /** Claude (Claude Code) keeps one process open per video; ChatGPT (Codex) runs one process per message. */
@@ -100,6 +122,8 @@ export async function chat(
     kind === "codex" ? "Follow AGENTS.md (the editing guide and the chat rules). Work only in this folder." : "",
     opts.answer ? `My answer: ${message}` : `REQUEST: ${message}`,
     opts.focus ? describeFocus(current, opts.focus) : "",
+    // Whether there's a finished full edit to change (Claude hands changes to it with "change").
+    kind === "claude" && fullEditInfo(analysis.source) ? `(A full edit of this video exists: version ${fullEditInfo(analysis.source)!.version}. Its summary: ${fullEditInfo(analysis.source)!.notes.slice(0, 300)})` : "",
     pictures.length ? `\nWhat I'm pointing at (Read each image; the red box is the spot I clicked):\n${pictures.join("\n")}` : "",
     first ? `\n--- video.md ---\n${readFileSync(join(dir, "video.md"), "utf8")}` : "\nplan.json holds the timeline as it is now (I may have changed it): read it again before editing.",
     // Exact word times on the edited video as it is now: sounds, text and B-roll land on the word.
@@ -134,7 +158,7 @@ function start(source: string, dir: string, model: string, emit: (e: ChatEvent) 
     "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--restricted", "--tools", "Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
     "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
-    "--append-system-prompt", GUIDE + CHAT_RULES,
+    "--append-system-prompt", GUIDE + CHAT_RULES + FULL_EDIT_RULES,
     ...(resume ? ["--resume", resume] : []),
   ];
   const child = spawn("claude", args, { env, cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
@@ -329,6 +353,13 @@ async function finish(s: Session, dir: string, result: any) {
   const t = s.turn!;
   if (result.is_error) {
     s.emit({ type: "error", error: signInProblem(String(result.result ?? ""), s.kind === "codex" ? "ChatGPT" : "Claude") ?? `${s.kind === "codex" ? "ChatGPT" : "Claude"} ${result.api_error_status ?? "error"}: ${result.result ?? "unknown error"}` });
+    s.turn = undefined;
+    return t.resolve();
+  }
+  // Handed to the full edit: the turn stays open while it runs (electron/main.ts runs it).
+  const { ask } = splitFullEdit(t.text);
+  if (ask && s.kind === "claude") {
+    s.emit({ type: "handoff", ask });
     s.turn = undefined;
     return t.resolve();
   }

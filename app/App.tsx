@@ -1,11 +1,10 @@
-import { Component, type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { FramePicker } from "./FramePicker.tsx";
 import { Dashboard, closeHome, openHome, useHome } from "./Dashboard.tsx";
 import { Orb } from "./Orb.tsx";
 import { CreatorQuote } from "./Quotes.tsx";
 import { AIPanel } from "./AIPanel.tsx";
-import { AutoEdit } from "./AutoEdit.tsx";
 import { Inspector } from "./Inspector.tsx";
 import { LinkImport } from "./LinkImport.tsx";
 import { useMagnet } from "./magnet.ts";
@@ -17,7 +16,7 @@ import { useTabs } from "./tabs.ts";
 import { ClipMenu } from "./ClipMenu.tsx";
 import * as act from "./clipActions.ts";
 import { isAudio, isImage } from "./format.ts";
-import { Splitter, defaultSize, useLayoutSizes } from "./Splitter.tsx";
+import { MIN, Splitter, defaultSize, fitLayout, useLayoutRoom, useLayoutSizes } from "./Splitter.tsx";
 import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
 import { deleteSceneKey } from "./SceneLayers.tsx";
 import { hideShot, shotOf } from "./SceneShots.tsx";
@@ -28,11 +27,13 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [linkOpen, setLinkOpen] = useState<false | "video" | "audio">(false);
-  const [autoOpen, setAutoOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [sizes, setSizes] = useLayoutSizes();
   // A multi-selection shows its own panel even when the left panel was hidden.
   const leftOpen = useEditor((s) => s.leftView !== null || s.picked.length + s.pickedIds.length > 1);
+  // The sizes as drawn: the viewer always keeps its room, whatever the window or the saved sizes.
+  const [win, editorRef] = useLayoutRoom();
+  const fit = fitLayout(sizes, { left: leftOpen, ai: aiOpen }, win);
   const home = useHome((h) => h.view);
 
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
@@ -96,33 +97,28 @@ export function App() {
       <TopBar
         aiOpen={aiOpen} onToggleAi={() => setAiOpen(!aiOpen)} />
       {home && <Dashboard onOpenVideo={(p) => open(p)} />}
-      <div className="body" hidden={Boolean(home)} style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${sizes.ai}px` : "minmax(0, 1fr)" }}>
-        <div className="editor" style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${sizes.timeline}px` }}>
+      <div className="body" hidden={Boolean(home)} style={{ gridTemplateColumns: aiOpen ? `minmax(0, 1fr) 0 ${fit.sizes.ai}px` : "minmax(0, 1fr)" }}>
+        <div className="editor" ref={editorRef} style={{ gridTemplateRows: `minmax(0, 1fr) 0 ${fit.sizes.timeline}px` }}>
           <div className="workspace">
             <Rail />
             {leftOpen && <>
-              <div className="inspector-wrap" style={{ width: sizes.left }}>
+              <div className="inspector-wrap" style={{ width: fit.sizes.left }}>
                 <Inspector onOpen={() => addMedia()} onLink={(kind) => setLinkOpen(kind)} onOpenMain={open} />
               </div>
-              <Splitter dir="x" value={sizes.left} min={220} max={560} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
+              <Splitter dir="x" value={fit.sizes.left} min={MIN.left} max={fit.max.left} sign={1} reset={defaultSize("left")} onChange={(left) => setSizes({ left })} />
             </>}
             <main className="center">
-              {project ? <Viewer /> : <Welcome onOpen={() => addMedia()} onAuto={() => setAutoOpen(true)} error={error} />}
+              {project ? <Viewer /> : <Welcome onOpen={() => addMedia()} error={error} />}
             </main>
           </div>
-          <Splitter dir="y" value={sizes.timeline} min={150} max={Math.max(200, window.innerHeight - 260)} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
+          <Splitter dir="y" value={fit.sizes.timeline} min={MIN.timeline} max={fit.max.timeline} sign={-1} reset={defaultSize("timeline")} onChange={(timeline) => setSizes({ timeline })} />
           <Timeline onOpenMain={(p) => open(p, true)} />
         </div>
         {aiOpen && <>
-          <Splitter dir="x" value={sizes.ai} min={300} max={680} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
-          <AIPanel onAuto={() => setAutoOpen(true)} />
+          <Splitter dir="x" value={fit.sizes.ai} min={MIN.ai} max={fit.max.ai} sign={-1} reset={defaultSize("ai")} onChange={(ai) => setSizes({ ai })} />
+          <AIPanel />
         </>}
       </div>
-      {autoOpen && (
-        <Catch onClose={() => setAutoOpen(false)}>
-          <AutoEdit initialVideo={project?.path} onClose={() => setAutoOpen(false)} />
-        </Catch>
-      )}
       <ClipMenu />
       {sceneImport && <SceneImport key={sceneImport} path={sceneImport} onClose={() => set({ sceneImport: null })} onOpenMain={open} />}
       {linkOpen && <LinkImport key={linkOpen} audio={linkOpen === "audio"} onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
@@ -157,8 +153,7 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   }, []);
   return (
     <header className="topbar">
-      <div className="brand" title="Creatro"><Orb size={16} still /> Creatro</div>
-      <HomeTab />
+      <BrandHome />
       <ProjectTabs />
       <div className="grow" />
       {project && (
@@ -178,13 +173,12 @@ function TopBar(p: { aiOpen: boolean; onToggleAi: () => void }) {
   );
 }
 
-/** The Dashboard, as the first tab. */
-function HomeTab() {
+/** The mark is Home: lit, with the red light blinking, while the dashboard is open. */
+function BrandHome() {
   const home = useHome((h) => h.view);
   return (
-    <button className={`doc-tab home-tab ${home ? "on" : ""}`} title="Dashboard: start a video, open projects, connect your AI" onClick={() => (home ? closeHome() : openHome())}>
-      <Icon name="grid" size={14} />
-      <span>Home</span>
+    <button className={`brand ${home ? "on" : ""}`} title="Home: start a video, open projects, connect your AI" onClick={() => openHome()}>
+      <Orb size={17} still={!home} calm /> Creatro
     </button>
   );
 }
@@ -245,7 +239,7 @@ function Rail() {
   );
 }
 
-function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => void; error: string }) {
+function Welcome({ onOpen, error }: { onOpen: () => void; error: string }) {
   return (
     <div className="welcome">
       <div className="drop">
@@ -254,9 +248,6 @@ function Welcome({ onOpen, onAuto, error }: { onOpen: () => void; onAuto: () => 
         <p className="dim">Your footage stays on this Mac. Only the transcript goes to the AI.</p>
         <button className="primary" onClick={onOpen}>Choose video</button>
         <div className="drop-more">
-          <button onClick={onAuto} title="Give Claude your footage and a brief; it makes the whole finished video">
-            <Icon name="sparkle" size={13} /> Claude edits it all
-          </button>
           <button onClick={pickClaudeEdit} title="Open a HyperFrames video Claude made, with every layer and keyframe editable">
             <Icon name="layers" size={13} /> Open a Claude edit
           </button>
@@ -316,21 +307,3 @@ function useShortcuts() {
   }, []);
 }
 
-/** A view that crashes shows its error instead of taking the whole window down. */
-class Catch extends Component<{ children: ReactNode; onClose: () => void }, { error?: Error }> {
-  state: { error?: Error } = {};
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="overlay">
-        <div className="overlay-card">
-          <div className="error">Something went wrong: {this.state.error.message}</div>
-          <button onClick={() => (this.setState({ error: undefined }), this.props.onClose())}>Close</button>
-        </div>
-      </div>
-    );
-  }
-}

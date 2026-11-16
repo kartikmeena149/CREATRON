@@ -134,17 +134,11 @@ const api: Api = {
   fontLibrary: async () => [],
   trashMedia: async () => ok(undefined),
   madeByCreatron: async () => false,
-  autoEditStart: async () => desktop("A full Claude edit"),
-  autoEditFix: async () => desktop("A full Claude edit"),
-  autoEditState: async () => undefined,
-  autoEditCancel: async () => {},
 
   onStatus: status.on,
   onLinkProgress: never,
   onVoiceProgress: never,
   onExportProgress: never,
-  onAutoEdit: never,
-  onAutoEditState: never,
   // Connectors sign in apps on a Mac: the demo shows the page, with nothing to connect.
   connections: async () => demoConnections,
   agentSignIn: async () => demoConnections,
