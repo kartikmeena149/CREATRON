@@ -75,10 +75,22 @@ fi
 LOCK_MARK="$RUNTIME/package-lock.sha256"
 lock_sha() { shasum -a 256 "$ROOT/package-lock.json" | cut -d' ' -f1; }
 packages_reason() {
-  [ -x "$ELECTRON_BIN" ] || { echo "not installed yet"; return; }
-  file "$ELECTRON_BIN" | grep -q "$ARCH" || { echo "they were built for another kind of Mac"; return; }
+  [ -f "$ROOT/node_modules/electron/package.json" ] || { echo "not installed yet"; return; }
+  [ -x "$ELECTRON_BIN" ] && ! file "$ELECTRON_BIN" | grep -q "$ARCH" && { echo "they were built for another kind of Mac"; return; }
   [ -f "$LOCK_MARK" ] && [ "$(cat "$LOCK_MARK")" != "$(lock_sha)" ] && { echo "package-lock.json changed"; return; }
   echo ""
+}
+
+# Electron 45 no longer downloads its app during npm install; its own install.js does that (about
+# 110 MB, checked against the checksums that ship in the package).
+electron_install() {
+  local try
+  for try in 1 2 3; do
+    node "$ROOT/node_modules/electron/install.js" && [ -x "$ELECTRON_BIN" ] && return 0
+    note "Electron download didn't finish (try $try of 3)"
+    sleep 3
+  done
+  return 1
 }
 
 say "2/5  Creatro's packages"
@@ -94,6 +106,15 @@ else
   npm ci --no-audit --no-fund || fail "Installing the packages failed (see above). Run this again to retry."
   lock_sha >"$LOCK_MARK"
   note "OK  installed"
+fi
+if [ ! -x "$ELECTRON_BIN" ]; then
+  if [ $CHECK = 1 ]; then
+    note "NEEDED  would download the Electron app (about 110 MB)"
+  else
+    note "downloading the Electron app (about 110 MB)"
+    electron_install || fail "Couldn't download Electron. Check the internet connection and run this again."
+    note "OK  Electron $(cat "$ROOT/node_modules/electron/dist/version" 2>/dev/null)"
+  fi
 fi
 
 # ---- 3. Tools from Homebrew -------------------------------------------------------------------
@@ -189,4 +210,10 @@ xattr -dr com.apple.quarantine "$ROOT/node_modules/electron/dist/Electron.app" 2
 say "Opening Creatro"
 nohup "$ELECTRON_BIN" "$ROOT" >"$RUNTIME/app.log" 2>&1 &
 disown
+# Say so here if it dies straight away, instead of only in a log nobody reads.
+sleep 3
+if ! kill -0 $! 2>/dev/null; then
+  tail -15 "$RUNTIME/app.log"
+  fail "Creatro closed as soon as it started (above; full log: .runtime/app.log)."
+fi
 note "You can close this window. Next time, double-click Creatro.command again: it just opens the app."
