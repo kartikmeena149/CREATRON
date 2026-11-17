@@ -43,6 +43,22 @@ video ──► analyze (local) ──► plan (AI, text only) ──► snap cu
 
 ## Setup
 
+### On any Mac: double-click `Creatro.command`
+
+Clone the repo (or copy the folder), then double-click **`Creatro.command`**. The first run sets up what this Mac is missing, then opens the app; later runs just open it.
+
+1. **Node 24**: used if already installed, otherwise downloaded into `.runtime/` (no password).
+2. **Packages**: `npm ci` when `node_modules/` is missing, was built for the other chip (Apple Silicon ↔ Intel), or `package-lock.json` changed.
+3. **Tools**: `whisper-cpp`, `ffmpeg` and `yt-dlp` from Homebrew. If Homebrew isn't there it asks before installing it (that needs the Mac's password once). Say no and Creatro still opens, without automatic captions.
+4. **Speech model**: `ggml-small.en.bin` (466 MB) into `models/`, checked against its checksum.
+5. **Build**: `npm run build` when the code is newer than `out/`.
+
+Needs internet the first time (about 1.5 GB in all). `./Creatro.command --check` reports what's there and what's missing without changing anything. Then add an OpenRouter key in **Connections**; the full edit from the chat also needs Claude Code installed and signed in.
+
+If macOS says the file can't be opened (it came by AirDrop or a downloaded zip): right-click it → **Open**, or System Settings → Privacy & Security → **Open Anyway**. A folder copied from another Mac brings that Mac's `.env` with it, keys included; delete it before giving the folder to someone else.
+
+### By hand
+
 Needs Node 24+, `ffmpeg`, and `whisper-cli` (whisper.cpp) on your PATH, plus a Whisper model (`models/ggml-small.en.bin`, or set `CREATRON_WHISPER_MODEL`).
 
 ```bash

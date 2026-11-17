@@ -35,6 +35,9 @@ __pycache__/
 # Working files
 work/
 
+# What Creatro.command downloads and logs (Node, build and app logs)
+.runtime/
+
 # App build output
 out/
 
