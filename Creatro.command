@@ -17,6 +17,8 @@ WHISPER_SHA256="c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d
 ELECTRON_BIN="$ROOT/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
+# For every download: try again up to 10 times when the connection drops (HTTP/1.1, which drops less).
+RETRY="--http1.1 --retry 10 --retry-delay 3 --retry-all-errors"
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
@@ -56,8 +58,8 @@ else
   note "downloading Node $NODE_VERSION (about 50 MB) into .runtime/"
   name="node-v$NODE_VERSION-darwin-$NODE_ARCH"
   tmp="$(mktemp -d)"
-  curl -fL --progress-bar -o "$tmp/$name.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/$name.tar.gz" || fail "Couldn't download Node. Check the internet connection and run this again."
-  curl -fsSL -o "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt" || fail "Couldn't download Node's checksums."
+  curl -fL $RETRY --progress-bar -o "$tmp/$name.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/$name.tar.gz" || fail "Couldn't download Node. Check the internet connection and run this again."
+  curl -fsSL $RETRY -o "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt" || fail "Couldn't download Node's checksums."
   (cd "$tmp" && grep " $name.tar.gz\$" SHASUMS256.txt | shasum -a 256 -c - >/dev/null) || fail "The Node download didn't match its checksum, so it wasn't used. Run this again."
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp" || fail "Couldn't unpack Node."
   rm -rf "$RUNTIME/node" && mv "$tmp/$name" "$RUNTIME/node"
@@ -146,7 +148,8 @@ else
   note "downloading ggml-small.en.bin (466 MB) into models/"
   mkdir -p "$ROOT/models"
   part="$ROOT/models/ggml-small.en.bin.part"
-  curl -fL -C - --progress-bar -o "$part" "$WHISPER_URL" || fail "Couldn't download the speech model. Run this again; it resumes."
+  # Hugging Face's servers sometimes drop a long download midway; each retry resumes where it stopped.
+  curl -fL -C - $RETRY --progress-bar -o "$part" "$WHISPER_URL" || fail "Couldn't download the speech model. Run this again; it resumes."
   if [ "$(shasum -a 256 "$part" | cut -d' ' -f1)" = "$WHISPER_SHA256" ]; then
     mv "$part" "$ROOT/models/ggml-small.en.bin"
     note "OK  models/ggml-small.en.bin"
