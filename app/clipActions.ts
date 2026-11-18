@@ -4,6 +4,7 @@
 import { removePauses } from "../src/autocut.ts";
 import type { Broll, Motion, Segment, Voiceover } from "../src/schema.ts";
 import { freeTrack, userClip } from "../src/tracks.ts";
+import { type Keys, shiftKeys } from "../src/keyframes.ts";
 import { locate, selectionOf, useEditor } from "./store.ts";
 
 export type ClipRef =
@@ -90,7 +91,8 @@ export function split(ref: ClipRef) {
   const cut = s.time - c.at;
   if (cut < 0.2 || c.duration - cut < 0.2) return;
   const first = { ...c, duration: cut };
-  const second = { ...c, id: newId(ref.kind[0]), at: s.time, duration: c.duration - cut, ...("offset" in c ? { offset: (c.offset ?? 0) + cut } : {}) };
+  const second = { ...c, id: newId(ref.kind[0]), at: s.time, duration: c.duration - cut, ...("offset" in c ? { offset: (c.offset ?? 0) + cut } : {}),
+    ...("keys" in c && c.keys ? { keys: shiftKeys(c.keys as Keys, -cut) } : {}) };
   const list = (s.plan[listOf[ref.kind]] as Free[]).flatMap((x) => (x.id === c.id ? [first, second] : [x]));
   commitFree(ref.kind, list as Free[]);
   select({ kind: ref.kind, id: second.id } as ClipRef);

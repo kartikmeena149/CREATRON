@@ -2,6 +2,10 @@
 // all on the OUTPUT clock. Pure functions shared by the live preview and the export, so both
 // show the same thing. No Node or browser APIs.
 import { round } from "./round.ts";
+import { cutEffectStart } from "./effectTiming.ts";
+import type { EffectPreset } from "./sceneEffects.ts";
+
+const usesEffect = (plan: EditPlan, id: string) => plan.motion.some((m) => m.effect === id) || (plan.cutEffects ?? []).some((c) => c.effect === id);
 import { type Scene, applyEdits } from "./scene.ts";
 import type { EditPlan, Word } from "./schema.ts";
 import { type Look, buildCues, captionFontSize, captionsOf, cueFontSize, editDuration, toOutputTime } from "./timeline.ts";
@@ -24,7 +28,9 @@ export type OverlayProps = {
     cues: OverlayCue[];
   };
   motion: {
-    template: "title" | "lower-third" | "custom" | "scene";
+    template: "title" | "lower-third" | "custom" | "scene" | "effect";
+    /** An effect's kind (motion/Effects.tsx). */
+    effect?: string;
     component?: string;
     props?: Record<string, unknown>;
     text: string;
@@ -37,16 +43,18 @@ export type OverlayProps = {
   }[];
   /** Put before an encoded absolute path to load a scene's file (media:// in the app, a local server in the export). */
   assetPrefix?: string;
+  /** Library effects the edit uses (taken out of Claude edits), by id. */
+  effects?: Record<string, EffectPreset>;
   /** Creatro's font library (fonts edits brought in), as files to load. */
   fonts?: { family: string; weight: string; style: string; unicodeRange?: string; url: string }[];
 };
 
 /** Imported scenes by scene.json path, and how their files are loaded. */
-export type SceneLibrary = { scenes: Record<string, Scene>; prefix: string; fonts?: { family: string; weight: string; style: string; unicodeRange?: string; file: string }[] };
+export type SceneLibrary = { scenes: Record<string, Scene>; prefix: string; effects?: EffectPreset[]; fonts?: { family: string; weight: string; style: string; unicodeRange?: string; file: string }[] };
 
 /** True when the edit needs the Remotion layer (animated captions or anything on M1). */
 export function hasOverlay(plan: EditPlan, words: Word[]): boolean {
-  return animatedCaptions(plan, words) || plan.motion.length > 0;
+  return animatedCaptions(plan, words) || plan.motion.length > 0 || (plan.cutEffects?.length ?? 0) > 0;
 }
 
 const animatedCaptions = (plan: EditPlan, words: Word[]) =>
@@ -70,14 +78,21 @@ export function overlayProps(plan: EditPlan, words: Word[], size: { width: numbe
           cues: withKeyWords(cueWords(plan, words, size), caps.animation),
         }
       : undefined,
-    motion: plan.motion.map((m) => {
+    motion: [...plan.motion.map((m) => {
       const data = m.template === "scene" && m.scene ? library?.scenes[m.scene] : undefined;
       return {
-        template: m.template, component: m.component, props: m.props, text: m.text, subtext: m.subtext, at: m.at, duration: m.duration, color: m.color,
+        template: m.template, effect: m.effect, component: m.component, props: m.props, text: m.text, subtext: m.subtext, at: m.at, duration: m.duration, color: m.color,
         ...(data ? { scene: { data: applyEdits(data, m.layers), dir: m.scene!.replace(/\/[^/]*$/, ""), offset: m.offset ?? 0 } } : {}),
       };
     }),
+    // Transitions over cuts, drawn last: over everything on the cut.
+    ...(plan.cutEffects ?? []).map((c) => ({
+      template: "effect" as const, effect: c.effect, props: { intensity: c.intensity ?? 1 }, text: "", subtext: "",
+      at: cutEffectStart(c.effect, c.at, c.duration), duration: c.duration, color: c.color ?? "",
+    }))],
     ...(library ? { assetPrefix: library.prefix } : {}),
+    // Only the library effects the edit uses go along.
+    ...(library?.effects?.length ? { effects: Object.fromEntries(library.effects.filter((p) => usesEffect(plan, p.id)).map((p) => [p.id, p])) } : {}),
     ...(library?.fonts?.length ? { fonts: library.fonts.map(({ file, ...f }) => ({ ...f, url: library.prefix + encodeURIComponent(file) })) } : {}),
   };
 }

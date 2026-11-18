@@ -36,6 +36,7 @@ import {
 import { importScene, loadScene, sceneBase, sceneEntry } from "./sceneImport.ts";
 import { remotionProject } from "./remotionBundle.ts";
 import { libraryFonts } from "../src/fontLibrary.ts";
+import { addEffectsFrom, libraryEffects } from "../src/effectLibrary.ts";
 import type { Detail } from "../src/scene.ts";
 import { fileThumbnails, handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
 
@@ -287,6 +288,9 @@ ipcMain.handle("import-scene", safe(async (path: string, detail: Detail) => impo
 ipcMain.handle("load-scene", safe(async (file: string) => loadScene(file)));
 ipcMain.handle("scene-base", safe(async (file: string) => sceneBase(file)));
 ipcMain.handle("font-library", () => libraryFonts().map((f) => ({ ...f, url: mediaUrl(f.file) })));
+ipcMain.handle("effect-library", () => libraryEffects());
+// A Claude edit's effects into the library (the ones it doesn't have yet).
+ipcMain.handle("extract-effects", safe(async (file: string) => addEffectsFrom(loadScene(file)).map((p) => p.name)));
 
 // The project's AI-written animations, compiled for the live preview.
 ipcMain.handle("custom-code", safe(async (path: string) => compileCustom(customDir(path))));

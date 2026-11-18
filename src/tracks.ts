@@ -31,7 +31,18 @@ export function trackCount(plan: EditPlan, kind: TrackKind): number {
 export function trackName(plan: EditPlan, kind: TrackKind | "captions", n?: number): string {
   const custom = plan.tracks?.settings?.[trackKey(kind, n)]?.name;
   if (custom) return custom;
+  // A text track holding only effects is an effects track, numbered among them.
+  if (kind === "text" && isEffectsTrack(plan, n)) {
+    const fx = [...new Set(plan.motion.map((m) => m.track ?? 1))].filter((t) => isEffectsTrack(plan, t)).sort((a, b) => a - b);
+    return `Effects ${fx.indexOf(n!) + 1}`;
+  }
   return kind === "captions" ? "Captions" : `${LABEL[kind]} ${n}`;
+}
+
+/** A text track with clips on it, all of them effects. */
+export function isEffectsTrack(plan: EditPlan, n?: number): boolean {
+  const on = plan.motion.filter((m) => (m.track ?? 1) === n);
+  return on.length > 0 && on.every((m) => m.template === "effect");
 }
 
 export function trackSetting(plan: EditPlan, key: string) {

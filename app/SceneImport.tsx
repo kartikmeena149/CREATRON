@@ -2,7 +2,9 @@
 // layers with keyframes, so its text, colours and movement can be changed here. Pick how closely
 // keyframes follow the motion and where it goes, then Creatro records it and builds it.
 import { useEffect, useState } from "react";
-import { type Detail, type Scene, captionLayers, sceneShots, sceneStats } from "../src/scene.ts";
+import { type Detail, type Scene, captionLayers, sceneShots } from "../src/scene.ts";
+import { clipKeys } from "../src/sceneClips.ts";
+import { clipsOf } from "./SceneClips.tsx";
 import { useEditor } from "./store.ts";
 
 const DETAILS: [Detail, string, string][] = [
@@ -50,7 +52,7 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
   const [into, setInto] = useState<"new" | "here">(hasProject ? "here" : "new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState<{ seconds: number; layers: number; keyframes: number; sounds: number; id: string; captions: number } | null>(null);
+  const [done, setDone] = useState<{ seconds: number; shots: number; titles: number; graphics: number; keyframes: number; sounds: number; id: string; captions: number } | null>(null);
   const name = path.replace(/\/index\.html?$/i, "").split("/").pop();
   const [kind, setKind] = useState<"hyperframes" | "remotion" | null | undefined>(undefined);
   useEffect(() => void window.creatron.isScene(path).then(setKind), [path]);
@@ -78,13 +80,22 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
     // Its clips and pictures go into the project's library, like any media.
     const dir = file.replace(/\/[^/]*$/, "");
     for (const shot of sceneShots(scene)) useEditor.getState().addToLibrary(`${dir}/${shot.src}`);
-    const stats = sceneStats(scene);
+    // What it came in as: clips on tracks, each with its keyframes.
+    const m = useEditor.getState().plan.motion.find((x) => x.id === id)!;
+    const clips = clipsOf(m, scene);
+    const count = (k: string) => clips.filter((c) => c.kind === k).length;
+    const keyframes = clips.reduce((n, c) => n + Object.values(clipKeys(scene, c, m.layers)).reduce((a, l) => a + (l?.length ?? 0), 0), 0);
     setBusy(false);
-    setDone({ seconds: (performance.now() - t0) / 1000, layers: stats.layers, keyframes: stats.keyframes, sounds: scene.audio.length, id, captions });
+    setDone({ seconds: (performance.now() - t0) / 1000, shots: count("shot"), titles: count("text"), graphics: count("graphic"), keyframes, sounds: scene.audio.length, id, captions });
   };
 
-  const openLayers = () => {
-    useEditor.setState({ openScene: done!.id, selectedLayer: null, leftView: "text" });
+  /** Selects its first shot so its panel opens. */
+  const showClips = () => {
+    const m = useEditor.getState().plan.motion.find((x) => x.id === done!.id);
+    const scene = m?.scene ? useEditor.getState().scenes[m.scene] : undefined;
+    const first = m && scene ? clipsOf(m, scene).find((c) => c.kind === "shot") : undefined;
+    if (first) useEditor.getState().selectClip({ scene: done!.id, clip: first.id });
+    useEditor.setState({ leftView: "clip" });
     onClose();
   };
 
@@ -109,15 +120,15 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
               <div>
                 <b>Built in {done.seconds.toFixed(1)} s</b>
                 <div className="dim small">
-                  {done.layers} layers · {done.keyframes.toLocaleString()} keyframes{done.sounds ? ` · ${done.sounds} sounds on SFX tracks` : ""}
+                  {done.shots} shots · {done.titles} titles · {done.graphics} graphics · {done.keyframes} keyframes{done.sounds ? ` · ${done.sounds} sounds on SFX tracks` : ""}
                   {done.captions > 0 && <><br />Its captions are now Creatro captions: edit them on the Captions track.</>}
                 </div>
               </div>
             </div>
-            <p className="hint">Every text, colour and keyframe can be changed. Open the layers to see them on the timeline, or double-click the clip any time.</p>
+            <p className="hint">Each shot, title and graphic is its own clip on the timeline: move it, trim it, delete it, retype it, and change its keyframes.</p>
             <div className="link-actions">
               <button className="ghost" onClick={onClose}>Done</button>
-              <button className="primary" onClick={openLayers}>Open layers</button>
+              <button className="primary" onClick={showClips}>Edit its clips</button>
             </div>
           </>
         ) : (

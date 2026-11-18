@@ -12,6 +12,7 @@ import { customComponent } from "./custom.ts";
 import { SceneView } from "./Scene.tsx";
 import { parseFontFace, videoSpan } from "../src/scene.ts";
 import { DocCaption, GlowCaption, KineticCaption, SpecCaption } from "./StyledCaptions.tsx";
+import { EffectFrame } from "./Effects.tsx";
 
 const FONT = "Arial, Helvetica, sans-serif";
 // Outline drawn with shadows around the letters, the same look as the plain captions.
@@ -38,7 +39,10 @@ export const Overlay: React.FC<OverlayProps> = (props) => {
         : null,
       )}
       {props.motion.filter((m) => t >= m.at && t < m.at + m.duration).map((m, i) =>
-        m.template === "title" ? <Title key={i} {...m} W={props.width} H={props.height} /> : m.template === "lower-third" ? <LowerThird key={i} {...m} W={props.width} H={props.height} /> : null,
+        m.template === "title" ? <Title key={i} {...m} W={props.width} H={props.height} /> : m.template === "lower-third" ? <LowerThird key={i} {...m} W={props.width} H={props.height} />
+        // An effect: drawn over everything listed before it, from the time into it.
+        : m.template === "effect" ? <EffectFrame key={i} effect={m.effect ?? ""} t={t - m.at} duration={m.duration} color={m.color} intensity={Number(m.props?.intensity ?? 1)} W={props.width} H={props.height} seed={i} preset={m.effect ? props.effects?.[m.effect] : undefined} />
+        : null,
       )}
       {props.captions && <Captions {...props.captions} t={t} W={props.width} H={props.height} />}
     </AbsoluteFill>

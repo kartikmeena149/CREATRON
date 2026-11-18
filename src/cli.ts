@@ -101,3 +101,7 @@ try {
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 }
+
+// An export leaves Remotion's headless browser open, which would keep the command running after
+// it's done: once everything is written out, the command ends.
+process.stdout.write("", () => process.exit(process.exitCode ?? 0));

@@ -2,7 +2,9 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
-import { buildCues, editDuration, outputDuration } from "./timeline.ts";
+import { buildCues, clipLength, editDuration, outputDuration } from "./timeline.ts";
+import { TRANSITION_TYPES, clipHandles, placedTransitions } from "./transitions.ts";
+import { ffExpr } from "./keyframes.ts";
 import { cropBox, cropOf, isCropped, isIdentity, outputSize, pictureSize, placement } from "./frame.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { sceneLibrary } from "./sceneFiles.ts";
@@ -45,36 +47,95 @@ export async function render(
   const total = editDuration(plan);
   const tail = Math.max(0, total - outputDuration(plan));
 
+  // Transitions play over the cuts without moving anything: each clip's picture runs on past its
+  // ends by half of each transition (its handles), read from the recording around the clip.
+  const transitions = picture ? placedTransitions(plan) : [];
+  const handles = clipHandles(plan);
+  const reach = plan.segments.map((s, i) => ({
+    before: transitions.length ? Math.min(handles[i].before * s.speed, s.start) : 0,
+    after: transitions.length ? Math.min(handles[i].after * s.speed, Math.max(0, analysis.duration - s.end)) : 0,
+  }));
+  if (transitions.length) log(`render: ${transitions.length} ${transitions.length === 1 ? "transition" : "transitions"}`);
+
   // One input per kept segment: seeking each one is much faster than trimming a long file.
   const args: string[] = ["-y", "-v", "error", "-stats"];
-  for (const s of plan.segments) args.push("-ss", String(s.start), "-to", String(s.end), "-i", analysis.source);
+  plan.segments.forEach((s, i) => args.push("-ss", String(s.start - reach[i].before), "-to", String(s.end + reach[i].after), "-i", analysis.source));
 
   const filters: string[] = [];
-  const pads: string[] = [];
+  const apads: string[] = [];
   // Each clip's picture: sized, sped up or slowed, punched in (or painted black when its picture was
   // deleted; its sound stays). The person mask goes through the same steps.
-  const segVideo = (s: EditPlan["segments"][number]) =>
-    `scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}` +
-    (s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "") +
-    (s.picture === false ? ",drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill" : "") +
-    `,fps=${fps},setsar=1` +
-    // The empty gap before the clip (magnet off): black first.
-    (s.gap ? `,tpad=start_mode=add:start_duration=${s.gap.toFixed(3)}:color=black` : "");
+  const segVideo = (s: EditPlan["segments"][number], i: number, input: string, out: string): string[] => {
+    const h = handles[i];
+    const lead = h.before; // output seconds before the clip's own first frame
+    const zoomKeys = s.keys?.zoom?.length ? s.keys.zoom : undefined;
+    const head = `${input}scale=${W}:${H},setpts=(PTS-STARTPTS)/${s.speed}`;
+    const rest =
+      (s.picture === false ? ",drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill" : "") +
+      `,fps=${fps},setsar=1` +
+      // Past the recording's ends, a transition holds the first or last frame.
+      (h.before - reach[i].before / s.speed > 0.001 ? `,tpad=start_mode=clone:start_duration=${(h.before - reach[i].before / s.speed).toFixed(3)}` : "") +
+      (h.after - reach[i].after / s.speed > 0.001 ? `,tpad=stop_mode=clone:stop_duration=${(h.after - reach[i].after / s.speed).toFixed(3)}` : "") +
+      // The empty gap before the clip (magnet off): black first.
+      (s.gap ? `,tpad=start_mode=add:start_duration=${s.gap.toFixed(3)}:color=black` : "") +
+      (transitions.length ? ",settb=AVTB" : "");
+    if (!zoomKeys) {
+      const zoom = s.zoom > 1 ? `,crop=${even(W / s.zoom)}:${even(H / s.zoom)},scale=${W}:${H}:flags=lanczos` : "";
+      return [`${head}${zoom}${rest}${out}`];
+    }
+    // An animated punch-in: the picture grows frame by frame around its middle on a frame-sized canvas.
+    const z = ffExpr(zoomKeys, `(t-${lead.toFixed(3)})`, s.zoom, (v) => `max(1,${v})`);
+    return [
+      `${head},scale=w='trunc(${W}*${z}/2)*2':h='trunc(${H}*${z}/2)*2':eval=frame[zi${out.slice(1, -1)}]`,
+      `color=c=black:s=${W}x${H}:r=${fps}[zb${out.slice(1, -1)}]`,
+      `[zb${out.slice(1, -1)}][zi${out.slice(1, -1)}]overlay=x='(main_w-overlay_w)/2':y='(main_h-overlay_h)/2':shortest=1${rest}${out}`,
+    ];
+  };
+  // How long each clip's picture runs, handles and gap included.
+  const runLength = (i: number) => (plan.segments[i].gap ?? 0) + clipLength(plan.segments[i]) + handles[i].before + handles[i].after;
+  // The clips' pictures one after another into [<p>cat0]: joined straight, or crossed over where there's a transition.
+  const joinPictures = (labels: string[], p: string): string[] => {
+    if (!transitions.length) return [`${labels.join("")}concat=n=${labels.length}:v=1:a=0[${p}cat0]`];
+    const out: string[] = [];
+    const into = new Map(transitions.map((t) => [t.index, t]));
+    // Runs of clips with no transition between them are joined first.
+    const runs: { from: number; to: number }[] = [];
+    labels.forEach((_, i) => (i === 0 || into.has(i) ? runs.push({ from: i, to: i }) : (runs.at(-1)!.to = i)));
+    let acc = "";
+    let length = 0;
+    runs.forEach((r, k) => {
+      const name = `[${p}run${k}]`;
+      const n = r.to - r.from + 1;
+      out.push(n === 1 ? `${labels[r.from]}null${name}` : `${labels.slice(r.from, r.to + 1).join("")}concat=n=${n}:v=1:a=0${name}`);
+      let len = 0;
+      for (let i = r.from; i <= r.to; i++) len += runLength(i);
+      if (!acc) return void ((acc = name), (length = len));
+      const t = into.get(r.from)!;
+      const next = `[${p}x${k}]`;
+      out.push(`${acc}${name}xfade=transition=${TRANSITION_TYPES[t.type].xfade}:duration=${t.duration.toFixed(3)}:offset=${Math.max(0, length - t.duration).toFixed(3)}${next}`);
+      acc = next;
+      length += len - t.duration;
+    });
+    out.push(`${acc}null[${p}cat0]`);
+    return out;
+  };
+  const vpads: string[] = [];
   plan.segments.forEach((s, i) => {
     if (picture) {
-      filters.push(`[${i}:v]${segVideo(s)}[v${i}]`);
-      pads.push(`[v${i}]`);
+      filters.push(...segVideo(s, i, `[${i}:v]`, `[v${i}]`));
+      vpads.push(`[v${i}]`);
     }
     if (analysis.hasAudio) {
-      filters.push(segmentAudio(s, i));
-      pads.push(`[a${i}]`);
+      filters.push(segmentAudio(s, i, transitions.length ? reach[i].before : undefined));
+      apads.push(`[a${i}]`);
     }
   });
   const n = plan.segments.length;
+  if (analysis.hasAudio) filters.push(`${apads.join("")}concat=n=${n}:v=0:a=1[acat0]`);
   if (picture) {
-    filters.push(`${pads.join("")}concat=n=${n}:v=1:a=${analysis.hasAudio ? 1 : 0}[cat0]${analysis.hasAudio ? "[acat0]" : ""}`);
+    filters.push(...joinPictures(vpads, ""));
     filters.push(tail > 0.01 ? `[cat0]tpad=stop_mode=add:stop_duration=${tail.toFixed(3)}:color=black[cat]` : "[cat0]null[cat]");
-  } else filters.push(`${pads.join("")}concat=n=${n}:v=0:a=1[acat0]`, `color=c=black:s=${W}x${H}:r=${fps}:d=${total.toFixed(3)},format=yuv420p[cat]`);
+  } else filters.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${total.toFixed(3)},format=yuv420p[cat]`);
   if (analysis.hasAudio) filters.push(tail > 0.01 ? `[acat0]apad=pad_dur=${tail.toFixed(3)}[acat]` : "[acat0]anull[acat]");
   filters.push(...frameFilters(plan, W, H, size, fps, total));
 
@@ -93,11 +154,11 @@ export async function render(
     videoOut = "[framedmain]";
     const mpads = plan.segments.map((s, i) => {
       const input = args.filter((a) => a === "-i").length;
-      args.push("-ss", String(s.start), "-to", String(s.end), "-i", mask);
-      filters.push(`[${input}:v]${segVideo(s)},format=gray[mk${i}]`);
+      args.push("-ss", String(s.start - reach[i].before), "-to", String(s.end + reach[i].after), "-i", mask);
+      filters.push(...segVideo(s, i, `[${input}:v]`, `[mkc${i}]`), `[mkc${i}]format=gray[mk${i}]`);
       return `[mk${i}]`;
     });
-    filters.push(`${mpads.join("")}concat=n=${n}:v=1:a=0[mcat0]`);
+    filters.push(...joinPictures(mpads, "m"));
     filters.push(tail > 0.01 ? `[mcat0]tpad=stop_mode=add:stop_duration=${tail.toFixed(3)}:color=black[mcat]` : "[mcat0]null[mcat]");
     filters.push(...frameFilters(plan, W, H, size, fps, total, "m"));
     filters.push("[mframed]format=gray[mgray]", "[framedperson][mgray]alphamerge,format=yuva420p[person]");
@@ -114,16 +175,32 @@ export async function render(
     if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(b.file!)) args.push("-loop", "1", "-framerate", String(fps), "-t", b.duration.toFixed(3), ...offset, "-i", b.file!);
     else args.push("-ss", b.offset.toFixed(3), "-t", b.duration.toFixed(3), ...offset, "-i", b.file!);
     // Its size and place in the frame (placeBox): the frame-covering size times its scale, its middle
-    // shifted by x / y; whatever falls outside the frame is cut off by the overlay.
-    const s = b.scale ?? 1;
-    const ox = `(main_w-overlay_w)/2+${((b.x ?? 0) * size.width).toFixed(1)}`;
-    const oy = `(main_h-overlay_h)/2+${((b.y ?? 0) * size.height).toFixed(1)}`;
+    // shifted by x / y; whatever falls outside the frame is cut off by the overlay. Keyframed
+    // properties change frame by frame (t is the edit's clock, so the clip's own time is t - at).
+    const keys = b.keys ?? {};
+    const at = b.at.toFixed(3);
+    // Animated size: drawn at its largest first, then shrunk frame by frame from there.
+    const s = keys.scale?.length ? Math.max(0.05, ...keys.scale.map((k) => k.v)) : (b.scale ?? 1);
+    const ox = `(main_w-overlay_w)/2+(${ffExpr(keys.x, `(t-${at})`, b.x ?? 0)})*${size.width}`;
+    const oy = `(main_h-overlay_h)/2+(${ffExpr(keys.y, `(t-${at})`, b.y ?? 0)})*${size.height}`;
+    const rad = ((b.rotate ?? 0) * Math.PI / 180).toFixed(6);
+    // Turned around its middle (the corners outside stay see-through); overlay keeps that middle in place.
+    // An animated turn first gets a see-through border wide enough that every pixel it draws comes
+    // from inside the picture: the rotate filter leaves old pixels where it would fill instead.
+    const turn = keys.rotate?.length
+      ? "format=rgba,pad=w='ceil(hypot(iw,ih)*1.415/2)*2':h='ceil(hypot(iw,ih)*1.415/2)*2':x='(ow-iw)/2':y='(oh-ih)/2':color=black@0," +
+        `rotate='(${ffExpr(keys.rotate, "t", 0)})*PI/180':ow='trunc(iw/1.414/2)*2':oh='trunc(iw/1.414/2)*2':c=none,`
+      : b.rotate ? `format=rgba,rotate=${rad}:ow='rotw(${rad})':oh='roth(${rad})':c=none,` : "";
+    const opacity = keys.opacity?.length
+      ? `format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip(${ffExpr(keys.opacity, "T", 1)},0,1)',`
+      : (b.opacity ?? 1) < 1 ? `format=rgba,colorchannelmixer=aa=${(b.opacity ?? 1).toFixed(3)},` : "";
+    const grow = keys.scale?.length
+      ? `,scale=w='max(2,trunc(iw*(${ffExpr(keys.scale, "t", s)})/${s}/2)*2)':h='max(2,trunc(ih*(${ffExpr(keys.scale, "t", s)})/${s}/2)*2)':eval=frame`
+      : "";
     filters.push(
-      `[${input}:v]scale=${Math.round(size.width * s)}:${Math.round(size.height * s)}:force_original_aspect_ratio=increase:force_divisible_by=2,` +
-        // Turned around its middle (the corners outside stay see-through); overlay keeps that middle in place.
-        (b.rotate ? `format=rgba,rotate=${((b.rotate * Math.PI) / 180).toFixed(6)}:ow='rotw(${((b.rotate * Math.PI) / 180).toFixed(6)})':oh='roth(${((b.rotate * Math.PI) / 180).toFixed(6)})':c=none,` : "") +
-        `setsar=1,fps=${fps},format=yuva420p,setpts=PTS-STARTPTS+${b.at.toFixed(3)}/TB[br${k}]`,
-      `${videoOut}[br${k}]overlay=x='${ox}':y='${oy}':eof_action=pass:enable='between(t,${b.at.toFixed(3)},${(b.at + b.duration).toFixed(3)})'[bo${k}]`,
+      `[${input}:v]setpts=PTS-STARTPTS,scale=${Math.round(size.width * s)}:${Math.round(size.height * s)}:force_original_aspect_ratio=increase:force_divisible_by=2,` +
+        `${turn}${opacity}format=yuva420p,setsar=1${grow},fps=${fps},setpts=PTS-STARTPTS+${at}/TB[br${k}]`,
+      `${videoOut}[br${k}]overlay=x='${ox}':y='${oy}':eof_action=pass:enable='between(t,${at},${(b.at + b.duration).toFixed(3)})'[bo${k}]`,
     );
     videoOut = `[bo${k}]`;
   });

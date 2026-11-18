@@ -113,6 +113,7 @@ export function wholeVideo(analysis: Analysis): EditPlan {
     version: 1,
     segments: [{ start: 0, end: analysis.duration, speed: 1, zoom: 1, volume: 1 }],
     aspect: "source",
+    cutEffects: [],
     transform: { scale: 1, x: 0, y: 0, rotate: 0 },
     captions: { ...DEFAULT_CAPTIONS },
     audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },

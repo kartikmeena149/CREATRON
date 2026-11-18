@@ -14,12 +14,12 @@ import { Icon, type IconName } from "./icons.tsx";
 import { type LeftView, useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
 import { ClipMenu } from "./ClipMenu.tsx";
+import { TransitionPicker } from "./TransitionPicker.tsx";
 import * as act from "./clipActions.ts";
 import { isAudio, isImage } from "./format.ts";
 import { MIN, Splitter, defaultSize, fitLayout, useLayoutRoom, useLayoutSizes } from "./Splitter.tsx";
 import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
-import { deleteSceneKey } from "./SceneLayers.tsx";
-import { hideShot, shotOf } from "./SceneShots.tsx";
+import { clipsOf, deleteSceneClip } from "./SceneClips.tsx";
 
 export function App() {
   const { project, status, set, load } = useEditor();
@@ -39,6 +39,7 @@ export function App() {
   useEffect(() => window.creatron.onStatus((s: string) => set({ status: s })), []);
   // Fonts edits brought into Creatro, ready for captions and the preview.
   useEffect(() => void useEditor.getState().loadFontLibrary(), []);
+  useEffect(() => void useEditor.getState().loadEffectLibrary(), []);
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
   useEffect(() => window.creatron.onOpenPath((p: string) => open(p)), []);
@@ -120,6 +121,7 @@ export function App() {
         </>}
       </div>
       <ClipMenu />
+      <TransitionPicker />
       {sceneImport && <SceneImport key={sceneImport} path={sceneImport} onClose={() => set({ sceneImport: null })} onOpenMain={open} />}
       {linkOpen && <LinkImport key={linkOpen} audio={linkOpen === "audio"} onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
       {importing && (
@@ -224,6 +226,7 @@ const RAIL: [LeftView, IconName | "SFX", string][] = [
   ["voice", "mic", "Voice Studio"],
   ["captions", "cc", "Captions"],
   ["text", "type", "Text"],
+  ["effects", "sparkle", "Effects & transitions"],
 ];
 
 function Rail() {
@@ -289,13 +292,12 @@ function useShortcuts() {
         if (act.groupRefs().length) act.toggleMuteGroup();
         else if (clip && act.canMute(clip)) act.toggleMute(clip);
       } else if ((e.key === "Backspace" || e.key === "Delete") && act.groupRefs().length) s.deleteSelection();
-      else if ((e.key === "Backspace" || e.key === "Delete") && s.openScene && s.sceneKey) deleteSceneKey();
-      else if ((e.key === "Backspace" || e.key === "Delete") && s.selectedMotion && s.selectedLayer) {
-        // A layer of a Claude edit: a shot goes whole (its card and blurred copy), anything else on its own.
-        const m = s.plan.motion.find((x) => x.id === s.selectedMotion)!;
-        const shot = shotOf(m, s.selectedLayer);
-        if (shot) hideShot(m, shot);
-        else s.editLayer(m.id, s.selectedLayer, (x) => ({ ...x, hidden: true }));
+      else if ((e.key === "Backspace" || e.key === "Delete") && s.selectedClip) {
+        // A clip of a Claude edit: a shot's pictures (its titles stay), or the title or graphic.
+        const m = s.plan.motion.find((x) => x.id === s.selectedClip!.scene);
+        const scene = m?.scene ? s.scenes[m.scene] : undefined;
+        const clip = m && scene ? clipsOf(m, scene).find((c) => c.id === s.selectedClip!.clip) : undefined;
+        if (m && clip) deleteSceneClip(m, clip);
       }
       else if (e.key === "Backspace" || e.key === "Delete") s.selectedMotion !== null ? s.deleteMotion(s.selectedMotion) : s.selectedBroll !== null ? s.deleteBroll(s.selectedBroll) : s.selectedVo !== null ? s.deleteVoiceover(s.selectedVo) : s.selectedCue !== null ? s.deleteCaption(s.selectedCue) : s.deleteSelected();
       else if (e.key === "ArrowLeft") s.seek(s.time - (e.shiftKey ? 1 : frame));

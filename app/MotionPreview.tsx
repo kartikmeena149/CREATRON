@@ -21,7 +21,8 @@ export function MotionPreview() {
   const a = project!.analysis;
   const fps = a.fps;
   const scenes = useSceneFiles(plan);
-  const props = useMemo(() => overlayProps(plan, a.words, outputSize(plan, a), fps, { scenes, prefix: MEDIA_PREFIX }), [plan, a, fps, scenes]);
+  const effects = useEditor((s) => s.effectLibrary);
+  const props = useMemo(() => overlayProps(plan, a.words, outputSize(plan, a), fps, { scenes, prefix: MEDIA_PREFIX, effects }), [plan, a, fps, scenes, effects]);
   const player = useRef<PlayerRef>(null);
   const loaded = useCustomCode(project!.path, plan.motion.some((m) => m.template === "custom"), plan);
   // The editor owns the clock (the video plays, the playhead follows). Paused, the layer shows that

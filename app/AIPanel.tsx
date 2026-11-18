@@ -10,6 +10,8 @@ import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import { Icon } from "./icons.tsx";
 import { isAudio, isDocument } from "./format.ts";
 import { MEDIA_DRAG } from "./Inspector.tsx";
+import { sceneClipBrief } from "../src/sceneClips.ts";
+import { useSelectedClip } from "./SceneClips.tsx";
 import { type AgentMessage, useEditor } from "./store.ts";
 import { AgentTurn } from "./AgentTurn.tsx";
 import { Orb } from "./Orb.tsx";
@@ -33,7 +35,10 @@ const QUICK: Quick[] = [
 export function AIPanel() {
   const { project, plan, messages, busy, status, commit, say, set, picked, selectedBroll, markers, removeMarker } = useEditor();
   const pickedBroll = selectedBroll ? plan.broll.find((b) => b.id === selectedBroll) : undefined;
-  const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source);
+  // A clip of an imported Claude edit, picked on its track.
+  const sel = useSelectedClip();
+  const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source, sel?.clip.name);
+  const sceneClip = sel ? sceneClipBrief(sel.m, sel.scene, sel.clip) : undefined;
   const [text, setText] = useState("");
   const [model, setModel] = useModelChoice();
   // Files attached to the next message (they're in the library too), and what Enhance replaced.
@@ -130,9 +135,9 @@ export function AIPanel() {
       const words = project.analysis.words;
       const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
       const focus = target || sent.length || files.length
-        ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent, attachments: files.map((path) => ({ path })) }
+        ? { clips: target ? picked : [], broll: pickedBroll?.id, sceneClip, markers: sent, attachments: files.map((path) => ({ path })) }
         : undefined;
-      if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
+      if (focus) set({ picked: [], selected: null, selectedBroll: null, selectedClip: null, markers: [], pointing: false });
       const r = await window.creatron.chatSend(project.path, request, before, model, focus);
       if (!r.ok) say({ role: "error", text: signInProblem(r.error) ?? r.error });
       return;
@@ -142,7 +147,7 @@ export function AIPanel() {
     const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
     const focus =
       target || sent.length || files.length
-        ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent, attachments: files.map((path) => ({ path })) }
+        ? { clips: target ? picked : [], broll: pickedBroll?.id, sceneClip, markers: sent, attachments: files.map((path) => ({ path })) }
         : undefined;
     const r = await window.creatron.aiEdit(project.path, request, before, model || undefined, focus);
     set({ busy: false });
@@ -167,7 +172,7 @@ export function AIPanel() {
     const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
     apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
     // Clip numbers can change after an edit, so the pick is cleared; markers were used up.
-    if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
+    if (focus) set({ picked: [], selected: null, selectedBroll: null, selectedClip: null, markers: [], pointing: false });
   };
 
   return (
@@ -259,7 +264,7 @@ export function AIPanel() {
         {target && (
           <div className="ai-target">
             <span>✎ {target}</span>
-            <button className="link" title="Edit the whole video instead" onClick={() => set({ picked: [], selected: null, selectedBroll: null })}>✕</button>
+            <button className="link" title="Edit the whole video instead" onClick={() => set({ picked: [], selected: null, selectedBroll: null, selectedClip: null })}>✕</button>
           </div>
         )}
         <textarea
@@ -322,10 +327,11 @@ function freeResetTime(): string {
 }
 
 /** "Clip 2", "Clips 1, 3", "B-roll: watering plants" — what the next request will change. */
-function describePick(clips: number[], broll?: string): string {
+function describePick(clips: number[], broll?: string, sceneClip?: string): string {
   const parts = [];
   if (clips.length) parts.push(`${clips.length > 1 ? "Clips" : "Clip"} ${clips.map((i) => i + 1).join(", ")}`);
   if (broll) parts.push(`B-roll: ${broll}`);
+  if (sceneClip) parts.push(sceneClip);
   return parts.join(" + ");
 }
 

@@ -132,6 +132,8 @@ const api: Api = {
   loadScene: async () => desktop("Opening a Claude edit"),
   sceneBase: async () => desktop("Opening a Claude edit"),
   fontLibrary: async () => [],
+  effectLibrary: async () => [],
+  extractEffects: async () => ({ ok: true as const, value: [] }),
   trashMedia: async () => ok(undefined),
   madeByCreatron: async () => false,
 

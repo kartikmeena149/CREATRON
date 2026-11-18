@@ -40,6 +40,10 @@ declare global {
       sceneBase(file: string): Promise<Result<string>>;
       /** Creatro's font library (fonts edits brought in), with a URL for each file. */
       fontLibrary(): Promise<{ family: string; weight: string; style: string; unicodeRange?: string; file: string; url: string }[]>;
+      /** The effects taken out of imported Claude edits. */
+      effectLibrary(): Promise<import("../src/sceneEffects.ts").EffectPreset[]>;
+      /** Adds a Claude edit's effects to the library; the names of the new ones. */
+      extractEffects(file: string): Promise<Result<string[]>>;
       chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean): Promise<Result<void>>;
       chatStop(path: string): Promise<void>;
       onChatEvent(fn: (e: { path: string; event: ChatEvent }) => void): () => void;
