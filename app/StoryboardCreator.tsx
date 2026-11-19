@@ -11,6 +11,7 @@ import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } fr
 import { Icon } from "./icons.tsx";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import { useEditor } from "./store.ts";
+import { StoryboardMark } from "./StoryboardMark.tsx";
 import { Sketch } from "./Storyboard.tsx";
 import { aspect, drawShot } from "./storyboardSketch.ts";
 
@@ -64,7 +65,7 @@ export function StoryboardCreator() {
   return (
     <div className="home sbc">
       <section className="home-hero sbc-hero">
-        <p className="dot-label sbc-eyebrow"><i className="sbc-rec" />Storyboard Creator</p>
+        <StoryboardMark size={68} animated className="sbc-hero-mark" />
         <h1>Plan it before you <span className="sbc-pencil">film it.<PencilUnderline /></span></h1>
         <p className="home-sub">
           Give Claude your script and anything you already have. It directs the video shot by shot: what's on screen, the camera, the motion, the sound. Draw on it, redraw it, take the PDF to the shoot.
@@ -129,7 +130,10 @@ function Form({ failed }: { failed?: string }) {
         add([...e.dataTransfer.files].map((f) => window.creatron.pathForFile(f)));
       }}
     >
-      <input className="sbc-title" value={title} placeholder="Untitled video" onChange={(e) => setTitle(e.target.value)} aria-label="Name" />
+      <label className="sbc-field">
+        <div className="sbc-label"><span>Title</span><span className="mono dim">optional</span></div>
+        <input className="sbc-title" value={title} placeholder="Name it, or Claude names it from the script" onChange={(e) => setTitle(e.target.value)} maxLength={120} />
+      </label>
 
       <div className="sbc-field">
         <div className="sbc-label">
@@ -209,13 +213,18 @@ const sentences = (t: string) => t.replace(/\s+/g, " ").split(/(?<=[.!?…])\s+(
  * of the same text (invisible but for the gutter), grown to fit so the two never scroll apart.
  * Pasted numbering or bullets are dropped: the gutter numbers the scenes.
  */
-function ScriptEditor({ value, onChange, readOnly }: { value: string; onChange: (v: string) => void; readOnly?: boolean }) {
+function ScriptEditor({ value, onChange: set, readOnly }: { value: string; onChange: (v: string) => void; readOnly?: boolean }) {
   const ta = useRef<HTMLTextAreaElement>(null);
+  const back = useRef<HTMLDivElement>(null);
+  // Blank lines aren't scenes: at most one between two scenes, none above the first.
+  const onChange = (v: string) => set(v.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(\r?\n[ \t]*){3,}/g, "\n\n"));
+  // Grows with the script up to a point, then scrolls inside, the scene numbers scrolling with it.
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.max(200, el.scrollHeight + 2)}px`;
+    if (back.current) back.current.scrollTop = el.scrollTop;
   }, [value]);
   let n = 0;
   const rows = value.split("\n").map((line) => {
@@ -233,7 +242,7 @@ function ScriptEditor({ value, onChange, readOnly }: { value: string; onChange: 
   };
   return (
     <div className="sbc-editor">
-      <div className="sbc-back" aria-hidden>
+      <div className="sbc-back" aria-hidden ref={back}>
         {rows.map((r, i) => (
           <div key={i} className={`sbc-line ${r.n ? "scene" : ""}`} data-n={r.n ? String(r.n).padStart(2, "0") : ""} data-s={r.n ? `${r.secs.toFixed(1)}s` : ""}>
             {r.line || "\u200b"}
@@ -242,8 +251,9 @@ function ScriptEditor({ value, onChange, readOnly }: { value: string; onChange: 
       </div>
       <textarea
         ref={ta} className="sbc-script" value={value} readOnly={readOnly} spellCheck
-        placeholder={"This robot doesn't have motors. It has muscles.\nIt's called Protoclone, built by a startup named Clone Robotics.\nInstead of gears and servos, it's moved by artificial muscles…\n\nOne line is one scene. Paste, type, or press the mic and say it."}
+        placeholder="Write or paste your script, one scene per line."
         onChange={(e) => onChange(e.target.value)} onPaste={paste}
+        onScroll={(e) => back.current && (back.current.scrollTop = e.currentTarget.scrollTop)}
       />
     </div>
   );
@@ -406,8 +416,10 @@ function when(ms: number): string {
 }
 
 /**
- * Every storyboard made here, newest first. Opening one brings it back as it was saved, ready to
- * draw on, redraw or approve: Claude picks up where it left off.
+ * Every storyboard made here, newest first, as cards: a filmstrip of its first shots for a cover,
+ * its name (rename by double-click or the pencil), length and status, and Open / PDF / Finder /
+ * Delete. Opening one brings it back ready to draw on, redraw or approve; Claude picks up where it
+ * left off. Delete moves it to the Trash, after asking.
  */
 function Saved() {
   const job = usePlan((s) => s.job);
@@ -443,38 +455,88 @@ function Saved() {
       </div>
       {error && <p className="sbc-error">{error}</p>}
       <div className="sbc-list">
-        {list.map((p) => {
-          const here = job?.key === `plan:${p.dir}` && (job.status === "ready" || job.status === "drafting");
-          // The first shot as the cover: 150 px tall when upright, 150 px wide when wide.
-          const ratio = aspect(p.format);
-          const tw = Math.round(ratio < 1 ? 150 * ratio : 150);
-          return (
-            <div key={p.dir} className={`sbc-item ${here ? "on" : ""}`}>
-              <button className="sbc-thumb" style={{ width: tw + 2 }} onClick={() => void open(p)} disabled={drafting && !here} title="Open">
-                {p.board.shots[0] && (
-                  <Sketch b={{ video: `plan:${p.dir}`, dir: p.dir, round: 1, draft: p.board, status: "closed", plan: true }} shot={p.board.shots[0]} width={tw} />
-                )}
-              </button>
-              <div className="sbc-item-text">
-                <b title={p.title}>{p.title}</b>
-                <span className="mono dim">{p.shots} scenes · {clock(p.seconds)} · {p.format}</span>
-                <span className="sbc-item-meta">
-                  <i className={`sbc-chip ${here ? "live" : p.approved ? "ok" : ""}`}>{here ? (job?.status === "drafting" ? "Opening" : "Open now") : p.approved ? "Approved" : "Draft"}</i>
-                  <span className="dim">{when(p.updated)}</span>
-                </span>
-                <span className="sbc-item-actions">
-                  <button className="sb-btn" onClick={() => void open(p)} disabled={drafting && !here} title={drafting && !here ? "Claude is working on another storyboard" : "Look through it, draw on it, redraw or approve it"}>
-                    Open
-                  </button>
-                  {p.pdf && <button className="sb-btn" onClick={() => window.creatron.openFile(p.pdf!)}><Icon name="download" size={12} /> PDF</button>}
-                  <button className="sb-btn icon" onClick={() => window.creatron.reveal(`${p.dir}/notes/storyboard.json`)} title="Show in Finder"><Icon name="folder" size={13} /></button>
-                </span>
-              </div>
-            </div>
-          );
-        })}
+        {list.map((p) => (
+          <PlanCard
+            key={p.dir} p={p} busy={drafting && job?.key !== `plan:${p.dir}`}
+            here={job?.key === `plan:${p.dir}` && (job.status === "ready" || job.status === "drafting") ? job.status : null}
+            onOpen={() => void open(p)} onChanged={refresh} onError={setError}
+          />
+        ))}
       </div>
     </section>
+  );
+}
+
+/** One saved storyboard. */
+function PlanCard({ p, here, busy, onOpen, onChanged, onError }: {
+  p: SavedPlan; here: "ready" | "drafting" | null; busy: boolean;
+  onOpen: () => void; onChanged: () => void; onError: (e: string) => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(p.title);
+  const [confirm, setConfirm] = useState(false);
+  const ratio = aspect(p.format);
+  // The cover: its first shots side by side (tall frames) or two by two (wide ones).
+  const strip = ratio < 1 ? p.board.shots.slice(0, 3) : p.board.shots.slice(0, 4);
+  const cell = ratio < 1 ? 64 : 106; // both fit the same cover height, so titles line up across a row
+  const state = { video: `plan:${p.dir}`, dir: p.dir, round: 1, draft: p.board, status: "closed" as const, plan: true };
+
+  const saveName = async () => {
+    setRenaming(false);
+    if (!name.trim() || name.trim() === p.title) return setName(p.title);
+    const r = await window.creatron.planRename(p.dir, name);
+    if (!r.ok) return onError(r.error), setName(p.title);
+    onChanged();
+  };
+  const remove = async () => {
+    const r = await window.creatron.planDelete(p.dir);
+    setConfirm(false);
+    if (!r.ok) return onError(r.error);
+    if (usePlan.getState().job?.dir === p.dir) usePlan.setState({ job: null });
+    const b = useEditor.getState().board;
+    if (b?.plan && b.dir === p.dir) useEditor.setState({ board: null, boardOpen: false });
+    onChanged();
+  };
+
+  return (
+    <article className={`sbc-item ${here ? "on" : ""} ${confirm ? "confirming" : ""}`}>
+      <button className={`sbc-cover ${ratio < 1 ? "tall" : "landscape"}`} onClick={onOpen} disabled={busy} title={busy ? "Claude is working on another storyboard" : "Open"}>
+        {strip.map((shot) => (
+          <Sketch key={shot.id} b={state} shot={shot} width={cell} theme="dark" />
+        ))}
+        <i className={`sbc-chip ${here ? "live" : p.approved ? "ok" : ""}`}>{here ? (here === "drafting" ? "Opening" : "Open now") : p.approved ? "Approved" : "Draft"}</i>
+      </button>
+      <div className="sbc-item-tools">
+        <button onClick={() => setRenaming(true)} title="Rename"><Icon name="pencil" size={12} /></button>
+        <button onClick={() => setConfirm(true)} title="Delete" disabled={here === "drafting"}><Icon name="close" size={12} /></button>
+      </div>
+      {confirm && (
+        <div className="sbc-confirm" role="alertdialog" aria-label="Delete this storyboard?">
+          <b>Delete “{p.title}”?</b>
+          <span>It goes to the Trash with its script and PDF. You can put it back from there.</span>
+          <div>
+            <button className="sb-btn" onClick={() => setConfirm(false)} autoFocus>Cancel</button>
+            <button className="sb-btn danger" onClick={() => void remove()}>Move to Trash</button>
+          </div>
+        </div>
+      )}
+      <div className="sbc-item-body">
+        {renaming ? (
+          <input
+            className="sbc-rename" value={name} autoFocus onChange={(e) => setName(e.target.value)} onBlur={() => void saveName()}
+            onKeyDown={(e) => (e.key === "Enter" ? (e.currentTarget as HTMLInputElement).blur() : e.key === "Escape" ? (setName(p.title), setRenaming(false)) : null)}
+          />
+        ) : (
+          <b className="sbc-item-title" title="Double-click to rename" onDoubleClick={() => setRenaming(true)}>{p.title}</b>
+        )}
+        <span className="sbc-item-meta mono">{p.shots} scenes · {clock(p.seconds)} · {p.format}<em>{when(p.updated)}</em></span>
+        <div className="sbc-item-actions">
+          <button className="sb-btn primary" onClick={onOpen} disabled={busy}>Open</button>
+          {p.pdf && <button className="sb-btn" onClick={() => window.creatron.openFile(p.pdf!)} title="Open the PDF"><Icon name="download" size={12} /> PDF</button>}
+          <button className="sb-btn icon" onClick={() => window.creatron.reveal(`${p.dir}/notes/storyboard.json`)} title="Show in Finder"><Icon name="folder" size={13} /></button>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -493,7 +555,7 @@ export function PlanEntry({ onOpen }: { onOpen: () => void }) {
   const job = usePlan((s) => s.job);
   return (
     <button className="sbc-entry" onClick={onOpen}>
-      <span className="sbc-entry-icon"><Icon name="pencil" size={16} /></span>
+      <span className="sbc-entry-icon"><StoryboardMark size={34} /></span>
       <span className="sbc-entry-text">
         <b>Storyboard Creator</b>
         <span>{job && (job.status === "drafting" || job.status === "ready") ? "Your storyboard is in progress: open it" : "Have a script but no video yet? Plan every shot first."}</span>

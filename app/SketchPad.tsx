@@ -2,18 +2,16 @@
 // that, like this". Their strokes are kept on the shot (shot.marks), drawn on every view of it (cards,
 // animatic, PDF), and when they answer, each drawn shot goes to Claude as a picture to look at.
 // The sketch and the strokes are two canvases: the eraser only ever rubs out the user's own lines.
+// The arrow points from a note in the user's words to what it's about ("move the logo here").
 import { useEffect, useRef, useState } from "react";
 import { MARK_COLORS, type Mark, type Shot } from "../src/storyboard.ts";
 import { Icon } from "./icons.tsx";
 import type { BoardState } from "./store.ts";
-import { type SketchTheme, aspect, drawShot, strokeMarks } from "./storyboardSketch.ts";
+import { type SketchTheme, aspect, drawShot, noteBox, strokeMarks } from "./storyboardSketch.ts";
 
 type Tool = Mark["tool"];
-/** Line widths as a fraction of the frame's shorter side. */
-const SIZES: Record<Tool, Record<"s" | "m" | "l", number>> = {
-  pen: { s: 0.006, m: 0.012, l: 0.024 },
-  eraser: { s: 0.03, m: 0.06, l: 0.12 },
-};
+/** The size slider (0..1) as a line width, a fraction of the frame's shorter side: the eraser is broader. */
+const widthOf = (tool: Tool, v: number) => (tool === "eraser" ? 0.02 + v * 0.16 : 0.003 + v * 0.037);
 const COLOR_NAMES: Record<string, string> = { "#ffd60a": "Yellow", "#f5f5f5": "White", "#4cc9f0": "Blue", "#4ade80": "Green" };
 
 let open = 0;
@@ -38,7 +36,10 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
   const [box, setBox] = useState(fit);
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState<string>(MARK_COLORS[0]);
-  const [size, setSize] = useState<"s" | "m" | "l">("m");
+  const [size, setSize] = useState(0.25);
+  const [note, setNote] = useState<{ index: number; text: string } | null>(null); // an arrow's note being typed
+  const noteOpened = useRef(0);
+  useEffect(() => void (note && (noteOpened.current = performance.now())), [note?.index]);
   const [undone, setUndone] = useState<Mark[][]>([]); // for redo
   const [history, setHistory] = useState<Mark[][]>([]); // for undo
   const base = useRef<HTMLCanvasElement>(null);
@@ -97,7 +98,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
   // Keys while drawing: P pencil, E eraser, [ ] size, ⌘Z undo, ⇧⌘Z redo, esc or return to finish.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      if ((e.target as HTMLElement)?.tagName === "INPUT") return; // typing a note, or the slider
       const k = e.key.toLowerCase();
       const used = () => (e.preventDefault(), e.stopImmediatePropagation());
       if ((e.metaKey || e.ctrlKey) && k === "z") return used(), e.shiftKey ? redo() : undo();
@@ -105,8 +106,9 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
       if (k === "escape" || k === "enter") return used(), onClose();
       if (k === "p" || k === "b") return used(), setTool("pen");
       if (k === "e") return used(), setTool("eraser");
-      if (k === "[") return used(), setSize((s) => (s === "l" ? "m" : "s"));
-      if (k === "]") return used(), setSize((s) => (s === "s" ? "m" : "l"));
+      if (k === "a") return used(), setTool("arrow");
+      if (k === "[") return used(), setSize((v) => Math.max(0, Math.round((v - 0.1) * 100) / 100));
+      if (k === "]") return used(), setSize((v) => Math.min(1, Math.round((v + 0.1) * 100) / 100));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -120,7 +122,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     const c = cursor.current;
     if (!c) return;
     const r = ink.current!.getBoundingClientRect();
-    const d = SIZES[tool][size] * Math.min(box.w, box.h);
+    const d = Math.max(3, widthOf(tool, size) * Math.min(box.w, box.h));
     Object.assign(c.style, { width: `${d}px`, height: `${d}px`, transform: `translate(${e.clientX - r.left - d / 2}px, ${e.clientY - r.top - d / 2}px)`, opacity: "1" });
   };
 
@@ -129,14 +131,22 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     try {
       e.currentTarget.setPointerCapture(e.pointerId); // keep the stroke going outside the frame
     } catch {}
+    if (note) return saveNote(); // a click outside the note box finishes it
     const [x, y] = at(e);
-    live.current = { tool, color, size: SIZES[tool][size], points: [x, y] };
+    live.current = { tool, color, size: widthOf(tool, size), points: tool === "arrow" ? [x, y, x, y] : [x, y] };
     paint([...marks, live.current]);
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     moveCursor(e);
     const m = live.current;
     if (!m) return;
+    if (m.tool === "arrow") {
+      // The arrow follows the pointer from where it started.
+      const [x, y] = at(e);
+      m.points[2] = x;
+      m.points[3] = y;
+      return paint([...marks, m]);
+    }
     const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const g = ink.current!.getContext("2d")!;
     for (const ev of events) {
@@ -161,8 +171,38 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
   const up = () => {
     const m = live.current;
     live.current = null;
-    if (m) commit([...marks, m]);
+    if (!m) return;
+    if (m.tool === "arrow") {
+      // Too short to be an arrow: nothing. Otherwise kept, and its note box opens at the tail.
+      if (Math.hypot((m.points[2]! - m.points[0]!) * box.w, (m.points[3]! - m.points[1]!) * box.h) < 14) return paint(marks);
+      commit([...marks, { ...m, text: "" }]);
+      return setNote({ index: marks.length, text: "" });
+    }
+    commit([...marks, m]);
   };
+  // The note's words go on the arrow; one edit is one undo step.
+  const saveNote = () => {
+    if (!note) return;
+    const current = shot.marks ?? [];
+    const k = current[note.index];
+    setNote(null);
+    if (!k || (k.text ?? "") === note.text.trim()) return;
+    commit(current.map((x, i) => (i === note.index ? { ...x, text: note.text.trim() } : x)));
+  };
+  // Double-click a note to change it.
+  const editNote = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const r = ink.current!.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+    const g = document.createElement("canvas").getContext("2d")!;
+    const i = marks.findLastIndex((k) => {
+      if (k.tool !== "arrow") return false;
+      const nb = noteBox(g, box.w, box.h, k) ?? { x: k.points[0]! * box.w - 12, y: k.points[1]! * box.h - 12, w: 24, h: 24 };
+      return px >= nb.x && px <= nb.x + nb.w && py >= nb.y && py <= nb.y + nb.h;
+    });
+    if (i >= 0) setNote({ index: i, text: marks[i]!.text ?? "" });
+  };
+  const noteAt = note && marks[note.index] ? { x: marks[note.index]!.points[0]! * box.w, y: marks[note.index]!.points[1]! * box.h } : null;
 
   return (
     <div className="sb-pad" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -170,21 +210,22 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
         <span className="sb-pad-title"><b>Shot {String(index + 1).padStart(2, "0")}</b> Draw what you want instead</span>
         <div className="sb-pad-group">
           <button className={tool === "pen" ? "on" : ""} disabled={!editable} onClick={() => setTool("pen")} title="Pencil (P)"><Icon name="pencil" size={15} /> Pencil</button>
+          <button className={tool === "arrow" ? "on" : ""} disabled={!editable} onClick={() => setTool("arrow")} title="Arrow with a note (A): drag from where the note goes to what it's about, then type"><Icon name="arrowNote" size={15} /> Arrow</button>
           <button className={tool === "eraser" ? "on" : ""} disabled={!editable} onClick={() => setTool("eraser")} title="Eraser (E): rubs out your lines, never the sketch"><Icon name="eraser" size={15} /> Eraser</button>
         </div>
         <div className="sb-pad-group colors">
           {MARK_COLORS.map((c) => (
-            <button key={c} className={`sb-pad-color ${color === c && tool === "pen" ? "on" : ""}`} style={{ ["--c" as string]: c }} disabled={!editable}
-              onClick={() => (setColor(c), setTool("pen"))} title={COLOR_NAMES[c]} aria-label={COLOR_NAMES[c]} />
+            <button key={c} className={`sb-pad-color ${color === c && tool !== "eraser" ? "on" : ""}`} style={{ ["--c" as string]: c }} disabled={!editable}
+              onClick={() => (setColor(c), tool === "eraser" && setTool("pen"))} title={COLOR_NAMES[c]} aria-label={COLOR_NAMES[c]} />
           ))}
         </div>
-        <div className="sb-pad-group sizes">
-          {(["s", "m", "l"] as const).map((s) => (
-            <button key={s} className={size === s ? "on" : ""} disabled={!editable} onClick={() => setSize(s)} title={`${s === "s" ? "Thin" : s === "m" ? "Medium" : "Thick"} ([ and ])`}>
-              <i style={{ width: { s: 4, m: 7, l: 11 }[s], height: { s: 4, m: 7, l: 11 }[s] }} />
-            </button>
-          ))}
-        </div>
+        <label className="sb-pad-group sb-pad-size" title="Size: slide left for thin, right for thick ([ and ])">
+          <i className="sb-pad-size-dot" style={{ width: 4 + size * 14, height: 4 + size * 14, background: tool === "eraser" ? "transparent" : color }} />
+          <input
+            type="range" min={0} max={1} step={0.01} value={size} disabled={!editable} aria-label="Size"
+            style={{ ["--v" as string]: `${size * 100}%` }} onChange={(e) => setSize(Number(e.target.value))}
+          />
+        </label>
         <div className="sb-pad-group">
           <button className="icon" disabled={!editable || !history.length} onClick={undo} title="Undo (⌘Z)"><Icon name="undo" size={15} /></button>
           <button className="icon" disabled={!editable || !undone.length} onClick={redo} title="Redo (⇧⌘Z)"><Icon name="redo" size={15} /></button>
@@ -196,14 +237,30 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
         <canvas ref={base} style={{ width: box.w, height: box.h }} />
         <canvas
           ref={ink} className="sb-pad-ink" style={{ width: box.w, height: box.h }}
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onDoubleClick={editNote}
           onPointerLeave={() => cursor.current && (cursor.current.style.opacity = "0")}
         />
-        {editable && <div ref={cursor} className={`sb-pad-cursor ${tool}`} style={{ ["--c" as string]: color }} />}
+        {editable && tool !== "arrow" && <div ref={cursor} className={`sb-pad-cursor ${tool}`} style={{ ["--c" as string]: color }} />}
+        {note && noteAt && (
+          <input
+            className="sb-pad-note" autoFocus value={note.text} placeholder="What should change here?" maxLength={80}
+            style={{ left: Math.min(box.w - 230, Math.max(4, noteAt.x - 115)), top: Math.min(box.h - 40, Math.max(4, noteAt.y - 18)), ["--c" as string]: marks[note.index]?.color }}
+            onChange={(e) => setNote({ ...note, text: e.target.value })}
+            // A box that loses focus the moment it opens (the click that made the arrow) keeps it; later, leaving it saves it.
+            onBlur={(e) => (performance.now() - noteOpened.current < 250 ? requestAnimationFrame(() => e.target.focus()) : saveNote())}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") saveNote();
+              if (e.key === "Escape") setNote(null);
+            }}
+          />
+        )}
       </div>
       <p className="sb-pad-hint">
         {editable
-          ? "Circle it, cross it out, sketch where it goes. Claude looks at your drawing when you press Redraw or Approve."
+          ? tool === "arrow"
+            ? "Drag from where your note goes to what it's about, then type. Double-click a note to change it."
+            : "Circle it, cross it out, sketch where it goes, or point at it with a note. Claude reads all of it when you press Redraw or Approve."
           : "This storyboard isn't waiting for an answer, so drawing is off."}
       </p>
     </div>

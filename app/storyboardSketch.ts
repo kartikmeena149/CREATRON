@@ -878,6 +878,10 @@ export function strokeMarks(g: CanvasRenderingContext2D, w: number, h: number, m
     g.strokeStyle = color;
     g.fillStyle = color;
     g.lineWidth = Math.max(1, k.size * m);
+    if (k.tool === "arrow") {
+      if (p.length >= 4) arrowMark(g, w, h, k, color, theme);
+      continue;
+    }
     if (p.length < 4) {
       // A dot.
       g.beginPath();
@@ -897,4 +901,74 @@ export function strokeMarks(g: CanvasRenderingContext2D, w: number, h: number, m
     g.stroke();
   }
   g.restore();
+}
+
+/** Where an arrow's note box sits: centred on the arrow's tail, sized to its words. Null without words. */
+export function noteBox(g: CanvasRenderingContext2D, w: number, h: number, k: Mark): { x: number; y: number; w: number; h: number; fs: number } | null {
+  const text = k.text?.trim();
+  if (!text) return null;
+  const m = Math.min(w, h);
+  const fs = Math.max(11, Math.min(22, m * 0.045));
+  g.save();
+  g.font = `600 ${fs}px ${NOTE_FONT}`;
+  const tw = Math.min(w * 0.6, g.measureText(text).width);
+  g.restore();
+  const bw = tw + fs * 1.3;
+  const bh = fs * 1.9;
+  const cx = Math.min(w - bw / 2 - 2, Math.max(bw / 2 + 2, k.points[0]! * w));
+  const cy = Math.min(h - bh / 2 - 2, Math.max(bh / 2 + 2, k.points[1]! * h));
+  return { x: cx - bw / 2, y: cy - bh / 2, w: bw, h: bh, fs };
+}
+const NOTE_FONT = '"SF Pro Text", "Helvetica Neue", system-ui, sans-serif';
+
+/**
+ * The user's arrow: from its note (tail) to what the note is about (tip), with an open head. The
+ * note sits in a box at the tail in the arrow's colour, the line starting at the box's edge.
+ */
+function arrowMark(g: CanvasRenderingContext2D, w: number, h: number, k: Mark, color: string, theme: SketchTheme) {
+  const p = k.points;
+  let x1 = p[0]! * w;
+  let y1 = p[1]! * h;
+  const x2 = p[p.length - 2]! * w;
+  const y2 = p[p.length - 1]! * h;
+  const box = noteBox(g, w, h, k);
+  if (box) {
+    // Start the line where it leaves the box, toward the tip.
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+    const dx = x2 - cx;
+    const dy = y2 - cy;
+    const t = Math.min(Math.abs(dx) > 0 ? box.w / 2 / Math.abs(dx) : Infinity, Math.abs(dy) > 0 ? box.h / 2 / Math.abs(dy) : Infinity);
+    if (t < 1) (x1 = cx + dx * t), (y1 = cy + dy * t);
+  }
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (len > 4) {
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    const head = Math.max(8, g.lineWidth * 3.2);
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x2, y2);
+    g.moveTo(x2 - head * Math.cos(a - 0.5), y2 - head * Math.sin(a - 0.5));
+    g.lineTo(x2, y2);
+    g.lineTo(x2 - head * Math.cos(a + 0.5), y2 - head * Math.sin(a + 0.5));
+    g.stroke();
+  }
+  if (box) {
+    g.save();
+    g.beginPath();
+    g.roundRect(box.x, box.y, box.w, box.h, box.fs * 0.45);
+    g.fillStyle = theme === "paper" ? "rgba(255, 253, 248, 0.95)" : "rgba(10, 10, 10, 0.88)";
+    g.fill();
+    g.lineWidth = Math.max(1.5, box.fs * 0.12);
+    g.strokeStyle = color;
+    g.stroke();
+    g.font = `600 ${box.fs}px ${NOTE_FONT}`;
+    g.fillStyle = theme === "paper" ? INK : "#ffffff";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    let text = k.text!.trim();
+    while (text.length > 3 && g.measureText(text).width > box.w - box.fs * 1.1) text = `${text.slice(0, -2)}…`;
+    g.fillText(text, box.x + box.w / 2, box.y + box.h / 2 + 0.5);
+    g.restore();
+  }
 }

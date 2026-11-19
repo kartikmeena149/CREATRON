@@ -50,6 +50,8 @@ declare global {
       planStop(): Promise<void>;
       planOpen(dir: string, model: string): Promise<Result<{ key: string; dir: string }>>;
       plansList(): Promise<SavedPlan[]>;
+      planRename(dir: string, title: string): Promise<Result<void>>;
+      planDelete(dir: string): Promise<Result<void>>;
       onPlanEvent(fn: (e: { key: string; event: PlanEvent }) => void): () => void;
       readScript(path: string): Promise<Result<string>>;
       storyboardWaiting(video: string): Promise<boolean>;

@@ -23,6 +23,8 @@ const api = {
   planStop: () => ipcRenderer.invoke("plan-stop"),
   planOpen: (dir: string, model: string) => ipcRenderer.invoke("plan-open", dir, model),
   plansList: () => ipcRenderer.invoke("plans-list"),
+  planRename: (dir: string, title: string) => ipcRenderer.invoke("plan-rename", dir, title),
+  planDelete: (dir: string) => ipcRenderer.invoke("plan-delete", dir),
   onPlanEvent: on("plan-event"),
   readScript: (path: string) => ipcRenderer.invoke("read-script", path),
   storyboardWaiting: (video: string) => ipcRenderer.invoke("storyboard-waiting", video),

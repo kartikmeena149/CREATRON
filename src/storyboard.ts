@@ -37,10 +37,13 @@ export type Layer = z.infer<typeof Layer>;
  * fraction of the frame's shorter side.
  */
 export const Mark = z.object({
-  tool: z.enum(["pen", "eraser"]).catch("pen"),
+  /** pen: a pencil line; eraser: rubs out the user's lines; arrow: from its note (points 0-1) to what it means (2-3). */
+  tool: z.enum(["pen", "eraser", "arrow"]).catch("pen"),
   color: str("#ffd60a"),
   size: z.coerce.number().catch(0.012),
   points: z.array(z.coerce.number()).catch([]),
+  /** An arrow's note: what the user wants there ("move the logo here", "make this bigger"). */
+  text: str().optional(),
 });
 export type Mark = z.infer<typeof Mark>;
 
@@ -202,7 +205,8 @@ function drawingsNote(b: Storyboard): string {
   return [
     "The user drew on these shots. Read each picture: it is the shot as they saw it, with their own pencil strokes on top",
     "(yellow, white, blue or green; the red marks are Creatro's movement arrows, not theirs). Their strokes show what they want",
-    "instead: where something goes, what to circle, cross out, add or move. Follow them.",
+    "instead: where something goes, what to circle, cross out, add or move. Their arrows start at a note box in their own words",
+    "and point at what the note is about: do what each note says to the thing its arrow points at. Follow them.",
     ...drawn.map((s) => `- ${s.id}: ${s.drawing}`),
   ].join("\n");
 }

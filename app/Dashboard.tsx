@@ -11,6 +11,7 @@ import { Orb } from "./Orb.tsx";
 import { useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
 import { PlanEntry, StoryboardCreator, usePlan } from "./StoryboardCreator.tsx";
+import { StoryboardMark } from "./StoryboardMark.tsx";
 
 type View = "home" | "connections" | "storyboard";
 /** Whether the Dashboard is showing (and which page), and a request waiting for its video to open. */
@@ -54,7 +55,7 @@ export function Dashboard({ onOpenVideo }: { onOpenVideo: (path: string) => Prom
         <nav>
           <button className={view === "home" ? "on" : ""} onClick={() => openHome("home")}><Icon name="grid" size={15} /> Home</button>
           <button className={view === "storyboard" ? "on" : ""} onClick={() => openHome("storyboard")} title="Plan a video from a script, before you film it">
-            <Icon name="pencil" size={15} /> Storyboard Creator
+            <StoryboardMark size={17} className="sbm-nav" /> Storyboard Creator
             {planBusy && <span className="dash-live" title="A storyboard is in progress" />}
           </button>
           <button className={view === "connections" ? "on" : ""} onClick={() => openHome("connections")}>
@@ -122,6 +123,12 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), void start())}
             rows={3}
           />
+          {/* Quick starts: a preset brief for the box, the one in it stays lit. */}
+          <div className="ideas" role="group" aria-label="Quick starts">
+            {IDEAS.map(([label, prompt]) => (
+              <button key={label} className={text === prompt ? "on" : ""} onClick={() => setText(text === prompt ? "" : prompt)} title={prompt}>{label}</button>
+            ))}
+          </div>
           <div className="prompt-foot">
             <button className="prompt-file" onClick={async () => { const p = await window.creatron.pickVideo(); if (p) setVideo(p); }}>
               <Icon name={video ? "video" : "paperclip"} size={14} />
@@ -135,11 +142,6 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             {conn && connected && <HomeModel />}
             <button className="prompt-go" title="Start (Enter)" onClick={() => void start()}><Icon name="arrowUp" size={15} /></button>
           </div>
-        </div>
-        <div className="ideas">
-          {IDEAS.map(([label, prompt]) => (
-            <button key={label} onClick={() => setText(prompt)}>{label}</button>
-          ))}
         </div>
         <PlanEntry onOpen={() => openHome("storyboard")} />
       </section>

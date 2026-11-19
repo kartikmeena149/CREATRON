@@ -295,6 +295,10 @@ export function readPlanInfo(dir: string): Partial<PlanInfo> {
     return {};
   }
 }
+/** A new name for a storyboard from the creator (its folder keeps its name; the list shows this). */
+export function renamePlan(dir: string, title: string) {
+  writePlanInfo(dir, { title: title.trim().slice(0, 120) });
+}
 function writePlanInfo(dir: string, patch: Partial<PlanInfo>) {
   writeFileSync(planInfoFile(dir), JSON.stringify({ ...readPlanInfo(dir), ...patch }, null, 1));
 }

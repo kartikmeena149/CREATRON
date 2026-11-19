@@ -1,7 +1,7 @@
 import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { type StoryboardReview, autoEditDir, cancelAutoEdit, planDir, planStoryboard, readPlanInfo, reopenPlan } from "../src/autoedit.ts";
+import { type StoryboardReview, autoEditDir, cancelAutoEdit, planDir, planStoryboard, readPlanInfo, renamePlan, reopenPlan } from "../src/autoedit.ts";
 import { Storyboard, scenesOf } from "../src/storyboard.ts";
 import { withDrawings } from "../src/storyboardFiles.ts";
 import { basename, extname, join, relative, resolve } from "node:path";
@@ -272,6 +272,29 @@ ipcMain.handle("plan-stop", () => {
   if (planning.phase === "waiting") planning.close?.();
   else cancelAutoEdit();
 });
+/** Only folders the creator made: work/storyboards/<one folder>. */
+const isPlanDir = (dir: string) => {
+  const root = join(ROOT, "work", "storyboards");
+  const rel = relative(root, resolve(dir));
+  return Boolean(rel) && !rel.startsWith("..") && !rel.includes("/") && existsSync(join(root, rel, "notes"));
+};
+ipcMain.handle("plan-rename", safe(async (dir: string, title: string) => {
+  if (!isPlanDir(dir)) throw new Error("That isn't a storyboard from the Storyboard Creator.");
+  if (!title.trim()) throw new Error("Give it a name.");
+  renamePlan(dir, title);
+}));
+/** A storyboard to the Trash (it can be put back from there). One that's open is put away first. */
+ipcMain.handle("plan-delete", safe(async (dir: string) => {
+  if (!isPlanDir(dir)) throw new Error("That isn't a storyboard from the Storyboard Creator.");
+  if (planning?.key === `plan:${dir}`) {
+    if (planning.phase === "drafting") throw new Error("Claude is working on this storyboard: stop it first.");
+    planning.quiet = true;
+    planning.close?.();
+    boardAnswers.delete(planning.key);
+  }
+  await shell.trashItem(dir);
+}));
+
 /** Every storyboard made from a script, newest first: what the creator's list shows. */
 ipcMain.handle("plans-list", () => {
   const root = join(ROOT, "work", "storyboards");

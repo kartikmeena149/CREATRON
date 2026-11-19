@@ -118,6 +118,8 @@ const api: Api = {
   planStop: async () => {},
   planOpen: async () => desktop("The Storyboard creator"),
   plansList: async () => [],
+  planRename: async () => desktop("The Storyboard Creator"),
+  planDelete: async () => desktop("The Storyboard Creator"),
   onPlanEvent: () => () => {},
   readScript: async () => desktop("Reading a script file"),
   storyboardWaiting: async () => false,

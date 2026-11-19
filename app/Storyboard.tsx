@@ -90,14 +90,15 @@ function setBoardTheme(theme: "dark" | "light") {
 export const sketchTheme = (t: "dark" | "light") => (t === "light" ? "paper" : "dark");
 
 /** One shot, drawn. Redraws when the shot or the look changes. */
-export function Sketch({ b, shot, width, className }: { b: BoardState; shot: Shot; width: number; className?: string }) {
+export function Sketch({ b, shot, width, className, theme: fixed }: { b: BoardState; shot: Shot; width: number; className?: string; theme?: "dark" | "light" }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const picture = usePicture(b, shot);
   const ratio = aspect(b.draft.format);
   const height = Math.round(width / ratio);
   const look = JSON.stringify(b.draft.look);
   const data = JSON.stringify(shot);
-  const theme = useBoardTheme((t) => t.theme);
+  const chosen = useBoardTheme((t) => t.theme);
+  const theme = fixed ?? chosen;
   useEffect(() => {
     if (!ref.current || picture === undefined) return;
     drawShot(ref.current, width, height, Math.min(3, window.devicePixelRatio || 2), shot, b.draft, picture, sketchTheme(theme));
@@ -162,6 +163,13 @@ export function StoryboardSheet() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, b, focus, playing]);
+
+  // "PDF saved" goes away by itself.
+  useEffect(() => {
+    if (!pdf || pdf === "making") return;
+    const t = setTimeout(() => setPdf(""), 8000);
+    return () => clearTimeout(t);
+  }, [pdf]);
 
   if (!open || !b) return null;
   const board = b.draft;
@@ -232,7 +240,6 @@ export function StoryboardSheet() {
           </div>
           <button className="sb-btn" onClick={() => setPlaying(true)} disabled={!kept.length}><Icon name="play" size={11} fill /> Play animatic</button>
           <button className="sb-btn" onClick={makePdf} disabled={pdf === "making"}><Icon name="download" size={13} /> {pdf === "making" ? "Making PDF…" : "PDF"}</button>
-          {waiting && <button className="export-btn" onClick={approve} title={b.plan ? "Lock in this plan: it's saved with your script, ready for the shoot" : "Build the video from these shots"}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>}
         </div>
       </header>
 
@@ -282,6 +289,16 @@ export function StoryboardSheet() {
         )}
       </div>
 
+      {pdf && pdf !== "making" && (
+        // Said above the bar, not in it: the bar keeps its shape. Goes away by itself.
+        <div className="sb-toast" role="status" key={pdf}>
+          <span className="sb-toast-icon"><Icon name="check" size={13} /></span>
+          <span className="sb-toast-text"><b>PDF saved</b><span>{pdf.split("/").pop()}</span></span>
+          <button className="sb-btn" onClick={() => window.creatron.openFile(pdf)}>Open</button>
+          <button className="sb-btn" onClick={() => window.creatron.reveal(pdf)}>Show in Finder</button>
+          <button className="sb-toast-x" onClick={() => setPdf("")} title="Close"><Icon name="close" size={12} /></button>
+        </div>
+      )}
       <footer className="sb-foot">
         {waiting ? (
           <>
@@ -291,14 +308,14 @@ export function StoryboardSheet() {
             />}
             {!dictation.listening && <MicButton d={dictation} className="sb-btn sb-mic" />}
             <button className="sb-btn" onClick={redraw} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> Redraw</button>
-            <button className="export-btn" onClick={approve}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>
+            <button className="export-btn" onClick={approve} title={b.plan ? "Lock in this plan: it's saved with your script, ready for the shoot" : "Build the video from these shots"}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>
           </>
         ) : (
           <p className="sb-foot-note">{b.status === "approved" ? (b.plan ? "Approved. It's saved with your script; take the PDF to the shoot." : "Approved. Claude is building this video now; it follows these shots.") : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
         )}
         <DictationNote d={dictation} />
         {note && <p className="sb-note">{note}</p>}
-        {pdf && pdf !== "making" && <button className="sb-link" onClick={() => window.creatron.reveal(pdf)}>PDF saved in the project's Export folder · Show</button>}
+
       </footer>
 
       {playing && <Animatic b={b} onClose={() => setPlaying(false)} />}
@@ -553,7 +570,11 @@ async function pdfHtml(b: BoardState): Promise<string> {
     images.push(c.toDataURL("image/jpeg", 0.9));
   }
   const accent = accentOf(board);
-  const cols = ratio < 0.7 ? 6 : ratio <= 1 ? 4 : 3;
+  // Tall frames sit in columns; wide ones as a production storyboard does it: the frame on the left,
+  // its words and directions on the right, two to a row, so a page holds six shots, not three.
+  const wide = ratio >= 1.3;
+  // The frame's share of a card: whatever its shape, frame and directions fill the card side by side.
+  const frame = wide ? 50 : ratio >= 0.9 ? 42 : ratio >= 0.7 ? 38 : 33;
   const total = boardLength(board);
   let at = 0;
   const cards = shots.map((s, i) => {
@@ -562,12 +583,27 @@ async function pdfHtml(b: BoardState): Promise<string> {
     return `<div class="card">
       <div class="meta"><b>${String(i + 1).padStart(2, "0")}</b><span>${clock(start)} · ${len(s).toFixed(1)}s</span></div>
       <img src="${images[i]}" />
+      <div class="txt">
       <p class="line">${s.line ? `“${esc(s.line)}”` : "<em>no words</em>"}</p>
       <p class="tags"><span>${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
       ${movesOf(s).map((m) => `<p class="move">→ ${esc(m)}</p>`).join("")}
       ${s.query && (s.kind === "broll" || s.kind === "image") ? `<p class="why">Shows: ${esc(s.query)}</p>` : ""}
       ${s.why ? `<p class="why">${esc(s.why)}</p>` : ""}
+      </div>
     </div>`;
+  });
+  // Pages built here, not left to the printer: each a full paper sheet with a running header.
+  const perPage = wide ? 6 : 4;
+  const starts: number[] = [];
+  shots.reduce((t, x) => (starts.push(t), t + len(x)), 0);
+  const sheets = Array.from({ length: Math.ceil(cards.length / perPage) }, (_, p) => {
+    const a = p * perPage;
+    const b2 = Math.min(cards.length, a + perPage);
+    const end = starts[b2 - 1]! + len(shots[b2 - 1]!);
+    return `<section class="page sheet">
+      <header class="sheet-head"><span>Storyboard · ${esc(board.title)}</span><span>Shots ${a + 1}–${b2} of ${shots.length} · ${clock(starts[a]!)}–${clock(end)}</span></header>
+      <div class="grid">${cards.slice(a, b2).join("")}</div>
+    </section>`;
   }).join("");
   const ribbon = shots.map((s, i) => `<i style="flex-grow:${Math.max(0.4, len(s))};background:${i % 2 ? "#d9d3c7" : "#cbc4b6"}">${i + 1}</i>`).join("");
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -586,9 +622,17 @@ async function pdfHtml(b: BoardState): Promise<string> {
     .ribbon { display: flex; gap: 1px; height: 7mm; margin: 6mm 0 2mm; border-radius: 2mm; overflow: hidden; }
     .ribbon i { display: flex; align-items: center; justify-content: center; font: 600 7pt "SF Mono", Menlo, monospace; color: rgba(0,0,0,.6); font-style: normal; }
     .brand { display: flex; justify-content: space-between; font: 600 8pt "SF Mono", Menlo, monospace; letter-spacing: .14em; color: #77736a; text-transform: uppercase; }
-    .grid { display: grid; grid-template-columns: repeat(${cols}, 1fr); gap: 6mm 5mm; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: ${wide ? "4.5mm" : "6mm"} 9mm; align-content: start; }
     .card { page-break-inside: avoid; break-inside: avoid; }
     .card img { width: 100%; display: block; border-radius: 1.5mm; border: 1.2px solid ${INK}; }
+    .sheet { height: 210mm; padding: 9mm 13mm 8mm; page-break-after: always; break-after: page; overflow: hidden; }
+    .sheet:last-child { page-break-after: auto; break-after: auto; }
+    .sheet-head { display: flex; justify-content: space-between; padding-bottom: 2.5mm; margin-bottom: 4mm; border-bottom: 1px solid #d6cdba; font: 600 7pt "SF Mono", Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; color: #8a8478; }
+    .grid .card { display: grid; grid-template-columns: ${frame}% 1fr; column-gap: 4.5mm; align-items: start; }
+    .grid .meta { grid-column: 1 / -1; margin-bottom: 1mm; }
+    .grid .txt .line { margin-top: 0; font-size: 9.5pt; }
+    .grid .move, .grid .tags { font-size: 7pt; margin-top: .7mm; }
+    .grid .why { font-size: 6.8pt; line-height: 1.28; margin-top: .9mm; }
     .meta { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.5mm; font: 600 7.5pt "SF Mono", Menlo, monospace; color: #77736a; }
     .meta b { font-size: 11pt; color: ${accent}; }
     .line { font-size: 8.5pt; line-height: 1.32; margin-top: 2mm; font-weight: 600; }
@@ -615,6 +659,6 @@ async function pdfHtml(b: BoardState): Promise<string> {
         <div class="brand" style="margin-top:8mm"><span>Creatro</span><span>Rough sketches from your own footage · nothing is built until you approve</span></div>
       </div>
     </section>
-    <section class="page"><div class="grid">${cards}</div></section>
+    ${sheets}
   </body></html>`;
 }
