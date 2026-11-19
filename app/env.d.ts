@@ -49,6 +49,9 @@ declare global {
       storyboardWaiting(video: string): Promise<boolean>;
       storyboardPdf(dir: string, html: string, name: string): Promise<Result<string>>;
       frameAt(file: string, seconds: number, width?: number): Promise<string | null>;
+      micAccess(): Promise<"granted" | "denied" | "restricted" | "not-determined" | "unknown">;
+      openMicSettings(): Promise<void>;
+      dictate(wav: Uint8Array): Promise<Result<string>>;
       chatStop(path: string): Promise<void>;
       onChatEvent(fn: (e: { path: string; event: ChatEvent }) => void): () => void;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;

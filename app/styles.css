@@ -2089,3 +2089,28 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-mini-strip { display: flex; align-items: center; gap: 3px; overflow: hidden; }
 .sb-mini-strip .sb-sketch { border-radius: 3px; }
 .sb-mini-more { margin-left: 4px; font: 500 10px var(--mono); color: var(--faint); }
+
+/* Dictation: the mic in the chat box and the storyboard box (app/Dictation.tsx). While it listens,
+   the box's bottom row becomes the bar: ✕, the waveform, the time, and ✓ where Send was. */
+.ai-box-foot .mic-btn { margin-left: auto; }
+.ai-box-foot .mic-btn ~ .send, .ai-box-foot .mic-btn ~ .mini-spin { margin-left: 0; }
+.sb-mic { width: 36px; padding: 0; justify-content: center; }
+.dict-bar { display: flex; align-items: center; gap: 12px; height: 32px; animation: dict-in 0.18s ease-out; }
+@keyframes dict-in { from { opacity: 0; transform: translateY(2px); } }
+.dict-host { display: flex; align-items: center; padding: 0 2px 0 4px !important; border-color: #3a3a3a !important; }
+.dict-host .dict-bar { flex: 1; }
+.dict-wave { flex: 1; min-width: 0; height: 22px; }
+.dict-clock { flex: none; display: inline-flex; align-items: center; gap: 7px; font: 12px var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
+.dict-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: dict-blink 1.2s ease-in-out infinite; }
+@keyframes dict-blink { 50% { opacity: 0.3; } }
+.dict-wait { flex: 1; padding-left: 6px; font-size: 13px; }
+.dict-bar .dict-x { flex: none; width: 30px; height: 30px; padding: 0; display: grid; place-items: center; border: none; border-radius: 8px; background: transparent; color: var(--dim); }
+.dict-bar .dict-x:hover { color: var(--text); background: var(--hover); border: none; }
+.dict-bar .dict-ok { flex: none; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 50%; border: none; background: #f2f2f2; color: #111; }
+.dict-bar .dict-ok:hover:not(:disabled) { background: #fff; border: none; color: #111; }
+.dict-bar .dict-ok:disabled { opacity: 1; }
+.dict-host .dict-ok { width: 28px; height: 28px; }
+.ai-input textarea[readonly] { color: var(--dim); }
+.dict-note { margin: 2px 6px 6px; font-size: 12px; color: var(--danger); line-height: 1.4; }
+.sb-foot .dict-note { width: 100%; margin: 0; }
+.dict-note .link { color: var(--text); text-decoration: underline; }

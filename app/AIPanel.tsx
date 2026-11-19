@@ -8,6 +8,7 @@ import { outputDuration } from "../src/timeline.ts";
 import { markerContext } from "./markers.ts";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import { Icon } from "./icons.tsx";
+import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } from "./Dictation.tsx";
 import { isAudio, isDocument } from "./format.ts";
 import { MEDIA_DRAG } from "./Inspector.tsx";
 import { sceneClipBrief } from "../src/sceneClips.ts";
@@ -40,6 +41,15 @@ export function AIPanel() {
   const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source, sel?.clip.name);
   const sceneClip = sel ? sceneClipBrief(sel.m, sel.scene, sel.clip) : undefined;
   const [text, setText] = useState("");
+  const typing = useRef<HTMLTextAreaElement>(null);
+  const dictation = useDictation((said) => {
+    setText((t) => appendSpeech(t, said));
+    setOriginal(null);
+    requestAnimationFrame(() => {
+      const el = typing.current;
+      if (el) el.focus(), el.setSelectionRange(el.value.length, el.value.length);
+    });
+  });
   const [model, setModel] = useModelChoice();
   // Files attached to the next message (they're in the library too), and what Enhance replaced.
   const [attached, setAttached] = useState<string[]>([]);
@@ -268,7 +278,9 @@ export function AIPanel() {
           </div>
         )}
         <textarea
+          ref={typing}
           value={text}
+          readOnly={dictation.listening}
           disabled={!project}
           placeholder={!project ? "Import a video first" : !plan.segments.length ? "The timeline is empty: drop your video back on it" : target ? `What should I do with ${target}?` : "Describe an edit, or ask for the whole finished video…"}
           onChange={(e) => (setText(e.target.value), setOriginal(null))}
@@ -285,7 +297,8 @@ export function AIPanel() {
             <button className="link" onClick={() => (setText(original), setOriginal(null))}>Undo</button>
           </div>
         )}
-        <div className="ai-box-foot">
+        <DictationNote d={dictation} />
+        {dictation.listening ? <DictationBar d={dictation} /> : <div className="ai-box-foot">
           <button
             className="icon-btn ai-tool"
             title="Attach files for the AI: a storyboard, script or notes to follow (xlsx, csv, docx, pdf, txt), or videos, music and sound effects to use"
@@ -302,6 +315,7 @@ export function AIPanel() {
             {enhancing ? <span className="mini-spin" /> : <Icon name="sparkle" size={16} />}
           </button>
           <ModelPicker value={model} onChange={setModel} />
+          <MicButton d={dictation} disabled={!project} />
           {busy && !live && <span className="mini-spin" />}
           {busy && live ? (
             <button className="send stop" onClick={stopClaude} title="Stop Claude">
@@ -312,7 +326,7 @@ export function AIPanel() {
               <Icon name="arrowUp" size={16} />
             </button>
           )}
-        </div>
+        </div>}
         </div>
       </div>
     </aside>

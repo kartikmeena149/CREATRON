@@ -117,6 +117,9 @@ const api: Api = {
   storyboardWaiting: async () => false,
   storyboardPdf: async () => ({ ok: false as const, error: "Not in the web demo." }),
   frameAt: async () => null,
+  micAccess: async () => "denied" as const,
+  openMicSettings: async () => {},
+  dictate: async () => desktop("Dictation"),
   projectAssets: async () => ({ dir: "", files: [] }),
 
   personCutout: async () => desktop("Putting text behind a person"),

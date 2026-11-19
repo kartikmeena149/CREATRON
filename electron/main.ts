@@ -1,5 +1,5 @@
 import "./env.ts";
-import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type StoryboardReview, autoEditDir } from "../src/autoedit.ts";
 import { Storyboard } from "../src/storyboard.ts";
@@ -21,6 +21,7 @@ import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { type Sfx, downloadSfx, searchSfx } from "../src/sfx.ts";
 import { run } from "../src/tools.ts";
+import { dictate } from "../src/dictation.ts";
 import { personCutout } from "../src/person.ts";
 import { downloadAudio, downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
@@ -217,6 +218,20 @@ ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boole
 });
 /** Whether a storyboard is waiting for this video's answer (after a reload of the window, say). */
 ipcMain.handle("storyboard-waiting", (_e, video: string) => boardAnswers.has(video));
+
+/**
+ * The mic for dictation: asks macOS once (the system's own prompt). "denied" means it was turned
+ * off in System Settings, which only the user can turn back on: the app says where.
+ */
+ipcMain.handle("mic-access", async () => {
+  if (process.platform !== "darwin") return "granted";
+  const now = systemPreferences.getMediaAccessStatus("microphone");
+  if (now === "granted" || now === "denied" || now === "restricted") return now;
+  return (await systemPreferences.askForMediaAccess("microphone")) ? "granted" : "denied";
+});
+ipcMain.handle("open-mic-settings", () => shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"));
+/** What was said into the mic (a 16 kHz mono WAV), as text: transcribed on this Mac. */
+ipcMain.handle("dictate", safe(async (wav: Uint8Array) => dictate(wav)));
 
 /** One frame of a video (or a picture) as a small JPEG data URL, for the storyboard's sketches. Null without a picture. */
 const frameCache = new Map<string, string | null>();

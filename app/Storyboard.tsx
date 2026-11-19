@@ -8,6 +8,7 @@ import {
 } from "../src/storyboard.ts";
 import { mediaUrl } from "./format.ts";
 import { Icon } from "./icons.tsx";
+import { DictationBar, DictationNote, MicButton, appendSpeech, dictating, useDictation } from "./Dictation.tsx";
 import { type BoardState, useEditor } from "./store.ts";
 import { INK, PAPER, accentOf, aspect, drawShot } from "./storyboardSketch.ts";
 
@@ -83,6 +84,7 @@ export function StoryboardSheet() {
   const [focus, setFocus] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [changes, setChanges] = useState("");
+  const dictation = useDictation((said) => setChanges((c) => appendSpeech(c, said)));
   const [pdf, setPdf] = useState<"" | "making" | string>("");
   const [note, setNote] = useState("");
   const close = () => useEditor.setState({ boardOpen: false });
@@ -98,6 +100,7 @@ export function StoryboardSheet() {
   useEffect(() => {
     if (!open || !b) return;
     const onKey = (e: KeyboardEvent) => {
+      if (dictating()) return; // Esc and Return belong to the mic while it listens
       const typing = /INPUT|TEXTAREA|SELECT/.test((e.target as HTMLElement)?.tagName ?? "");
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -234,16 +237,18 @@ export function StoryboardSheet() {
       <footer className="sb-foot">
         {waiting ? (
           <>
-            <input
+            {dictation.listening ? <div className="sb-ask dict-host"><DictationBar d={dictation} /></div> : <input
               className="sb-ask" value={changes} placeholder="Ask Claude for changes: “a stronger hook”, “more B-roll in the middle”, “calmer colours”…"
               onChange={(e) => setChanges(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.metaKey && redraw()}
-            />
+            />}
+            {!dictation.listening && <MicButton d={dictation} className="sb-btn sb-mic" />}
             <button className="sb-btn" onClick={redraw} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> Redraw</button>
             <button className="export-btn" onClick={approve}>Approve &amp; build <kbd>⌘↵</kbd></button>
           </>
         ) : (
           <p className="sb-foot-note">{b.status === "approved" ? "Approved. Claude is building this video now; it follows these shots." : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
         )}
+        <DictationNote d={dictation} />
         {note && <p className="sb-note">{note}</p>}
         {pdf && pdf !== "making" && <button className="sb-link" onClick={() => window.creatron.reveal(pdf)}>PDF saved in the project's Export folder · Show</button>}
       </footer>
