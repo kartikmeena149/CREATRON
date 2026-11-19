@@ -22,7 +22,7 @@ import { analyze } from "./analyze.ts";
 import { startBroker } from "./autoedit-broll.ts";
 import { describe } from "./plan.ts";
 import { finalFile, projectName, projectPaths, scaffoldProject, validateProject } from "./project.ts";
-import { type Storyboard, approvedPrompt, parseStoryboard, redrawPrompt } from "./storyboard.ts";
+import { type Storyboard, approvedPrompt, checkScenes, parseStoryboard, redrawPrompt, sayingTime, scenesOf } from "./storyboard.ts";
 import { chromeOutsideProtectedFolders } from "./remotion.ts";
 import { find, health, healthProblems, healthReport } from "./toolchain.ts";
 import { ROOT, round, run, workDir } from "./tools.ts";
@@ -85,28 +85,56 @@ function waitForUser<T>(p: Promise<T>): Promise<T> {
 
 export const storyboardFile = (dir: string) => join(projectPaths(dir).notes, "storyboard.json");
 
+/** The storyboard's first turn for a recording: decide the edit from the footage and its transcript. */
+function fromRecording(dir: string): string {
+  return [
+    "Read notes/PLAYBOOK.md. This first turn is only the storyboard (section \"Storyboard first\"): call `stage board`, read the notes, look at a few frames, decide the whole edit and write notes/storyboard.json. The user's brief is in notes/brief.md.",
+    existsSync(join(dir, "assets", "clips")) ? "The user's own clips are in assets/clips/: look at them and use them where they fit." : "",
+    existsSync(join(projectPaths(dir).notes, "reference")) ? "A reference video's frames are in notes/reference/: its style is the look to copy." : "",
+    "Then stop and reply with the video's idea in one sentence. Don't cut, download or build anything yet: the user approves the storyboard first.",
+  ].filter(Boolean).join("\n");
+}
+
+/** The storyboard's first turn for a script: nothing is filmed yet, so the plan comes from the words and the user's assets. */
+function fromScript(dir: string): string {
+  const assets = existsSync(join(dir, "assets", "clips")) && readdirSync(join(dir, "assets", "clips")).length > 0;
+  return [
+    "Read notes/PLAYBOOK.md, section \"Storyboard first\". There is no recording yet: notes/script.md is the script as numbered scenes (what will be said, in order) and notes/brief.md is the user's direction. Call `stage board`, then plan the video as a storyboard in notes/storyboard.json, in the playbook's format, with these differences:",
+    "- Each numbered scene is exactly one shot, in the same order: scene 1 is shot `s1`, scene 2 is `s2`, and so on. No extra shots, none merged or split. `line` is that scene's words, exactly as written.",
+    "- `from`/`to` are where each shot falls in the finished video, in seconds from 0, back to back: each scene gets the time notes/script.md gives it (its words at a natural pace), a little more where the picture needs a beat to land.",
+    "- Nothing of the speaker is filmed yet: a shot of them talking is kind \"talking\" with no `source`; say in `why` how to frame it when they film it.",
+    assets
+      ? "- The user's own assets are in assets/clips/: look at each one (frames with ffmpeg) and use them where they fit, with `source` { \"file\": \"assets/clips/<name>\", \"at\": <seconds> }. Everything else is B-roll to find (`query`), title cards, graphics."
+      : "- The user gave no footage: every picture is B-roll to find (`query`), a title card, a graphic, or the speaker on camera.",
+    "- Direct it like a director: a hook in the first 2 seconds, a reason to keep watching, a clear ending; motion (`enter`, `to`, `focus`) and sound on every shot that needs them.",
+    "Then stop and reply with the video's idea in one sentence. Don't download or build anything: this is the plan for a video not filmed yet.",
+  ].join("\n");
+}
+
 /**
  * The storyboard step: Claude draws notes/storyboard.json, the user sees it and approves it or asks
  * for changes (Claude redraws, same session), as many rounds as they like. Returns Claude's last turn
  * and the approved storyboard, which is then the plan.
  */
-async function storyboard(dir: string, review: StoryboardReview, ask: (prompt: string, session?: string) => Promise<Turn>, info: (text: string) => void): Promise<{ turn: Turn; board: Storyboard }> {
+async function storyboard(
+  dir: string, review: StoryboardReview, ask: (prompt: string, session?: string) => Promise<Turn>, info: (text: string) => void,
+  first = fromRecording(dir), check: (b: Storyboard) => string[] = () => [],
+  /** A storyboard drawn before (reopened later): shown as it is, no first turn. */
+  start?: { turn: Turn; board: Storyboard },
+): Promise<{ turn: Turn; board: Storyboard }> {
   const file = storyboardFile(dir);
   const read = async (turn: Turn): Promise<{ turn: Turn; board: Storyboard }> => {
     for (let attempt = 0; ; attempt++) {
-      const { board, problems } = existsSync(file) ? parseStoryboard(readFileSync(file, "utf8")) : { board: undefined, problems: ["notes/storyboard.json wasn't written"] };
+      const parsed = existsSync(file) ? parseStoryboard(readFileSync(file, "utf8")) : { board: undefined, problems: ["notes/storyboard.json wasn't written"] };
+      const { board } = parsed;
+      const problems = [...parsed.problems, ...(board ? check(board) : [])];
       if (board && (!problems.length || attempt > 0)) return { turn, board };
       if (attempt > 0) throw new Error(`The storyboard couldn't be made: ${problems[0]}`);
       info("Fixing the storyboard");
       turn = await ask(["The storyboard isn't usable yet:", ...problems.map((p) => `- ${p}`), "Fix notes/storyboard.json (the format is in notes/PLAYBOOK.md, \"Storyboard first\") and stop. Don't build anything yet."].join("\n"), turn.session);
     }
   };
-  let { turn, board } = await read(await ask([
-    "Read notes/PLAYBOOK.md. This first turn is only the storyboard (section \"Storyboard first\"): call `stage board`, read the notes, look at a few frames, decide the whole edit and write notes/storyboard.json. The user's brief is in notes/brief.md.",
-    existsSync(join(dir, "assets", "clips")) ? "The user's own clips are in assets/clips/: look at them and use them where they fit." : "",
-    existsSync(join(projectPaths(dir).notes, "reference")) ? "A reference video's frames are in notes/reference/: its style is the look to copy." : "",
-    "Then stop and reply with the video's idea in one sentence. Don't cut, download or build anything yet: the user approves the storyboard first.",
-  ].filter(Boolean).join("\n")));
+  let { turn, board } = start ?? (await read(await ask(first)));
   for (let round = 1; ; round++) {
     info("Storyboard ready: waiting for your OK");
     const answer = await waitForUser(review(board, dir, round));
@@ -176,6 +204,123 @@ export async function autoEdit(req: AutoEditRequest, emit: (e: AutoEditEvent) =>
     const result = keepVersion(dir, turn);
     saveHistory(analysis.duration, Date.now() - building, estimate.renderMs);
     return result;
+  } finally {
+    estimate.stop();
+    broker.stop();
+  }
+}
+
+export type PlanRequest = {
+  /** The video's name, if the user gave one. */
+  title?: string;
+  /** What will be said, in order. */
+  script: string;
+  /** How they want it: style, mood, audience, length. */
+  direction?: string;
+  format: Storyboard["format"];
+  /** Their own clips, photos and music, to use where they fit. */
+  assets: string[];
+  model: string;
+  review: StoryboardReview;
+};
+
+/** Where storyboards made from a script live: work/storyboards/<name>-<time>/. */
+export function planDir(title: string): string {
+  const slug = title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "storyboard";
+  return join(ROOT, "work", "storyboards", `${slug}-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`);
+}
+
+/**
+ * A storyboard from a script, before anything is filmed: the same storyboard step as a full edit
+ * (Claude draws it; the user draws on it, redraws and approves it), made from the words, the
+ * direction and the user's own assets. The folder keeps it all: notes/script.md, notes/brief.md,
+ * notes/storyboard.json, assets/clips/, and Export/ for its PDF.
+ */
+export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) => void, dir = planDir(req.title || req.script.split(/\s+/).slice(0, 6).join(" "))): Promise<{ dir: string; board: Storyboard }> {
+  cancelled = false;
+  const started = Date.now();
+  const info = (text: string) => emit({ type: "log", text, kind: "info" });
+  const tools = health(true);
+  for (const line of healthProblems(tools)) info(`Tools: ${line}`);
+  const p = projectPaths(dir);
+  for (const d of [p.notes, p.internal, p.exports]) mkdirSync(d, { recursive: true });
+  // One line, one scene: numbered, with the time it takes to say, so the storyboard is shot for scene.
+  const scenes = scenesOf(req.script);
+  let at = 0;
+  const numbered = scenes.map((line, i) => {
+    const d = Math.max(1.2, sayingTime(line));
+    const row = `${i + 1}. ${line}   (${round(at, 1)}-${round((at += d), 1)} s)`;
+    return row;
+  });
+  writeFileSync(join(p.notes, "script.md"), `# The script\n\nWhat will be said, one scene per line, in order. Nothing is filmed yet. The times are each line's speaking time at a natural pace.\n\n${numbered.join("\n")}\n`);
+  writeFileSync(join(p.notes, "brief.md"), `# What the user wants\n\n${req.title?.trim() ? `Title: ${req.title.trim()}\n` : ""}Format: ${req.format}\n\n${req.direction?.trim() || "(no direction given: plan the strongest video for this script and format)"}\n`);
+  writeFileSync(join(p.notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
+  writeFileSync(join(p.notes, "PLAYBOOK.md"), playbook());
+  const assets = req.assets.filter((a) => existsSync(a));
+  if (assets.length) {
+    const into = join(dir, "assets", "clips");
+    mkdirSync(into, { recursive: true });
+    const used = new Set<string>();
+    for (const a of assets) {
+      let name = basename(a).replace(/[^\w.-]+/g, "-");
+      while (used.has(name)) name = `x-${name}`;
+      used.add(name);
+      linkOrCopy(a, join(into, name));
+    }
+  }
+  writeFileSync(join(p.internal, "agent-log.jsonl"), "");
+  writeShims(dir);
+  info(assets.length ? `Reading your script and ${assets.length} asset${assets.length > 1 ? "s" : ""}` : "Reading your script");
+  const estimate = new Estimate(BOARD_STAGES, 2 * 60_000, started, dir, emit);
+  const broker = await startBroker(dir);
+  const ask = (prompt: string, session?: string) => claude(dir, req.model, prompt, session, emit, estimate, broker.url);
+  try {
+    writePlanInfo(dir, { title: req.title?.trim() || "", format: req.format, scenes, model: req.model, created: new Date().toISOString() });
+    const { board } = await storyboard(dir, req.review, ask, info, fromScript(dir), (b) => checkScenes(b, scenes));
+    writePlanInfo(dir, { approved: new Date().toISOString() });
+    return { dir, board };
+  } finally {
+    estimate.stop();
+    broker.stop();
+  }
+}
+
+/** What Creatro keeps about a storyboard made from a script (.creatron/plan.json). */
+export type PlanInfo = { title: string; format: Storyboard["format"]; scenes: string[]; model: string; created: string; approved?: string };
+const planInfoFile = (dir: string) => join(projectPaths(dir).internal, "plan.json");
+export function readPlanInfo(dir: string): Partial<PlanInfo> {
+  try {
+    return JSON.parse(readFileSync(planInfoFile(dir), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writePlanInfo(dir: string, patch: Partial<PlanInfo>) {
+  writeFileSync(planInfoFile(dir), JSON.stringify({ ...readPlanInfo(dir), ...patch }, null, 1));
+}
+
+/**
+ * A storyboard from the Storyboard creator, opened again later: shown as it was saved, with drawing,
+ * Redraw and Approve. A redraw goes on in the same Claude session (it remembers the script and why it
+ * planned each shot); without one, Claude starts from the folder's notes.
+ */
+export async function reopenPlan(dir: string, model: string, review: StoryboardReview, emit: (e: AutoEditEvent) => void): Promise<{ dir: string; board: Storyboard }> {
+  cancelled = false;
+  const info = (text: string) => emit({ type: "log", text, kind: "info" });
+  const file = storyboardFile(dir);
+  const { board } = existsSync(file) ? parseStoryboard(readFileSync(file, "utf8")) : { board: undefined };
+  if (!board) throw new Error("This storyboard's file is missing or can't be read.");
+  const saved = existsSync(lastSessionFile(dir)) ? readFileSync(lastSessionFile(dir), "utf8").trim() : "";
+  const scenes = readPlanInfo(dir).scenes;
+  writeShims(dir);
+  const estimate = new Estimate(BOARD_STAGES, 60_000, Date.now(), dir, emit);
+  const broker = await startBroker(dir);
+  const ask = (prompt: string, session?: string) =>
+    claude(dir, model, session || saved ? prompt : `Read notes/PLAYBOOK.md, section "Storyboard first", notes/script.md and notes/brief.md: you planned this storyboard earlier.\n\n${prompt}`, session || saved || undefined, emit, estimate, broker.url);
+  try {
+    const r = await storyboard(dir, review, ask, info, "", scenes?.length ? (b) => checkScenes(b, scenes) : undefined, { turn: { text: "", session: saved }, board });
+    writePlanInfo(dir, { approved: new Date().toISOString() });
+    return { dir, board: r.board };
   } finally {
     estimate.stop();
     broker.stop();

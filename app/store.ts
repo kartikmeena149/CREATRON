@@ -61,6 +61,8 @@ export type BoardState = {
   round: number;
   draft: Storyboard;
   status: "waiting" | "redrawing" | "approved" | "closed";
+  /** Made by the Storyboard creator from a script: no recording behind it (video is its job's key). */
+  plan?: boolean;
 };
 
 type State = {

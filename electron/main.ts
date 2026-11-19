@@ -1,8 +1,8 @@
 import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "electron";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { type StoryboardReview, autoEditDir } from "../src/autoedit.ts";
-import { Storyboard } from "../src/storyboard.ts";
+import { type StoryboardReview, autoEditDir, cancelAutoEdit, planDir, planStoryboard, readPlanInfo, reopenPlan } from "../src/autoedit.ts";
+import { Storyboard, scenesOf } from "../src/storyboard.ts";
 import { withDrawings } from "../src/storyboardFiles.ts";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
@@ -21,7 +21,7 @@ import type { ExportOptions } from "../src/exportOptions.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { type Sfx, downloadSfx, searchSfx } from "../src/sfx.ts";
-import { run } from "../src/tools.ts";
+import { ROOT, run } from "../src/tools.ts";
 import { dictate } from "../src/dictation.ts";
 import { personCutout } from "../src/person.ts";
 import { downloadAudio, downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
@@ -219,6 +219,84 @@ ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boole
   return true;
 });
 
+/**
+ * The Storyboard creator: a storyboard from a script (and the user's assets) before anything is
+ * filmed. Events stream to the window as "plan-event"; the board waits for its answer like a full
+ * edit's (storyboard-answer above), keyed "plan:<folder>".
+ */
+/** The storyboard being made or shown from the creator: its key, and whether Claude is working or it waits for the user. */
+let planning: { key: string; phase: "drafting" | "waiting"; close?: () => void; quiet?: boolean } | undefined;
+
+function runPlan(dir: string, job: (review: StoryboardReview, emit: (e: unknown) => void) => Promise<{ dir: string }>) {
+  const key = `plan:${dir}`;
+  if (planning?.phase === "drafting") throw new Error("Claude is still working on a storyboard: wait for it, or stop it first.");
+  // One waiting for an answer is simply put away (it stays saved), and goes quiet: the same
+  // storyboard may be opened again right now, and its old "stopped" mustn't reach the new one.
+  if (planning) (planning.quiet = true), planning.close?.();
+  const me: NonNullable<typeof planning> = { key, phase: "drafting" };
+  planning = me;
+  const emit = (event: unknown) => !me.quiet && send("plan-event", { key, event });
+  const review: StoryboardReview = (board, dir, round) =>
+    new Promise((resolve, reject) => {
+      me.phase = "waiting";
+      me.close = () => reject(new Error("Stopped."));
+      boardAnswers.set(key, { resolve: (a) => ((me.phase = "drafting"), (me.close = undefined), resolve(a)), dir });
+      emit({ type: "storyboard", board, dir, round, video: key });
+    });
+  void job(review, emit)
+    .then(({ dir }) => emit({ type: "done", dir }))
+    .catch((e) => emit({ type: "error", error: e instanceof Error ? e.message : String(e) }))
+    .finally(() => {
+      boardAnswers.delete(key);
+      if (planning === me) planning = undefined;
+    });
+  return { key, dir };
+}
+const planModel = (m: string) => (m.startsWith("claude-code/") ? m.slice("claude-code/".length) : "sonnet");
+
+ipcMain.handle("plan-start", safe(async (req: { title?: string; script: string; direction?: string; format: Storyboard["format"]; assets: string[]; model: string }) => {
+  if (!req.script.trim()) throw new Error("Write or paste the script first.");
+  const scenes = scenesOf(req.script).length;
+  if (scenes < 3) throw new Error(`The script has ${scenes} scene${scenes === 1 ? "" : "s"}: put each scene on its own line (at least 3).`);
+  const dir = planDir(req.title || req.script.split(/\s+/).slice(0, 6).join(" "));
+  return runPlan(dir, (review, emit) => planStoryboard({ ...req, model: planModel(req.model), review }, emit, dir));
+}));
+/** A saved storyboard opened again: drawing, Redraw and Approve, with Claude where it left off. */
+ipcMain.handle("plan-open", safe(async (dir: string, model: string) => {
+  if (!dir.startsWith(join(ROOT, "work", "storyboards"))) throw new Error("That isn't a storyboard from the Storyboard creator.");
+  return runPlan(dir, (review, emit) => reopenPlan(dir, planModel(readPlanInfo(dir).model ?? model), review, emit));
+}));
+ipcMain.handle("plan-stop", () => {
+  if (!planning) return;
+  boardAnswers.delete(planning.key);
+  if (planning.phase === "waiting") planning.close?.();
+  else cancelAutoEdit();
+});
+/** Every storyboard made from a script, newest first: what the creator's list shows. */
+ipcMain.handle("plans-list", () => {
+  const root = join(ROOT, "work", "storyboards");
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .map((name) => join(root, name))
+    .filter((dir) => existsSync(join(dir, "notes", "storyboard.json")))
+    .flatMap((dir) => {
+      const parsed = Storyboard.safeParse(JSON.parse(readFileSync(join(dir, "notes", "storyboard.json"), "utf8")));
+      if (!parsed.success) return [];
+      const board = parsed.data;
+      const info = readPlanInfo(dir);
+      const pdf = existsSync(join(dir, "Export")) ? readdirSync(join(dir, "Export")).find((f) => f.endsWith(".pdf")) : undefined;
+      const seconds = board.shots.reduce((a, x) => Math.max(a, x.to), 0);
+      return [{
+        dir, title: info.title || board.title, format: board.format, shots: board.shots.length, seconds,
+        updated: statSync(join(dir, "notes", "storyboard.json")).mtimeMs, approved: Boolean(info.approved),
+        pdf: pdf ? join(dir, "Export", pdf) : undefined, open: planning?.key === `plan:${dir}`, board,
+      }];
+    })
+    .sort((a, b) => b.updated - a.updated);
+});
+/** A script file (Word, PDF, text…) as plain text, for the Storyboard creator. */
+ipcMain.handle("read-script", safe(async (path: string) => (isDocument(path) ? readDocument(path) : readFileSync(path, "utf8"))));
+
 /** Whether a storyboard is waiting for this video's answer (after a reload of the window, say). */
 ipcMain.handle("storyboard-waiting", (_e, video: string) => boardAnswers.has(video));
 
@@ -260,8 +338,11 @@ ipcMain.handle("frame-at", async (_e, file: string, seconds: number, width = 360
 /** The storyboard as a PDF in the project's Export/ folder: the page HTML is made by the app. */
 ipcMain.handle("storyboard-pdf", safe(async (dir: string, html: string, name: string) => {
   const page = new BrowserWindow({ show: false, width: 1400, height: 990, webPreferences: { offscreen: true } });
+  // From a file: with its sketches the page is several MB, past what a data: URL may hold.
+  const file = join(app.getPath("temp"), `creatro-storyboard-${process.pid}-${Date.now()}.html`);
+  writeFileSync(file, html);
   try {
-    await page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await page.loadFile(file);
     await new Promise((r) => setTimeout(r, 400)); // fonts and images settle
     const pdf = await page.webContents.printToPDF({ pageSize: "A4", landscape: true, printBackground: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } });
     const out = join(dir, "Export", `${name.replace(/[^\w .-]+/g, "").trim() || "Storyboard"} - Storyboard.pdf`);
@@ -270,6 +351,7 @@ ipcMain.handle("storyboard-pdf", safe(async (dir: string, html: string, name: st
     return out;
   } finally {
     page.destroy();
+    rmSync(file, { force: true });
   }
 }));
 

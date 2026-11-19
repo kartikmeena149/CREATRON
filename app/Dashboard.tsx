@@ -10,8 +10,9 @@ import { Icon } from "./icons.tsx";
 import { Orb } from "./Orb.tsx";
 import { useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
+import { PlanEntry, StoryboardCreator, usePlan } from "./StoryboardCreator.tsx";
 
-type View = "home" | "connections";
+type View = "home" | "connections" | "storyboard";
 /** Whether the Dashboard is showing (and which page), and a request waiting for its video to open. */
 export const useHome = create<{ view: View | null; pending: string | null }>(() => ({ view: "home", pending: null }));
 export const openHome = (view: View = "home") => useHome.setState({ view });
@@ -46,11 +47,16 @@ const ready = (s?: AgentState) => Boolean(s?.installed && s.signedIn);
 export function Dashboard({ onOpenVideo }: { onOpenVideo: (path: string) => Promise<boolean> }) {
   const view = useHome((h) => h.view) ?? "home";
   const [conn, setConn, refresh] = useConnections();
+  const planBusy = usePlan((p) => Boolean(p.job && (p.job.status === "drafting" || p.job.status === "ready")));
   return (
     <div className="dash">
       <aside className="dash-side">
         <nav>
           <button className={view === "home" ? "on" : ""} onClick={() => openHome("home")}><Icon name="grid" size={15} /> Home</button>
+          <button className={view === "storyboard" ? "on" : ""} onClick={() => openHome("storyboard")} title="Plan a video from a script, before you film it">
+            <Icon name="pencil" size={15} /> Storyboard Creator
+            {planBusy && <span className="dash-live" title="A storyboard is in progress" />}
+          </button>
           <button className={view === "connections" ? "on" : ""} onClick={() => openHome("connections")}>
             <Icon name="link" size={15} /> Connections
             <span className={`dash-count ${conn && (ready(conn.claude) || ready(conn.codex) || conn.openrouter) ? "ok" : ""}`}>
@@ -61,7 +67,7 @@ export function Dashboard({ onOpenVideo }: { onOpenVideo: (path: string) => Prom
         <p className="dash-note mono">Your footage stays on this Mac. Only the transcript goes to the AI.</p>
       </aside>
       <main className="dash-main">
-        {view === "home" ? <Home conn={conn} onOpenVideo={onOpenVideo} /> : <ConnectionsPage conn={conn} setConn={setConn} refresh={refresh} />}
+        {view === "home" ? <Home conn={conn} onOpenVideo={onOpenVideo} /> : view === "storyboard" ? <StoryboardCreator /> : <ConnectionsPage conn={conn} setConn={setConn} refresh={refresh} />}
       </main>
     </div>
   );
@@ -135,6 +141,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             <button key={label} onClick={() => setText(prompt)}>{label}</button>
           ))}
         </div>
+        <PlanEntry onOpen={() => openHome("storyboard")} />
       </section>
 
       <section className="home-open">

@@ -4,7 +4,7 @@
 // ends on, how each title or picture comes in, where it travels. Without a picture (audio only, B-roll
 // not found yet) the same pencil draws what the shot will be: the speaker, a landscape, a title card's
 // guides. Same input, same drawing (seeded), so the board, the animatic and the PDF always match.
-import type { Layer, Mark, Shot, Storyboard } from "../src/storyboard.ts";
+import type { Layer, Mark, Shot, Storyboard, Stroke } from "../src/storyboard.ts";
 
 export const PAPER = "#f3efe6";
 export const INK = "#1c1b1f";
@@ -101,28 +101,49 @@ export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale:
   ctx.fillStyle = T.grain;
   for (let i = 0; i < (w * h) / 70; i++) ctx.fillRect(r() * w, r() * h, 1, 1);
 
-  // The picture, in pencil.
+  // The picture: a frame of the footage traced in pencil; without one, Claude's own drawing of the
+  // shot (shot.sketch); without that either (older storyboards), a drawn stand-in, never a blob.
   const kind = shot.kind;
-  if (kind === "split") {
-    pencil(ctx, 0, 0, w, h / 2, picture && shot.source?.file !== "main" ? sampler(picture, w, h / 2) : scenery(r), r);
-    pencil(ctx, 0, h / 2, w, h / 2, picture && shot.source?.file === "main" ? sampler(picture, w, h / 2) : person(0.5, 0.42), r);
+  const drawn = shot.sketch?.length ? shot.sketch : null;
+  if (picture && kind === "split") {
+    pencil(ctx, 0, 0, w, h / 2, shot.source?.file !== "main" ? sampler(picture, w, h / 2) : () => 0, r);
+    if (shot.source?.file === "main") pencil(ctx, 0, h / 2, w, h / 2, sampler(picture, w, h / 2), r);
+    else if (!drawn) strokes(ctx, 0, h / 2, w, h / 2, bust(w, h / 2), r);
+    if (drawn) strokes(ctx, 0, 0, w, h, drawn, r);
     wobblyLine(ctx, 0, h / 2, w, h / 2, r, T.lead, 1.4);
   } else if (kind === "cutout") {
     // The speaker cut out over a designed background: an accent wash, then them.
     wash(ctx, w, h, accent, r);
-    pencil(ctx, 0, 0, w, h, picture ? masked(sampler(picture, w, h), silhouette(0.5, 0.5)) : person(0.5, 0.5), r);
+    if (picture) pencil(ctx, 0, 0, w, h, masked(sampler(picture, w, h), silhouette(0.5, 0.5)), r);
+    else strokes(ctx, 0, 0, w, h, drawn ?? bust(w, h), r);
+  } else if (picture && kind !== "text" && kind !== "graphic") {
+    pencil(ctx, 0, 0, w, h, sampler(picture, w, h), r);
+  } else if (drawn) {
+    if (kind === "text" || kind === "graphic") guides(ctx, w, h, r);
+    strokes(ctx, 0, 0, w, h, drawn, r);
   } else if (kind === "text" || kind === "graphic") {
     guides(ctx, w, h, r);
-  } else if (picture) {
-    pencil(ctx, 0, 0, w, h, sampler(picture, w, h), r);
   } else if (kind === "talking") {
-    pencil(ctx, 0, 0, w, h, person(0.5, 0.5), r);
+    strokes(ctx, 0, 0, w, h, bust(w, h), r);
+  } else if (kind === "split") {
+    insert(ctx, 0, 0, w, h / 2, r);
+    strokes(ctx, 0, h / 2, w, h / 2, bust(w, h / 2), r);
+    wobblyLine(ctx, 0, h / 2, w, h / 2, r, T.lead, 1.4);
   } else {
-    pencil(ctx, 0, 0, w, h, scenery(r), r);
+    insert(ctx, 0, 0, w, h, r); // B-roll still to find: the storyboard's "picture goes here"
   }
 
   // B-roll not found yet: say what it must show.
-  if ((kind === "broll" || kind === "image") && !picture && shot.query) tagAt(ctx, w * 0.06, h * 0.9, w * 0.88, `${kind === "broll" ? "B-ROLL" : "IMAGE"} · ${shot.query}`);
+  // Low in the frame, else at the top, wherever no title or caption is; left out when neither is
+  // free (the card says it's B-roll, and the shot's view says what it must show).
+  if ((kind === "broll" || kind === "image") && !picture && shot.query) {
+    const th = Math.max(7, Math.min(11, (w * 0.92) / 14)) + 8;
+    const spot = [h * 0.9, h * 0.035].find((y) => !taken.some((t) => overlaps(t, { x: w * 0.04, y, w: w * 0.92, h: th })));
+    if (spot !== undefined) {
+      tagAt(ctx, w * 0.04, spot, w * 0.92, `${kind === "broll" ? "B-ROLL" : "IMAGE"} · ${shot.query}`);
+      taken.push({ x: w * 0.04, y: spot, w: w * 0.92, h: th });
+    }
+  }
 
   for (const l of shot.layers) layer(ctx, w, h, l, board, accent, r, picture);
   if (size.motion) {
@@ -288,27 +309,6 @@ const silhouette = (cx: number, cy: number) => (x: number, y: number) => {
   return Math.min(head, neck, body) < 1;
 };
 
-/** A person from the chest up, centred at (cx, cy) of the frame, lit from the left. */
-function person(cx: number, cy: number): Field {
-  const inside = silhouette(cx, cy);
-  return (x, y) => {
-    const shade = T.light ? 0.75 - 0.6 * (x - cx + 0.25) : 0.25 + 0.6 * (x - cx + 0.25);
-    return inside(x, y) ? Math.min(0.95, Math.max(0.05, shade)) : 0.05 + 0.15 * y;
-  };
-}
-
-/** Somewhere outside: a sky, a sun and layered hills, different for every shot. */
-function scenery(r: () => number): Field {
-  const sun = { x: 0.2 + r() * 0.6, y: 0.18 + r() * 0.15, s: 0.07 + r() * 0.05 };
-  const hills = [0, 1, 2].map((k) => ({ base: 0.55 + k * 0.12 + r() * 0.05, a: 0.03 + r() * 0.05, f: 4 + r() * 8, p: r() * 6, v: 0.38 + k * 0.2 }));
-  return (x, y) => {
-    let v = 0.05 + y * 0.12;
-    if ((x - sun.x) ** 2 + (y - sun.y) ** 2 < sun.s ** 2) v = T.light ? 0.9 : 0.1;
-    for (const hl of hills) if (y > hl.base + hl.a * Math.sin(x * hl.f + hl.p)) v = hl.v;
-    return v;
-  };
-}
-
 /** The picture only inside `inside` (the speaker over a designed background). */
 const masked = (picture: Field, inside: (x: number, y: number) => boolean): Field => (x, y) => (inside(x, y) ? Math.max(0.2, picture(x, y)) : 0);
 
@@ -335,6 +335,97 @@ function guides(ctx: CanvasRenderingContext2D, w: number, h: number, r: () => nu
     wobblyLine(ctx, w * f, h * 0.04, w * f, h * 0.96, r, T.lead, 0.7);
     wobblyLine(ctx, w * 0.04, h * f, w * 0.96, h * f, r, T.lead, 0.7);
   }
+  ctx.globalAlpha = 1;
+}
+
+// ---- drawn strokes ----
+
+/**
+ * Strokes in units where the box (x0, y0, w, h) is 1000 wide (see Stroke), drawn the way a pencil
+ * does: the line, then a lighter second pass a hair beside it; closed shapes with a `shade` hatched
+ * inside (crossed when dark). Kept inside the box.
+ */
+function strokes(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, list: Stroke[], r: () => number) {
+  const k = w / 1000;
+  const m = Math.min(w, h);
+  const line = Math.max(0.9, m / 200);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, w, h);
+  ctx.clip();
+  ctx.translate(x0, y0);
+  ctx.scale(k, k);
+  ctx.strokeStyle = T.lead;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const s of list) {
+    let p: Path2D;
+    try {
+      p = new Path2D(s.d);
+    } catch {
+      continue; // not a path: skip it, keep the drawing
+    }
+    if (s.shade) {
+      ctx.save();
+      ctx.clip(p);
+      const gap = Math.max(2.2, m / 55) * (1.55 - s.shade) / k;
+      const tall = (h / k) * 1.5 + 1000;
+      ctx.beginPath();
+      for (let t = -tall; t < tall; t += gap) ctx.moveTo(t, 0), ctx.lineTo(t + tall, tall);
+      if (s.shade > 0.6) for (let t = -tall; t < tall * 2; t += gap * 1.3) ctx.moveTo(t, 0), ctx.lineTo(t - tall, tall);
+      ctx.lineWidth = (line * 0.55) / k;
+      ctx.globalAlpha = 0.28 + s.shade * 0.3;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.lineWidth = line / k;
+    ctx.globalAlpha = 0.95;
+    ctx.stroke(p);
+    // Over it again, a little off: a hand never retraces exactly.
+    ctx.save();
+    ctx.translate(((r() - 0.5) * 2.2) / k, ((r() - 0.5) * 2.2) / k);
+    ctx.lineWidth = (line * 0.6) / k;
+    ctx.globalAlpha = 0.38;
+    ctx.stroke(p);
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * A person from the chest up, as a storyboard artist sketches one: head and jaw, hair, ears, eyes,
+ * brows, nose, mouth, neck, collar and shoulders, sized to stand at the bottom of a w x h box.
+ */
+function bust(w: number, h: number): Stroke[] {
+  // Drawn in a 1000 x 1000 box, then placed: as wide as fits, feet of the box on the frame's bottom.
+  const H = (1000 * h) / w;
+  const s = Math.min(0.95, (H * 0.92) / 1000);
+  const dx = 500 - 500 * s;
+  const dy = H - 1000 * s;
+  const at = (d: string) => d.replace(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g, (_, x, y) => `${round1(dx + Number(x) * s)} ${round1(dy + Number(y) * s)}`);
+  return [
+    { d: at("M120 1000 C130 760 230 655 452 588 L500 645 L550 588 C770 655 870 760 880 1000"), shade: 0.3 },
+    { d: at("M452 588 L500 700 L550 588") },
+    { d: at("M455 498 L452 590 M545 498 L550 590") },
+    { d: at("M378 322 C374 175 440 142 500 142 C570 142 628 178 624 322 C620 425 584 498 500 507 C416 498 381 425 378 322 Z") },
+    { d: at("M370 305 C360 150 440 105 505 108 C592 110 648 168 633 305 C612 228 560 200 505 206 C455 210 410 238 370 305 Z"), shade: 0.75 },
+    { d: at("M380 305 C352 300 347 358 384 372 M620 305 C648 300 653 358 616 372") },
+    { d: at("M432 292 C450 282 468 282 482 290 M520 290 C534 282 552 282 570 292") },
+    { d: at("M442 322 C452 316 466 316 476 322 M526 322 C536 316 550 316 560 322") },
+    { d: at("M501 335 L492 398 C498 404 508 405 514 400") },
+    { d: at("M466 442 C482 452 518 452 536 442") },
+  ];
+}
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/** A frame still to fill (B-roll not found yet): the storyboard's crossed box, in faint pencil. */
+function insert(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: () => number) {
+  const p = Math.min(w, h) * 0.12;
+  ctx.globalAlpha = 0.35;
+  roughRect(ctx, x + p, y + p, w - 2 * p, h - 2 * p, r, T.lead, 1);
+  wobblyLine(ctx, x + p, y + p, x + w - p, y + h - p, r, T.lead, 0.9);
+  wobblyLine(ctx, x + w - p, y + p, x + p, y + h - p, r, T.lead, 0.9);
   ctx.globalAlpha = 1;
 }
 
@@ -436,7 +527,11 @@ function layer(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, b:
       ctx.fillStyle = T.bg;
       ctx.fill();
       ctx.restore();
-      pencil(ctx, x, y, lw, lh, l.kind === "footage" && picture ? sampler(picture, lw, lh) : l.kind === "footage" ? person(0.5, 0.55) : scenery(r), r);
+      // A card of the speaker shows them; any other card without a picture is a frame to fill.
+      const speaker = l.kind === "footage" && /speaker|camera|face|host|presenter|\b(me|you|him|her)\b/i.test(l.text ?? "");
+      if (l.kind === "footage" && picture && speaker) pencil(ctx, x, y, lw, lh, sampler(picture, lw, lh), r);
+      else if (speaker) strokes(ctx, x, y, lw, lh, bust(lw, lh), r);
+      else insert(ctx, x, y, lw, lh, r);
       ctx.setLineDash(l.kind === "image" ? [5, 4] : []);
       roughRect(ctx, x, y, lw, lh, r, T.line, 1.4);
       ctx.setLineDash([]);

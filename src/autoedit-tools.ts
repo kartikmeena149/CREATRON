@@ -87,7 +87,9 @@ async function stillShots(args: string[]) {
 const [cmd, ...args] = process.argv.slice(2);
 const command = cmd ? COMMANDS[cmd] : undefined;
 
-await ctx(); // every command works on a project folder: said up front, before anything runs
+// Every command but the two that only report (stage, tools) works on a project folder: said up front,
+// before anything runs. A storyboard planned from a script has no video project yet, and still reports its stage.
+if (cmd !== "stage" && cmd !== "tools") await ctx();
 
 if (!command) {
   console.error(`error: unknown command "${[cmd, ...args].join(" ")}". Commands:\n${Object.values(COMMANDS).map((c) => `  ${c.usage}`).join("\n")}`);

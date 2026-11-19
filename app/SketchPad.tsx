@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { MARK_COLORS, type Mark, type Shot } from "../src/storyboard.ts";
 import { Icon } from "./icons.tsx";
 import type { BoardState } from "./store.ts";
-import { aspect, drawShot, strokeMarks } from "./storyboardSketch.ts";
+import { type SketchTheme, aspect, drawShot, strokeMarks } from "./storyboardSketch.ts";
 
 type Tool = Mark["tool"];
 /** Line widths as a fraction of the frame's shorter side. */
@@ -22,8 +22,8 @@ export const sketching = () => open > 0;
 
 const round = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
 
-export function SketchPad({ b, shot, index, picture, editable, onChange, onClose }: {
-  b: BoardState; shot: Shot; index: number; picture: HTMLImageElement | null | undefined; editable: boolean;
+export function SketchPad({ b, shot, index, picture, editable, onChange, onClose, theme = "dark" }: {
+  b: BoardState; shot: Shot; index: number; picture: HTMLImageElement | null | undefined; editable: boolean; theme?: SketchTheme;
   onChange: (marks: Mark[]) => void; onClose: () => void;
 }) {
   const ratio = aspect(b.draft.format);
@@ -58,8 +58,8 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
   // The sketch under the drawing (without the user's strokes: those are the layer on top).
   const plain = JSON.stringify({ ...shot, marks: undefined });
   useEffect(() => {
-    if (base.current && picture !== undefined) drawShot(base.current, box.w, box.h, scale, { ...shot, marks: undefined }, b.draft, picture);
-  }, [plain, picture, box.w, box.h, JSON.stringify(b.draft.look)]);
+    if (base.current && picture !== undefined) drawShot(base.current, box.w, box.h, scale, { ...shot, marks: undefined }, b.draft, picture, theme);
+  }, [plain, picture, box.w, box.h, JSON.stringify(b.draft.look), theme]);
 
   // The strokes, drawn again whenever they change (undo, redo, clear, another size of window).
   const paint = (list: Mark[]) => {
@@ -69,9 +69,9 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     c.height = Math.round(box.h * scale);
     const g = c.getContext("2d")!;
     g.setTransform(scale, 0, 0, scale, 0, 0);
-    strokeMarks(g, box.w, box.h, list);
+    strokeMarks(g, box.w, box.h, list, theme);
   };
-  useEffect(() => paint(marks), [JSON.stringify(marks), box.w, box.h]);
+  useEffect(() => paint(marks), [JSON.stringify(marks), box.w, box.h, theme]);
 
   const commit = (next: Mark[]) => {
     setHistory((h) => [...h.slice(-49), marks]);

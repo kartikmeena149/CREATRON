@@ -152,6 +152,17 @@ So it must read as the finished video, shot by shot:
   they will really be. How each one moves is drawn as arrows, so say it: `enter` (cut, pop, fade, zoom, type, draw,
   from-left, from-right, from-top, from-bottom), `to` `{ "x", "y" }` when it travels during the shot (where its top
   left ends), `note` for a detail of the build ("counter rolls 0 to 7", "underline draws under SPACE").
+- `sketch`: for every shot whose picture isn't a frame of the footage (B-roll still to find, a title card's
+  background, a graphic, the speaker before they're filmed), draw what the frame shows, like a storyboard artist's
+  quick pencil drawing: the real subject (the robotaxi, the chip, the hand on the table, the city at night), its
+  setting and the framing, in 4-16 strokes. Each stroke is an SVG path `d` in units where the frame is 1000 wide
+  and 1000 x height/width tall (1778 for 9:16, 563 for 16:9, 1000 for 1:1, 1250 for 4:5), x right, y down;
+  `{ "d": "...", "shade": 0.5 }` hatches the inside of a closed shape (0.3 light to 0.8 dark). Draw the object
+  itself (wheels, windows, a face's eyes and hair, a chip's pins), not a generic blob; no text (titles are
+  layers). Example, a car side-on in a 9:16 frame:
+  `"sketch": [{ "d": "M120 1150 L180 1010 Q260 930 420 920 L640 920 Q760 930 840 1030 L880 1150 Z", "shade": 0.35 },
+  "M230 1150 a70 70 0 1 0 140 0 a70 70 0 1 0 -140 0", "M640 1150 a70 70 0 1 0 140 0 a70 70 0 1 0 -140 0",
+  "M300 1010 L360 950 L520 945 L520 1010 Z", "M60 1225 L940 1225"]`.
 - `focus` `{ "x", "y" }`: where a zoom-in, zoom-out or punch-in is aimed (the face, the chip), so the sketch draws
   the frame it ends on.
 - `camera`: still, zoom-in, zoom-out, punch-in, pan-left, pan-right, shake. `transition` into the shot: cut, whip,

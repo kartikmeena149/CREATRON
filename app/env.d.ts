@@ -3,7 +3,7 @@ import type { Detail, Scene } from "../src/scene.ts";
 import type { LinkInfo } from "../src/webvideo.ts";
 import type { Sfx } from "../src/sfx.ts";
 import type { ChatEvent } from "../src/chat.ts";
-import type { AgentId, Connections } from "../src/chatTypes.ts";
+import type { AgentId, Connections, PlanEvent, SavedPlan } from "../src/chatTypes.ts";
 import type { ExportOptions } from "../src/exportOptions.ts";
 
 /** The Auto Edit job the app is running or last ran (kept by the main process). */
@@ -46,6 +46,12 @@ declare global {
       extractEffects(file: string): Promise<Result<string[]>>;
       chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean, library?: string[]): Promise<Result<void>>;
       storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string> }): Promise<boolean>;
+      planStart(req: { title?: string; script: string; direction?: string; format: "9:16" | "16:9" | "1:1" | "4:5"; assets: string[]; model: string }): Promise<Result<{ key: string; dir: string }>>;
+      planStop(): Promise<void>;
+      planOpen(dir: string, model: string): Promise<Result<{ key: string; dir: string }>>;
+      plansList(): Promise<SavedPlan[]>;
+      onPlanEvent(fn: (e: { key: string; event: PlanEvent }) => void): () => void;
+      readScript(path: string): Promise<Result<string>>;
       storyboardWaiting(video: string): Promise<boolean>;
       storyboardPdf(dir: string, html: string, name: string): Promise<Result<string>>;
       frameAt(file: string, seconds: number, width?: number): Promise<string | null>;

@@ -86,3 +86,17 @@ export type Connections = {
   enabled: Record<AgentId, boolean>;
   install: Record<AgentId, string>;
 };
+
+/** The Storyboard creator's events (a storyboard from a script), streamed to the window as "plan-event". */
+export type PlanEvent =
+  | { type: "log"; text: string; kind: "tool" | "note" | "info" }
+  | { type: "progress"; stage: string; fraction: number; elapsedMs: number; remainingMs: number }
+  | { type: "storyboard"; board: Storyboard; dir: string; round: number; video: string }
+  | { type: "done"; dir: string }
+  | { type: "error"; error: string };
+
+/** A storyboard made from a script, as the creator's list shows it. */
+export type SavedPlan = {
+  dir: string; title: string; format: Storyboard["format"]; shots: number; seconds: number; updated: number;
+  approved: boolean; pdf?: string; open: boolean; board: Storyboard;
+};

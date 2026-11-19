@@ -3,6 +3,7 @@
 // reads it like a director's board, plays it as an animatic over their voice, changes any shot, asks
 // Claude to redraw, downloads it as a PDF, and approves: only then is the video built.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { create } from "zustand";
 import {
   CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, TRANSITION_LABEL, boardLength,
   movesOf,
@@ -25,6 +26,8 @@ const pictures = new Map<string, Promise<HTMLImageElement | null>>();
 /** The file and moment a shot's picture comes from, or null when it has none yet. */
 function shotSource(b: BoardState, s: Shot): { file: string; at: number } | null {
   const src = s.source;
+  // From a script: nothing is filmed yet, so only the user's own assets have pictures.
+  if (b.plan) return src?.file && src.file !== "main" ? { file: src.file.startsWith("/") ? src.file : `${b.dir}/${src.file.replace(/^\.\//, "")}`, at: src.at ?? 1 } : null;
   if (!src) return s.kind === "broll" || s.kind === "image" || s.kind === "text" || s.kind === "graphic" ? null : { file: b.video, at: (s.from + s.to) / 2 };
   if (src.file === "main" || !src.file) return { file: b.video, at: src.at ?? (s.from + s.to) / 2 };
   return { file: src.file.startsWith("/") ? src.file : `${b.dir}/${src.file.replace(/^\.\//, "")}`, at: src.at ?? 1 };
@@ -59,6 +62,33 @@ function usePicture(b: BoardState, s: Shot): HTMLImageElement | null | undefined
   return img;
 }
 
+/**
+ * How wide a shot is drawn on a card and in the shot view, by format: a 9:16 frame is drawn tall and
+ * narrow, a 16:9 one wide, so every format gets a readable picture and the same card proportions.
+ */
+export function frameSizes(format: Storyboard["format"]): { card: number; drawer: number } {
+  const r = aspect(format);
+  return r >= 1.5 ? { card: 300, drawer: 392 } : r >= 1 ? { card: 230, drawer: 300 } : r >= 0.75 ? { card: 200, drawer: 260 } : { card: 176, drawer: 232 };
+}
+
+/** The storyboard's page colour: dark (Creatro's own) or light (paper and ink, like the PDF). Remembered. */
+const THEME_KEY = "creatro.storyboard.theme";
+export const useBoardTheme = create<{ theme: "dark" | "light" }>(() => {
+  try {
+    return { theme: localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark" };
+  } catch {
+    return { theme: "dark" };
+  }
+});
+function setBoardTheme(theme: "dark" | "light") {
+  useBoardTheme.setState({ theme });
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {}
+}
+/** The sketch style for the page colour. */
+export const sketchTheme = (t: "dark" | "light") => (t === "light" ? "paper" : "dark");
+
 /** One shot, drawn. Redraws when the shot or the look changes. */
 export function Sketch({ b, shot, width, className }: { b: BoardState; shot: Shot; width: number; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -67,10 +97,11 @@ export function Sketch({ b, shot, width, className }: { b: BoardState; shot: Sho
   const height = Math.round(width / ratio);
   const look = JSON.stringify(b.draft.look);
   const data = JSON.stringify(shot);
+  const theme = useBoardTheme((t) => t.theme);
   useEffect(() => {
     if (!ref.current || picture === undefined) return;
-    drawShot(ref.current, width, height, Math.min(3, window.devicePixelRatio || 2), shot, b.draft, picture);
-  }, [data, look, picture, width]);
+    drawShot(ref.current, width, height, Math.min(3, window.devicePixelRatio || 2), shot, b.draft, picture, sketchTheme(theme));
+  }, [data, look, picture, width, theme]);
   return (
     <div className={`sb-sketch ${picture === undefined ? "loading" : ""} ${className ?? ""}`} style={{ width, height }}>
       <canvas ref={ref} style={{ width, height }} />
@@ -85,6 +116,7 @@ export function StoryboardSheet() {
   const open = useEditor((s) => s.boardOpen);
   const [focus, setFocus] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<string | null>(null);
+  const theme = useBoardTheme((t) => t.theme);
   const [playing, setPlaying] = useState(false);
   const [changes, setChanges] = useState("");
   const dictation = useDictation((said) => setChanges((c) => appendSpeech(c, said)));
@@ -141,6 +173,7 @@ export function StoryboardSheet() {
   const redrawing = b.status === "redrawing";
   const edited = shots.some((s) => s.dropped || s.ask?.trim() || s.marks?.length);
   const focused = shots.find((s) => s.id === focus);
+  const sizes = frameSizes(board.format);
 
   const update = (id: string, patch: Partial<Shot>) => {
     const s = useEditor.getState().board;
@@ -152,8 +185,9 @@ export function StoryboardSheet() {
     const s = useEditor.getState().board;
     if (!s || s.status !== "waiting") return;
     const ok = await window.creatron.storyboardAnswer(s.video, { approve: true, board: s.draft, drawings: await drawings(s) });
-    if (!ok) return setNote("This storyboard isn't waiting any more (the edit was stopped). Ask for a full edit again to start over.");
-    useEditor.setState({ board: { ...s, status: "approved" }, boardOpen: false });
+    if (!ok) return setNote(s.plan ? "This storyboard isn't waiting any more (it was stopped). Make a new one from the Storyboard Creator." : "This storyboard isn't waiting any more (the edit was stopped). Ask for a full edit again to start over.");
+    // A full edit goes on to build the video; a plan from a script stays open, for its PDF.
+    useEditor.setState({ board: { ...s, status: "approved" }, boardOpen: Boolean(s.plan) });
   }
 
   async function redraw() {
@@ -184,7 +218,7 @@ export function StoryboardSheet() {
   const outAt = new Map(kept.map((s) => [s.id, ((at += len(s)), at - len(s))]));
 
   return (
-    <div className="sb" onKeyDown={(e) => e.stopPropagation()} style={{ ["--sb-accent" as string]: accent }}>
+    <div className={`sb ${theme === "light" ? "light" : ""}`} onKeyDown={(e) => e.stopPropagation()} style={{ ["--sb-accent" as string]: accent }}>
       <header className="sb-head">
         <button className="icon-btn" onClick={close} title="Close (esc). The storyboard stays in the chat."><Icon name="close" /></button>
         <div className="sb-head-title">
@@ -192,9 +226,13 @@ export function StoryboardSheet() {
           <h2>{board.title}</h2>
         </div>
         <div className="sb-head-r">
+          <div className="sb-theme" role="group" aria-label="Page colour">
+            <button className={theme === "dark" ? "on" : ""} onClick={() => setBoardTheme("dark")} title="Dark page" aria-pressed={theme === "dark"}><Icon name="moon" size={14} /></button>
+            <button className={theme === "light" ? "on" : ""} onClick={() => setBoardTheme("light")} title="Light page: paper and ink, like the PDF" aria-pressed={theme === "light"}><Icon name="sun" size={14} /></button>
+          </div>
           <button className="sb-btn" onClick={() => setPlaying(true)} disabled={!kept.length}><Icon name="play" size={11} fill /> Play animatic</button>
           <button className="sb-btn" onClick={makePdf} disabled={pdf === "making"}><Icon name="download" size={13} /> {pdf === "making" ? "Making PDF…" : "PDF"}</button>
-          {waiting && <button className="export-btn" onClick={approve} title="Build the video from these shots">Approve &amp; build <kbd>⌘↵</kbd></button>}
+          {waiting && <button className="export-btn" onClick={approve} title={b.plan ? "Lock in this plan: it's saved with your script, ready for the shoot" : "Build the video from these shots"}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>}
         </div>
       </header>
 
@@ -211,24 +249,25 @@ export function StoryboardSheet() {
         <Ribbon shots={shots} total={total} focus={focus} onPick={setFocus} />
       </section>
 
-      <div className={`sb-board ${redrawing ? "redrawing" : ""} ${focused ? "with-drawer" : ""}`}>
+      <div className={`sb-board ${redrawing ? "redrawing" : ""} ${focused ? "with-drawer" : ""}`} style={{ ["--sb-card" as string]: `${sizes.card + 20}px`, ["--sb-cell" as string]: `${sizes.card + 42}px`, ["--sb-drawer" as string]: `${sizes.drawer + 88}px` }}>
         <div className="sb-grid">
           {shots.map((s, i) => (
             <div key={s.id} className="sb-cell">
-              {i > 0 && <span className={`sb-trans t-${s.transition}`} title={`${TRANSITION_LABEL[s.transition]} into shot ${i + 1}`}>{TRANSITION_LABEL[s.transition]}</span>}
+              {/* Every card keeps the transition's slot (empty for the first), so the rows line up. */}
+              <span className={`sb-trans t-${i ? s.transition : "none"}`} title={i ? `${TRANSITION_LABEL[s.transition]} into shot ${i + 1}` : undefined} aria-hidden={!i}>{i ? TRANSITION_LABEL[s.transition] : ""}</span>
               <button className={`sb-card ${focus === s.id ? "on" : ""} ${s.dropped ? "dropped" : ""} ${s.ask?.trim() ? "noted" : ""}`} onClick={() => setFocus(focus === s.id ? null : s.id)}>
                 <div className="sb-card-top">
                   <span className="sb-num">{String(i + 1).padStart(2, "0")}</span>
                   <span className="sb-time">{s.dropped ? "cut" : clock(outAt.get(s.id) ?? 0)}<em>{len(s).toFixed(1)}s</em></span>
                 </div>
-                <Sketch b={b} shot={s} width={176} />
+                <Sketch b={b} shot={s} width={sizes.card} />
                 <p className="sb-line">{s.line ? `“${s.line}”` : <em>no words</em>}</p>
                 <div className="sb-chips">
                   <span className="sb-chip">{KIND_LABEL[s.kind]}</span>
                   {s.camera !== "still" && <span className="sb-chip">{CAMERA_LABEL[s.camera]}</span>}
                   </div>
                 {s.sound && <p className="sb-sound" title={s.sound}><Icon name="volume" size={11} />{s.sound}</p>}
-                {(s.ask?.trim() || s.marks?.length) && (
+                {Boolean(s.ask?.trim() || s.marks?.length) && (
                   <span className="sb-flag" title={s.ask?.trim() || "You drew on this shot"}>{s.marks?.length ? (s.ask?.trim() ? "drawn · note" : "drawn") : "note"}</span>
                 )}
               </button>
@@ -252,10 +291,10 @@ export function StoryboardSheet() {
             />}
             {!dictation.listening && <MicButton d={dictation} className="sb-btn sb-mic" />}
             <button className="sb-btn" onClick={redraw} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> Redraw</button>
-            <button className="export-btn" onClick={approve}>Approve &amp; build <kbd>⌘↵</kbd></button>
+            <button className="export-btn" onClick={approve}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>
           </>
         ) : (
-          <p className="sb-foot-note">{b.status === "approved" ? "Approved. Claude is building this video now; it follows these shots." : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
+          <p className="sb-foot-note">{b.status === "approved" ? (b.plan ? "Approved. It's saved with your script; take the PDF to the shoot." : "Approved. Claude is building this video now; it follows these shots.") : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
         )}
         <DictationNote d={dictation} />
         {note && <p className="sb-note">{note}</p>}
@@ -293,7 +332,7 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b
         <button className="icon-btn" onClick={onClose} title="Close (esc)"><Icon name="close" size={14} /></button>
       </div>
       <div className="sb-drawable" onDoubleClick={onDraw} title="Double-click to draw on it">
-        <Sketch b={b} shot={shot} width={232} className="big" />
+        <Sketch b={b} shot={shot} width={frameSizes(b.draft.format).drawer} className="big" />
       </div>
       <div className="sb-draw-row">
         <button className="sb-btn" onClick={onDraw} disabled={!editable && !shot.marks?.length}>
@@ -358,7 +397,8 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b
 /** The drawing view for one shot, with that shot's picture. */
 function Pad(props: { b: BoardState; shot: Shot; index: number; editable: boolean; onChange: (marks: NonNullable<Shot["marks"]>) => void; onClose: () => void }) {
   const picture = usePicture(props.b, props.shot);
-  return <SketchPad {...props} picture={picture} />;
+  const theme = useBoardTheme((t) => t.theme);
+  return <SketchPad {...props} picture={picture} theme={sketchTheme(theme)} />;
 }
 
 /**
@@ -390,16 +430,35 @@ function Animatic({ b, onClose }: { b: BoardState; onClose: () => void }) {
   const [i, setI] = useState(0);
   const [t, setT] = useState(0); // seconds into the animatic
   const [paused, setPaused] = useState(false);
+  const pausedNow = useRef(false);
+  pausedNow.current = paused;
+  const silent = Boolean(b.plan); // from a script: nothing recorded, the shots run on a clock
   const total = shots.reduce((a, s) => a + len(s), 0);
   const starts = useMemo(() => {
     let a = 0;
     return shots.map((s) => ((a += len(s)), a - len(s)));
   }, [shots]);
 
+  // No recording: each shot for its planned length, on a timer (paused when paused).
+  useEffect(() => {
+    if (!silent || !shots.length) return;
+    let last = performance.now();
+    let at = 0;
+    const timer = setInterval(() => {
+      const now = performance.now();
+      if (!pausedNow.current) at += (now - last) / 1000;
+      last = now;
+      if (at >= total) return clearInterval(timer), setT(total), onClose();
+      setI(Math.max(0, starts.findLastIndex((x) => x <= at)));
+      setT(at);
+    }, 40);
+    return () => clearInterval(timer);
+  }, [shots, silent]);
+
   // The voice plays shot by shot: from each shot's start to its end in the recording, then the next one.
   useEffect(() => {
     const el = audio.current;
-    if (!el || !shots.length) return;
+    if (silent || !el || !shots.length) return;
     let at = 0;
     let started = false;
     const go = (k: number) => {
@@ -448,10 +507,12 @@ function Animatic({ b, onClose }: { b: BoardState; onClose: () => void }) {
   const into = t - starts[i];
   const words = shot.line.split(/\s+/).filter(Boolean);
   const said = Math.ceil((into / Math.max(0.1, len(shot))) * words.length);
-  const width = Math.min(420, Math.round(((window.innerHeight - 220) * aspect(b.draft.format))));
+  // As big as fits under the top bar and above the controls: tall frames up to 420 px wide, wide ones up to 960.
+  const ratio = aspect(b.draft.format);
+  const width = Math.min(ratio >= 1 ? Math.min(960, window.innerWidth - 160) : 420, Math.round((window.innerHeight - 220) * ratio));
   return (
     <div className="sb-anim" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <audio ref={audio} src={mediaUrl(b.video)} preload="auto" />
+      {!silent && <audio ref={audio} src={mediaUrl(b.video)} preload="auto" />}
       <div className="sb-anim-top">
         <span className="sb-eyebrow">Animatic · shot {i + 1} of {shots.length}</span>
         <button className="icon-btn" onClick={onClose} title="Close (esc)"><Icon name="close" /></button>

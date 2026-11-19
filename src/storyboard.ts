@@ -47,6 +47,17 @@ export type Mark = z.infer<typeof Mark>;
 /** The user's pencil colours: never red, which on a storyboard is Creatro's own movement arrows. */
 export const MARK_COLORS = ["#ffd60a", "#f5f5f5", "#4cc9f0", "#4ade80"] as const;
 
+/**
+ * One stroke of Claude's own drawing of a shot: an SVG path ("M 120 900 C ..."), in units where the
+ * frame is 1000 wide (and 1000 x height/width tall: 1778 for 9:16, 563 for 16:9). `shade` (0..1)
+ * hatches the inside of a closed shape: 0.3 light, 0.7 dark.
+ */
+export const Stroke = z.union([
+  z.string().transform((d) => ({ d, shade: undefined as number | undefined })),
+  z.object({ d: z.string(), shade: z.coerce.number().min(0).max(1).optional().catch(undefined) }),
+]);
+export type Stroke = { d: string; shade?: number };
+
 export const Shot = z.object({
   id: str(),
   /** The words said during the shot, exactly as in the transcript. Empty for a silent shot. */
@@ -71,6 +82,13 @@ export const Shot = z.object({
   ask: str().optional(),
   /** The user took this line out of the video. */
   dropped: z.boolean().optional().catch(undefined),
+  /** Claude's pencil drawing of what the frame shows, for a shot with no footage of its own (see Stroke). */
+  sketch: z.array(z.unknown()).catch([])
+    .transform((items) => items.flatMap((x) => {
+      const r = Stroke.safeParse(x); // one bad stroke is dropped, not the drawing
+      return r.success && /^\s*[Mm]/.test(r.data.d) ? [r.data] : [];
+    }).slice(0, 40))
+    .optional(),
   /** What the user drew on the shot (the storyboard view). */
   marks: z.array(Mark).optional().catch(undefined),
   /** Their drawing as a picture for Claude (notes/storyboard-marks/<id>.png), written when they answer. */
@@ -123,6 +141,28 @@ export function checkStoryboard(b: Storyboard): string[] {
     if (s.kind === "broll" && !s.query && s.source?.file === "main") out.push(`shot ${s.id} is B-roll but says neither what it must show (query) nor which file`);
   }
   return out;
+}
+
+/**
+ * A script's scenes: one per line, in order. Blank lines don't count, and numbering or bullets typed
+ * or pasted in front ("1.", "2)", "-", "•", "Scene 3:") are dropped: the scene's number is its place.
+ */
+export function scenesOf(script: string): string[] {
+  return script.split(/\r?\n/).map(stripSceneMark).filter(Boolean);
+}
+export const stripSceneMark = (line: string) => line.replace(/^\s*(?:(?:scene|shot)\s*\d+\s*[:.)-]?|\d{1,3}\s*[.):-](?!\d)|[-•*–])\s*/i, "").trim();
+
+/** Speaking time of a line at a natural pace (about 2.5 words a second). */
+export const sayingTime = (line: string) => line.trim().split(/\s+/).filter(Boolean).length / 2.5;
+
+/** What's wrong with a storyboard made from a script: it must be exactly one shot per scene, in order, with the scene's words. */
+export function checkScenes(b: Storyboard, scenes: string[]): string[] {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (b.shots.length !== scenes.length) {
+    return [`the storyboard has ${b.shots.length} shots but the script has ${scenes.length} scenes: make exactly one shot per scene (s1 for scene 1, s2 for scene 2...), no more, no fewer`];
+  }
+  const off = scenes.map((sc, i) => [i, sc, b.shots[i]!] as const).filter(([, sc, s]) => norm(s.line) !== norm(sc));
+  return off.slice(0, 4).map(([i, sc, s]) => `shot ${i + 1} (${s.id}) must be scene ${i + 1} word for word: "${sc}" (it says "${s.line}")`);
 }
 
 /** Seconds the shots that stay add up to (the finished video's length, roughly). */

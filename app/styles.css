@@ -1979,13 +1979,14 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-ribbon-head { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--accent); border-radius: 1px; pointer-events: none; }
 
 .sb-board { position: relative; flex: 1; min-height: 0; display: flex; background: var(--stage); }
-.sb-grid { flex: 1; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; row-gap: 18px; padding: 18px 18px 40px 32px; }
+/* Columns as wide as a card (and its transition slot), centred: spare width splits evenly, whatever the format or window. */
+.sb-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, var(--sb-cell, 218px)); justify-content: center; align-content: start; row-gap: 18px; padding: 18px 26px 40px 26px; }
 .sb-board.redrawing .sb-grid { opacity: 0.3; pointer-events: none; transition: opacity 0.3s; }
 .sb-cell { display: flex; align-items: stretch; }
-.sb-trans { align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); padding: 0 6px; font: 500 9px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: #3c3c3c; user-select: none; }
-.sb-trans:not(.t-cut) { color: var(--dim); }
+.sb-trans { align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); width: 22px; padding: 0 6px; box-sizing: border-box; font: 500 9px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: #3c3c3c; user-select: none; }
+.sb-trans:not(.t-cut):not(.t-none) { color: var(--dim); }
 
-.sb-card { position: relative; width: 196px; padding: 0 0 10px; display: flex; flex-direction: column; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color 0.12s; }
+.sb-card { position: relative; width: var(--sb-card, 196px); padding: 0 0 10px; display: flex; flex-direction: column; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color 0.12s; }
 .sb .sb-card:hover:not(:disabled) { background: var(--panel-2); border-color: #3a3a3a; }
 .sb .sb-card.on, .sb .sb-card.on:hover:not(:disabled) { border-color: #9a9a9a; box-shadow: 0 0 0 1px #9a9a9a; }
 .sb-card.dropped { opacity: 0.45; }
@@ -2009,7 +2010,7 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-redraw { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 500; pointer-events: none; }
 
 /* The shot, opened: the inspector's layout (sections, small headings, the editor's inputs). */
-.sb-drawer { width: 320px; flex: none; overflow-y: auto; background: var(--bg); border-left: 1px solid var(--line); }
+.sb-drawer { width: var(--sb-drawer, 320px); flex: none; overflow-y: auto; background: var(--bg); border-left: 1px solid var(--line); }
 .sb-drawer-head { display: flex; align-items: center; gap: 10px; padding: 12px 10px 10px 18px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
 .sb-drawer-head .icon-btn { margin-left: auto; }
 .sb-drawer .sb-sketch.big { margin: 0 auto; }
@@ -2152,3 +2153,154 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-pad-cursor.pen { background: var(--c); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
 .sb-pad-cursor.eraser { border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(0, 0, 0, 0.4); background: rgba(255, 255, 255, 0.08); }
 .sb-pad-hint { margin: 0; font-size: 12px; color: var(--dim); }
+
+/* The Storyboard creator (app/StoryboardCreator.tsx): a page on the Dashboard, and its way in on Home. */
+.dash-live { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: dict-blink 1.2s ease-in-out infinite; }
+.sbc { padding-top: 56px; }
+.sbc-hero { gap: 12px; margin-bottom: 26px; }
+.sbc-card { position: relative; display: flex; flex-direction: column; gap: 18px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; transition: border-color 0.15s; }
+.sbc-card.dropping { border-color: var(--accent); }
+.sbc-title { width: 100%; padding: 0; background: transparent; border: none; outline: none; color: var(--text); font-size: 22px; font-weight: 500; letter-spacing: -0.02em; }
+.sbc-title::placeholder { color: var(--faint); }
+.sbc-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sbc-field.grow, .sbc .grow { flex: 1; }
+.sbc-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; font-weight: 500; color: var(--text); }
+.sbc-label .dim { font-size: 10.5px; color: var(--faint); letter-spacing: 0.02em; }
+/* The script: a textarea over an invisible copy of its text whose lines carry the scene gutter. */
+.sbc-editor { position: relative; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; transition: border-color 0.15s; }
+.sbc-editor:focus-within { border-color: #3a3a3a; }
+.sbc-editor::before { content: ""; position: absolute; left: 72px; top: 10px; bottom: 10px; width: 1px; background: var(--line); }
+.sbc-back, .sbc-script { box-sizing: border-box; margin: 0; padding: 12px 16px 12px 86px; font-family: inherit; font-size: 14.5px; line-height: 24px; letter-spacing: 0; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; tab-size: 4; }
+.sbc-back { position: absolute; inset: 0; color: transparent; pointer-events: none; overflow: hidden; }
+.sbc-line { position: relative; min-height: 24px; }
+.sbc-line.scene::before { content: attr(data-n); position: absolute; left: -72px; top: 0; font: 600 11px/24px var(--mono); color: var(--text); }
+.sbc-line.scene::after { content: attr(data-s); position: absolute; left: -48px; top: 0; font: 400 10px/24px var(--mono); color: var(--faint); }
+.sbc-script { position: relative; z-index: 1; display: block; width: 100%; min-height: 200px; resize: none; overflow: hidden; background: transparent; border: none; outline: none; color: var(--text); }
+.sbc-script::placeholder { color: var(--faint); }
+.sbc-script[readonly] { color: var(--dim); }
+.sbc-rule { margin-left: 8px; font: 400 10.5px var(--mono); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
+.sbc-split { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; background: var(--raised); border-color: var(--line); color: var(--text); font-size: 12px; }
+.sbc-tools { display: flex; align-items: center; gap: 8px; }
+.sbc-tool { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; background: var(--raised); border-color: var(--line); color: var(--text); font-size: 12px; }
+.sbc-field > .dict-bar { padding: 0 2px; }
+.sbc-assets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 44px; padding: 7px; background: var(--bg); border: 1px dashed var(--line); border-radius: 9px; }
+.sbc-asset { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 28px; padding: 0 4px 0 9px; background: var(--raised); border: 1px solid var(--line); border-radius: 7px; font-size: 12px; color: var(--text); }
+.sbc-asset svg { flex: none; color: var(--dim); }
+.sbc-asset span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbc-asset button { flex: none; width: 20px; height: 20px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--faint); border-radius: 5px; }
+.sbc-asset button:hover:not(:disabled) { background: var(--hover); color: var(--text); border: none; }
+.sbc-add { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; background: transparent; border-color: var(--line); color: var(--text); font-size: 12px; }
+.sbc-drop { font-size: 12px; color: var(--faint); }
+.sbc-row { display: flex; align-items: flex-end; gap: 16px; }
+.sbc-row input { width: 100%; height: 36px; padding: 0 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; outline: none; color: var(--text); font: inherit; font-size: 13px; }
+.sbc-row input:focus { border-color: #3a3a3a; }
+.sbc-row input::placeholder { color: var(--faint); }
+.sbc .sbc-format { margin: 0; height: 36px; border-radius: 9px; }
+.sbc-format button { flex: none; height: 30px; padding: 0 11px; font: 500 12px var(--mono); }
+.sbc-error { margin: -6px 0 0; font-size: 12.5px; color: var(--danger); }
+.sbc-foot { display: flex; align-items: center; gap: 10px; padding-top: 2px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.sbc-warn { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--danger); }
+.sbc-go { display: inline-flex; align-items: center; gap: 8px; }
+.sbc-go:disabled { opacity: 0.45; }
+.sbc-progress { align-items: center; text-align: center; gap: 12px; padding: 40px 24px 32px; }
+.sbc-progress b { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+.sbc-step { max-width: 520px; font-size: 13px; color: var(--dim); line-height: 1.5; }
+.sbc-bar { width: min(420px, 80%); height: 3px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.sbc-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.6s ease; }
+.sbc-done { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; background: #f2f2f2; color: #111; }
+.sbc-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.sbc-entry { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 10px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; text-align: left; color: var(--text); }
+.sbc-entry:hover:not(:disabled) { border-color: #3a3a3a; background: var(--raised); }
+.sbc-entry > svg { margin-left: auto; color: var(--dim); }
+.sbc-entry-icon { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--accent); color: #fff; }
+.sbc-entry-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sbc-entry-text b { font-size: 13.5px; font-weight: 500; }
+.sbc-entry-text span { font-size: 12px; color: var(--dim); }
+
+/* Your storyboards: every plan made in the creator, to open again. */
+.sbc-saved { margin-top: 48px; }
+.sbc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.sbc-item { display: flex; gap: 14px; padding: 10px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; transition: border-color 0.15s; }
+.sbc-item:hover { border-color: var(--line); }
+.sbc-item.on { border-color: #3a3a3a; }
+.sbc-thumb { flex: none; align-self: flex-start; height: auto; padding: 0; display: block; overflow: hidden; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; line-height: 0; }
+.sbc-thumb:hover:not(:disabled) { border-color: #3a3a3a; background: var(--bg); }
+.sbc-thumb .sb-sketch { pointer-events: none; }
+.sbc-item-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 4px 0; }
+.sbc-item-text b { font-size: 14px; font-weight: 500; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.sbc-item-text .dim { font-size: 11px; color: var(--faint); }
+.sbc-item-meta { display: flex; align-items: center; gap: 8px; }
+.sbc-chip { font: 500 10px/1 var(--mono); font-style: normal; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 6px; border-radius: 4px; background: var(--hover); color: var(--dim); }
+.sbc-chip.ok { background: #f2f2f2; color: #111; }
+.sbc-chip.live { background: var(--accent); color: #fff; }
+.sbc-item-actions { display: flex; gap: 6px; margin-top: auto; }
+.sbc-item-actions .sb-btn { height: 28px; padding: 0 10px; font-size: 12px; }
+.sbc-item-actions .sb-btn.icon { width: 28px; padding: 0; justify-content: center; }
+
+/* The creator's hero: Creatro's recording dot on the label, a red pencil stroke under "film it." */
+.sbc-eyebrow { display: inline-flex; align-items: center; gap: 9px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); letter-spacing: 0.14em; }
+.sbc-rec { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(229, 35, 27, 0.18); animation: dict-blink 1.6s ease-in-out infinite; }
+.sbc-hero h1 { font-size: 52px; font-weight: 600; letter-spacing: -0.045em; line-height: 1.02; }
+.sbc-pencil { position: relative; display: inline-block; white-space: nowrap; }
+.sbc-underline { position: absolute; left: -2%; right: -2%; bottom: -0.16em; width: 104%; height: 0.36em; overflow: visible; }
+.sbc-underline path { fill: none; stroke: var(--accent); stroke-width: 3.2; stroke-linecap: round; vector-effect: non-scaling-stroke; stroke-dasharray: 260; stroke-dashoffset: 260; animation: sbc-draw 0.9s 0.25s cubic-bezier(0.6, 0, 0.2, 1) forwards; }
+.sbc-underline path + path { stroke-width: 2; opacity: 0.55; animation-delay: 0.7s; }
+@keyframes sbc-draw { to { stroke-dashoffset: 0; } }
+
+/* The storyboard being drawn while Claude works (StoryboardCreator.tsx, Drawing). */
+.sbc-drawing { gap: 0; padding: 18px 20px 16px; }
+.sbc-drawing-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sbc-drawing-state { display: inline-flex; align-items: center; gap: 9px; font: 600 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--text); }
+.sbc-drawing-head .dim { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.sbc-drawing-title { margin: 14px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.15; }
+.sbc-drawing-say { margin: 6px 0 18px; font-size: 13px; min-height: 18px; }
+.sbc-panels { display: flex; flex-wrap: wrap; gap: 14px 12px; padding: 16px; margin: 0 -4px; background: radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 18px 18px, var(--bg); border: 1px solid var(--line-soft); border-radius: 10px; }
+.sbc-panel { position: relative; display: flex; flex-direction: column; gap: 6px; transition: opacity 0.4s; }
+.sbc-panel canvas, .sbc-panel-blank { display: block; border-radius: 4px; }
+.sbc-panel canvas { box-shadow: 0 0 0 1px var(--line); }
+.sbc-panel.now canvas { box-shadow: 0 0 0 1.5px var(--accent), 0 8px 24px rgba(229, 35, 27, 0.18); }
+.sbc-panel.done { opacity: 0.78; }
+.sbc-panel-blank { border: 1px dashed #333; background: rgba(255, 255, 255, 0.015); }
+.sbc-panel-num { position: absolute; top: -7px; left: -5px; z-index: 1; padding: 2px 4px; border-radius: 3px; background: var(--panel); font: 600 9.5px/1 var(--mono); color: var(--dim); box-shadow: 0 0 0 1px var(--line); }
+.sbc-panel.now .sbc-panel-num { background: var(--accent); color: #fff; box-shadow: none; }
+.sbc-panel.done .sbc-panel-num { color: var(--text); }
+.sbc-panel-line { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--faint); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sbc-panel.now .sbc-panel-line { color: var(--text); }
+.sbc-panel.done .sbc-panel-line { color: var(--dim); }
+.sbc-drawing-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.sbc-drawing-foot .dim { font-size: 12px; color: var(--faint); }
+
+/* The storyboard's page colour toggle, and its light page: paper and ink, like the PDF. */
+.sb-theme { display: inline-flex; gap: 2px; padding: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.sb .sb-theme button { width: 30px; height: 28px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--faint); }
+.sb .sb-theme button:hover:not(:disabled) { color: var(--text); background: var(--raised); border: none; }
+.sb .sb-theme button.on { color: var(--text); background: var(--hover); }
+.sb.light {
+  --bg: #f3efe6; --chrome: #ece7dc; --panel: #faf7f0; --panel-2: #fffdf8; --stage: #ebe6da; --raised: #ece6d8; --hover: #e1d9c7;
+  --line: #d6cdba; --line-soft: #e6dfd1; --text: #1c1b1f; --dim: #5f5b52; --faint: #958f81; --clip: #e4ddcd; --accent-2: #1c1b1f;
+  color: var(--text); background: var(--bg); border-top-color: var(--line);
+}
+.sb.light .sb-card { box-shadow: 0 1px 0 rgba(60, 50, 30, 0.04); }
+.sb.light .sb-card:hover:not(:disabled) { border-color: #b9b09c; }
+.sb.light .sb-card.on, .sb.light .sb-card.on:hover:not(:disabled) { border-color: #1c1b1f; box-shadow: 0 0 0 1px #1c1b1f; }
+.sb.light .sb-sketch { background: #f3efe6; box-shadow: inset 0 0 0 1px rgba(28, 27, 31, 0.12); }
+.sb.light .sb-sketch.loading::after { background: linear-gradient(100deg, transparent 30%, rgba(28, 27, 31, 0.06) 50%, transparent 70%); background-size: 250% 100%; }
+.sb.light .sb-trans { color: #bdb5a3; }
+.sb.light .sb-trans:not(.t-cut):not(.t-none) { color: var(--dim); }
+.sb.light .sb-fact.wide { color: var(--text); }
+.sb.light .sb-swatches i { box-shadow: inset 0 0 0 1px rgba(28, 27, 31, 0.18); }
+.sb.light .sb-rib { border-color: #d0c6b2; }
+.sb.light .sb-rib:hover:not(:disabled) { background: #ddd4c2; border-color: #bfb49d; }
+.sb.light .sb-rib.on, .sb.light .sb-rib.on:hover:not(:disabled) { background: #1c1b1f; border-color: #1c1b1f; color: #f3efe6; }
+.sb.light .export-btn { background: #1c1b1f; color: #f3efe6; }
+.sb.light .export-btn:hover:not(:disabled) { background: #000; }
+.sb.light .export-btn kbd { color: #9a958a; }
+.sb.light .sb-ask:focus, .sb.light .sb-field textarea:focus, .sb.light .sb-field input:focus { border-color: #b9b09c; }
+.sb.light .sb-seg button.on, .sb.light .sb-seg button.on:hover:not(:disabled) { background: rgba(28, 27, 31, 0.1); }
+.sb.light .sb-anim { background: rgba(243, 239, 230, 0.97); }
+.sb.light .sb-anim-stage { background: #f3efe6; box-shadow: 0 0 0 1px var(--line), 0 20px 60px rgba(60, 50, 30, 0.18); }
+.sb.light .sb-anim-line { color: #b3ab99; }
+.sb.light .sb-pad { background: rgba(243, 239, 230, 0.97); }
+.sb.light .sb-pad-bar { box-shadow: 0 10px 30px rgba(60, 50, 30, 0.15); }
+.sb.light .sb-pad-cursor.eraser { border-color: #1c1b1f; background: rgba(28, 27, 31, 0.06); }
+.sb.light .mic-round { border-color: var(--line); }
