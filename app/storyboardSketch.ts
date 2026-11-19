@@ -7,7 +7,18 @@ import type { Layer, Shot, Storyboard } from "../src/storyboard.ts";
 
 export const PAPER = "#f3efe6";
 export const INK = "#1c1b1f";
-const PENCIL = "#e5484d";
+const PENCIL = "#e5231b"; // Creatro's red: the recording light
+
+/**
+ * Two ways to draw the same shot. "dark", in the app: light dots on black, like a picture made of
+ * LEDs, so the board sits in Creatro's own dark interface. "paper", for the PDF: ink on paper.
+ */
+const THEMES = {
+  dark: { bg: "#0b0b0b", grain: "rgba(255,255,255,0.035)", ink: "#e6e6e6", inner: "#7a7a7a", line: "#8a8a8a", plate: "rgba(0,0,0,0.78)", plateText: "#f2f2f2", fade: "rgba(11,11,11,0.7)", light: true },
+  paper: { bg: PAPER, grain: "rgba(60,50,30,0.05)", ink: INK, inner: INK, line: INK, plate: "rgba(28,27,31,0.88)", plateText: PAPER, fade: "rgba(243,239,230,0.72)", light: false },
+};
+export type SketchTheme = keyof typeof THEMES;
+let T = THEMES.dark;
 
 /** Width / height of a frame in this format. */
 export const aspect = (format: Storyboard["format"]) => ({ "9:16": 9 / 16, "16:9": 16 / 9, "1:1": 1, "4:5": 4 / 5 })[format];
@@ -53,7 +64,8 @@ function rand(seed: string) {
  * Draws one shot into the canvas (sized w x h in CSS pixels, drawn at `scale` for sharpness).
  * `picture` is the frame the shot is made from, if there is one.
  */
-export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale: number, shot: Shot, board: Storyboard, picture: HTMLImageElement | null) {
+export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale: number, shot: Shot, board: Storyboard, picture: HTMLImageElement | null, theme: SketchTheme = "dark") {
+  T = THEMES[theme];
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
   const ctx = canvas.getContext("2d")!;
@@ -62,30 +74,30 @@ export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale:
   const accent = accentOf(board);
 
   // Paper, with a little grain.
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = T.bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "rgba(60,50,30,0.05)";
+  ctx.fillStyle = T.grain;
   for (let i = 0; i < (w * h) / 90; i++) ctx.fillRect(r() * w, r() * h, 1, 1);
 
   // The picture, in dots.
   const cell = Math.max(3.2, w / 44);
   const kind = shot.kind;
   if (kind === "split") {
-    halftone(ctx, 0, 0, w, h / 2, cell, picture && shot.source?.file !== "main" ? sampler(picture, w, h / 2) : scenery(r), INK);
-    halftone(ctx, 0, h / 2, w, h / 2, cell, picture && shot.source?.file === "main" ? sampler(picture, w, h / 2) : person(0.5, 0.42), INK);
-    wobblyLine(ctx, 0, h / 2, w, h / 2, r, INK, 1.4);
+    halftone(ctx, 0, 0, w, h / 2, cell, picture && shot.source?.file !== "main" ? sampler(picture, w, h / 2) : scenery(r), T.ink);
+    halftone(ctx, 0, h / 2, w, h / 2, cell, picture && shot.source?.file === "main" ? sampler(picture, w, h / 2) : person(0.5, 0.42), T.ink);
+    wobblyLine(ctx, 0, h / 2, w, h / 2, r, T.ink, 1.4);
   } else if (kind === "cutout") {
     // A designed background behind the speaker: a light accent field and the silhouette (or them).
     halftone(ctx, 0, 0, w, h, cell * 1.25, (x, y) => 0.12 + 0.1 * Math.sin(x * 9 + y * 4), accent);
-    halftone(ctx, 0, 0, w, h, cell, picture ? masked(sampler(picture, w, h), person(0.5, 0.5)) : person(0.5, 0.5), INK);
+    halftone(ctx, 0, 0, w, h, cell, picture ? masked(sampler(picture, w, h), person(0.5, 0.5)) : person(0.5, 0.5), T.ink);
   } else if (kind === "text" || kind === "graphic") {
-    halftone(ctx, 0, 0, w, h, cell * 1.4, (x, y) => 0.06 + 0.06 * Math.sin((x + y) * 6), INK);
+    halftone(ctx, 0, 0, w, h, cell * 1.4, (x, y) => 0.06 + 0.06 * Math.sin((x + y) * 6), T.ink);
   } else if (picture) {
-    halftone(ctx, 0, 0, w, h, cell, sampler(picture, w, h), INK);
+    halftone(ctx, 0, 0, w, h, cell, sampler(picture, w, h), T.ink);
   } else if (kind === "talking") {
-    halftone(ctx, 0, 0, w, h, cell, person(0.5, 0.5), INK);
+    halftone(ctx, 0, 0, w, h, cell, person(0.5, 0.5), T.ink);
   } else {
-    halftone(ctx, 0, 0, w, h, cell, scenery(r), INK);
+    halftone(ctx, 0, 0, w, h, cell, scenery(r), T.ink);
   }
 
   // B-roll not found yet: say what it must show.
@@ -95,7 +107,7 @@ export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale:
   camera(ctx, w, h, shot.camera, r);
 
   if (shot.dropped) {
-    ctx.fillStyle = "rgba(243,239,230,0.72)";
+    ctx.fillStyle = T.fade;
     ctx.fillRect(0, 0, w, h);
     wobblyLine(ctx, w * 0.12, h * 0.12, w * 0.88, h * 0.88, r, PENCIL, 3);
     wobblyLine(ctx, w * 0.88, h * 0.12, w * 0.12, h * 0.88, r, PENCIL, 3);
@@ -154,7 +166,8 @@ function sampler(img: HTMLImageElement, w: number, h: number): Field {
   const span = Math.max(40, hi - lo);
   return (x, y) => {
     const i = Math.min(rows - 1, Math.floor(y * rows)) * cols + Math.min(cols - 1, Math.floor(x * cols));
-    return 1 - (lum[i] - lo) / span;
+    const v = (lum[i] - lo) / span;
+    return T.light ? v * 0.92 + 0.04 : 1 - v; // big dots where the picture is bright (dark) or dark (paper)
   };
 }
 
@@ -264,23 +277,23 @@ function layer(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, b:
       break;
     case "caption": {
       roundRect(ctx, x, y, lw, lh, lh * 0.35);
-      ctx.fillStyle = "rgba(28,27,31,0.88)";
+      ctx.fillStyle = T.plate;
       ctx.fill();
-      fitText(ctx, l.text || "caption", x + lh * 0.3, y + lh * 0.12, lw - lh * 0.6, lh * 0.76, 800, SANS, PAPER);
+      fitText(ctx, l.text || "caption", x + lh * 0.3, y + lh * 0.12, lw - lh * 0.6, lh * 0.76, 800, SANS, T.plateText);
       break;
     }
     case "image":
     case "footage": {
       ctx.save();
       roundRect(ctx, x, y, lw, lh, 6);
-      ctx.fillStyle = PAPER;
+      ctx.fillStyle = T.bg;
       ctx.fill();
       ctx.clip();
       const cell = Math.max(2.6, lw / 18);
-      halftone(ctx, x, y, lw, lh, cell, l.kind === "footage" && picture ? sampler(picture, lw, lh) : l.kind === "footage" ? person(0.5, 0.55) : scenery(r), INK);
+      halftone(ctx, x, y, lw, lh, cell, l.kind === "footage" && picture ? sampler(picture, lw, lh) : l.kind === "footage" ? person(0.5, 0.55) : scenery(r), T.inner);
       ctx.restore();
       ctx.setLineDash(l.kind === "image" ? [5, 4] : []);
-      roughRect(ctx, x, y, lw, lh, r, INK, 1.6);
+      roughRect(ctx, x, y, lw, lh, r, T.line, 1.4);
       ctx.setLineDash([]);
       if (l.text) tagAt(ctx, x + 4, y + 4, lw - 8, l.text);
       break;
@@ -307,21 +320,21 @@ function layer(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, b:
       ctx.fillStyle = color;
       ctx.fill();
       ctx.lineWidth = 3;
-      ctx.strokeStyle = PAPER;
+      ctx.strokeStyle = T.bg;
       ctx.stroke();
-      fitText(ctx, l.text || "★", x + rad * 0.3, y + rad * 0.3, lw - rad * 0.6, lh - rad * 0.6, 900, SANS, PAPER);
+      fitText(ctx, l.text || "★", x + rad * 0.3, y + rad * 0.3, lw - rad * 0.6, lh - rad * 0.6, 900, SANS, "#ffffff");
       break;
     }
     case "chart": {
-      roughRect(ctx, x, y, lw, lh, r, INK, 1.2);
+      roughRect(ctx, x, y, lw, lh, r, T.ink, 1.2);
       const bars = 4;
       for (let i = 0; i < bars; i++) {
         const bh = lh * (0.25 + (0.65 * (i + 1)) / bars) * (0.85 + r() * 0.15);
         const bw = (lw / bars) * 0.55;
-        ctx.fillStyle = i === bars - 1 ? color : INK;
+        ctx.fillStyle = i === bars - 1 ? color : T.ink;
         ctx.fillRect(x + (lw / bars) * i + bw * 0.4, y + lh - bh - 2, bw, bh);
       }
-      if (l.text) fitText(ctx, l.text, x, y - 18, lw, 16, 800, SANS, INK, PAPER);
+      if (l.text) fitText(ctx, l.text, x, y - 18, lw, 16, 800, SANS, T.ink, T.bg);
       break;
     }
   }
@@ -339,9 +352,9 @@ function tagAt(ctx: CanvasRenderingContext2D, x: number, y: number, maxW: number
   let t = text.toUpperCase();
   while (t.length > 4 && ctx.measureText(t).width > maxW - 10) t = `${t.slice(0, -2)}…`;
   const tw = ctx.measureText(t).width;
-  ctx.fillStyle = INK;
+  ctx.fillStyle = T.plate;
   ctx.fillRect(x, y, tw + 10, size + 8);
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = T.plateText;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(t, x + 5, y + (size + 8) / 2 + 0.5);

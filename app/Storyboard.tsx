@@ -11,9 +11,6 @@ import { Icon } from "./icons.tsx";
 import { type BoardState, useEditor } from "./store.ts";
 import { INK, PAPER, accentOf, aspect, drawShot } from "./storyboardSketch.ts";
 
-export const KIND_COLOR: Record<Shot["kind"], string> = {
-  talking: "#9a9aa3", broll: "#4f8cff", image: "#a274ff", split: "#19c3a3", cutout: "#ff8a3d", text: "#ffd23f", graphic: "#ff4fa3",
-};
 
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;
 const len = (s: Shot) => Math.max(0, s.to - s.from);
@@ -183,29 +180,27 @@ export function StoryboardSheet() {
   return (
     <div className="sb" onKeyDown={(e) => e.stopPropagation()} style={{ ["--sb-accent" as string]: accent }}>
       <header className="sb-head">
-        <div className="sb-head-l">
-          <button className="icon-btn" onClick={close} title="Close (the storyboard stays in the chat)"><Icon name="close" /></button>
-          <div>
-            <div className="sb-eyebrow">Storyboard{b.round > 1 ? ` · draft ${b.round}` : ""} · {b.status === "approved" ? "approved" : waiting ? "waiting for your OK" : redrawing ? "Claude is redrawing" : "closed"}</div>
-            <h1 className="sb-title">{board.title}</h1>
-          </div>
+        <button className="icon-btn" onClick={close} title="Close (esc). The storyboard stays in the chat."><Icon name="close" /></button>
+        <div className="sb-head-title">
+          <span className={`sb-state ${b.status}`}><i />Storyboard{b.round > 1 ? ` · draft ${b.round}` : ""} · {b.status === "approved" ? "approved" : waiting ? "waiting for your OK" : redrawing ? "redrawing" : "closed"}</span>
+          <h2>{board.title}</h2>
         </div>
         <div className="sb-head-r">
-          <button className="sb-btn" onClick={() => setPlaying(true)} disabled={!kept.length}><Icon name="play" size={12} fill /> Play animatic</button>
+          <button className="sb-btn" onClick={() => setPlaying(true)} disabled={!kept.length}><Icon name="play" size={11} fill /> Play animatic</button>
           <button className="sb-btn" onClick={makePdf} disabled={pdf === "making"}><Icon name="download" size={13} /> {pdf === "making" ? "Making PDF…" : "PDF"}</button>
-          {waiting && <button className="sb-btn primary" onClick={approve} title="⌘⏎"><Icon name="check" size={13} /> Approve &amp; build</button>}
+          {waiting && <button className="export-btn" onClick={approve} title="Build the video from these shots">Approve &amp; build <kbd>⌘↵</kbd></button>}
         </div>
       </header>
 
       <section className="sb-brief">
         <p className="sb-idea">{board.idea}</p>
-        <div className="sb-look">
-          <div className="sb-swatches">{board.look.palette.map((c) => <i key={c} style={{ background: c }} title={c} />)}</div>
-          <span className="sb-font" style={{ fontFamily: `"${board.look.font}", system-ui` }}>Aa</span>
-          <span className="sb-fact"><b>Look</b>{board.look.mood || "—"}</span>
-          <span className="sb-fact"><b>Captions</b>{board.look.captions || "—"}</span>
-          {board.music && <span className="sb-fact"><b>Music</b>{board.music}</span>}
-          <span className="sb-stats">{kept.length} shots · {clock(total)} · {board.format}</span>
+        <div className="sb-facts">
+          <span className="sb-fact"><b>Shots</b>{kept.length} · {clock(total)} · {board.format}</span>
+          <span className="sb-fact"><b>Palette</b><span className="sb-swatches">{board.look.palette.map((c) => <i key={c} style={{ background: c }} title={c} />)}</span></span>
+          <span className="sb-fact"><b>Font</b><span style={{ fontFamily: `"${board.look.font}", system-ui` }}>{board.look.font}</span></span>
+          <span className="sb-fact wide" title={board.look.mood}><b>Look</b>{board.look.mood || "—"}</span>
+          <span className="sb-fact wide" title={board.look.captions}><b>Captions</b>{board.look.captions || "—"}</span>
+          {board.music && <span className="sb-fact wide" title={board.music}><b>Music</b>{board.music}</span>}
         </div>
         <Ribbon shots={shots} total={total} focus={focus} onPick={setFocus} />
       </section>
@@ -220,13 +215,13 @@ export function StoryboardSheet() {
                   <span className="sb-num">{String(i + 1).padStart(2, "0")}</span>
                   <span className="sb-time">{s.dropped ? "cut" : clock(outAt.get(s.id) ?? 0)}<em>{len(s).toFixed(1)}s</em></span>
                 </div>
-                <Sketch b={b} shot={s} width={168} />
+                <Sketch b={b} shot={s} width={176} />
                 <p className="sb-line">{s.line ? `“${s.line}”` : <em>no words</em>}</p>
                 <div className="sb-chips">
-                  <span className="sb-chip"><i style={{ background: KIND_COLOR[s.kind] }} />{KIND_LABEL[s.kind]}</span>
+                  <span className="sb-chip">{KIND_LABEL[s.kind]}</span>
                   {s.camera !== "still" && <span className="sb-chip">{CAMERA_LABEL[s.camera]}</span>}
-                  {s.sound && <span className="sb-chip" title={s.sound}><Icon name="volume" size={10} />{s.sound}</span>}
-                </div>
+                  </div>
+                {s.sound && <p className="sb-sound" title={s.sound}><Icon name="volume" size={11} />{s.sound}</p>}
                 {s.ask?.trim() && <span className="sb-flag" title={s.ask}>note</span>}
               </button>
             </div>
@@ -244,7 +239,7 @@ export function StoryboardSheet() {
               onChange={(e) => setChanges(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.metaKey && redraw()}
             />
             <button className="sb-btn" onClick={redraw} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> Redraw</button>
-            <button className="sb-btn primary" onClick={approve}><Icon name="check" size={13} /> Approve &amp; build</button>
+            <button className="export-btn" onClick={approve}>Approve &amp; build <kbd>⌘↵</kbd></button>
           </>
         ) : (
           <p className="sb-foot-note">{b.status === "approved" ? "Approved. Claude is building this video now; it follows these shots." : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
@@ -258,20 +253,16 @@ export function StoryboardSheet() {
   );
 }
 
-/** The video's shape at a glance: one block per shot, as long as it lasts, coloured by kind. */
+/** The video's shape at a glance, like a track on the timeline: one clip per shot, as long as it lasts. */
 function Ribbon({ shots, total, focus, onPick, at }: { shots: Shot[]; total: number; focus?: string | null; onPick?: (id: string) => void; at?: number }) {
-  const kinds = [...new Set(shots.filter((s) => !s.dropped).map((s) => s.kind))];
   return (
-    <div className="sb-ribbon-wrap">
-      <div className="sb-ribbon">
-        {shots.filter((s) => !s.dropped).map((s, i) => (
-          <button key={s.id} className={`sb-rib ${focus === s.id ? "on" : ""}`} style={{ flexGrow: Math.max(0.4, len(s)), background: KIND_COLOR[s.kind] }} onClick={() => onPick?.(s.id)} title={`${i + 1}. ${KIND_LABEL[s.kind]} · ${len(s).toFixed(1)}s`}>
-            <span>{i + 1}</span>
-          </button>
-        ))}
-        {at !== undefined && total > 0 && <i className="sb-ribbon-head" style={{ left: `${(at / total) * 100}%` }} />}
-      </div>
-      <div className="sb-legend">{kinds.map((k) => <span key={k}><i style={{ background: KIND_COLOR[k] }} />{KIND_LABEL[k]}</span>)}</div>
+    <div className="sb-ribbon">
+      {shots.filter((s) => !s.dropped).map((s, i) => (
+        <button key={s.id} className={`sb-rib ${focus === s.id ? "on" : ""}`} style={{ flexGrow: Math.max(0.4, len(s)) }} onClick={() => onPick?.(s.id)} title={`${i + 1}. ${KIND_LABEL[s.kind]} · ${len(s).toFixed(1)}s${s.line ? ` · “${s.line}”` : ""}`}>
+          <span>{i + 1}</span>
+        </button>
+      ))}
+      {at !== undefined && total > 0 && <i className="sb-ribbon-head" style={{ left: `${(at / total) * 100}%` }} />}
     </div>
   );
 }
@@ -298,7 +289,7 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange }: { b: BoardS
         <div className="sb-field">
           <span>Shot</span>
           <div className="sb-seg">{SHOT_KINDS.map((k) => (
-            <button key={k} className={shot.kind === k ? "on" : ""} onClick={() => onChange({ kind: k })}><i style={{ background: KIND_COLOR[k] }} />{KIND_LABEL[k]}</button>
+            <button key={k} className={shot.kind === k ? "on" : ""} onClick={() => onChange({ kind: k })}>{KIND_LABEL[k]}</button>
           ))}</div>
         </div>
         {(shot.kind === "broll" || shot.kind === "image" || shot.kind === "split") && (
@@ -444,7 +435,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
     const src = shotSource(b, s);
     const picture = src ? await loadPicture(src.file, src.at) : null;
     const c = document.createElement("canvas");
-    drawShot(c, w, h, 2, s, board, picture);
+    drawShot(c, w, h, 2, s, board, picture, "paper");
     images.push(c.toDataURL("image/jpeg", 0.9));
   }
   const accent = accentOf(board);
@@ -458,12 +449,12 @@ async function pdfHtml(b: BoardState): Promise<string> {
       <div class="meta"><b>${String(i + 1).padStart(2, "0")}</b><span>${clock(start)} · ${len(s).toFixed(1)}s</span></div>
       <img src="${images[i]}" />
       <p class="line">${s.line ? `“${esc(s.line)}”` : "<em>no words</em>"}</p>
-      <p class="tags"><span style="--k:${KIND_COLOR[s.kind]}">${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
+      <p class="tags"><span>${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
       ${s.query && (s.kind === "broll" || s.kind === "image") ? `<p class="why">Shows: ${esc(s.query)}</p>` : ""}
       ${s.why ? `<p class="why">${esc(s.why)}</p>` : ""}
     </div>`;
   }).join("");
-  const ribbon = shots.map((s, i) => `<i style="flex-grow:${Math.max(0.4, len(s))};background:${KIND_COLOR[s.kind]}">${i + 1}</i>`).join("");
+  const ribbon = shots.map((s, i) => `<i style="flex-grow:${Math.max(0.4, len(s))};background:${i % 2 ? "#d9d3c7" : "#cbc4b6"}">${i + 1}</i>`).join("");
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page { size: A4 landscape; margin: 0; }
     * { box-sizing: border-box; margin: 0; }
@@ -487,7 +478,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
     .meta b { font-size: 11pt; color: ${accent}; }
     .line { font-size: 8.5pt; line-height: 1.32; margin-top: 2mm; font-weight: 600; }
     .tags { font-size: 7pt; color: #5d5a52; margin-top: 1.2mm; }
-    .tags span::before { content: ""; display: inline-block; width: 2mm; height: 2mm; border-radius: 50%; background: var(--k); margin-right: 1mm; }
+    .tags span { font-weight: 700; }
     .why { font-size: 7pt; color: #77736a; margin-top: 1mm; font-style: italic; line-height: 1.3; }
   </style></head><body>
     <section class="page cover">
