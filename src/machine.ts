@@ -7,6 +7,9 @@ import { basename, dirname, join, relative } from "node:path";
 
 const GB = 2 ** 30;
 
+/** The smallest media cache Remotion accepts (240 MB); anything less stops the render with an error. */
+export const MIN_MEDIA_CACHE = 256 * 2 ** 20;
+
 /**
  * The memory other work could take right now without the Mac running out. macOS keeps this as a
  * percentage (the number Activity Monitor's memory pressure is drawn from); Node's own freemem()
@@ -40,10 +43,19 @@ export function renderBudget(maxWorkers: number, workerGB = 1) {
     tight: spare < workerGB * GB,
     freeGB: free / GB,
     /** Each tab's own cache of decoded frames (Remotion's default is half the memory, per tab). */
-    mediaCache: within(spare / workers / 3, 96 * 2 ** 20, 512 * 2 ** 20),
+    mediaCache: within(spare / workers / 3, MIN_MEDIA_CACHE, 512 * 2 ** 20),
     /** The shared decoder's cache, for the videos that fall back to it. */
     offthreadCache: within(spare / 6, 128 * 2 ** 20, 512 * 2 ** 20),
   };
+}
+
+/**
+ * Creatro's own temporary files: ~/Library/Caches/Creatron/<parts>. Outside the Desktop, so a synced
+ * folder (Google Drive, iCloud) never uploads them or keeps copies of them, and macOS may clear it
+ * when the disk runs low.
+ */
+export function scratchDir(...parts: string[]): string {
+  return join(homedir(), "Library", "Caches", "Creatron", ...parts);
 }
 
 /**
@@ -52,7 +64,7 @@ export function renderBudget(maxWorkers: number, workerGB = 1) {
  * So Creatro runs a copy of Remotion's Chrome from ~/Library/Caches/Creatron, made once.
  */
 export function chromeOutsideProtectedFolders(exe: string): string {
-  const cache = join(homedir(), "Library", "Caches", "Creatron");
+  const cache = scratchDir();
   if (process.platform !== "darwin" || !relative(cache, exe).startsWith("..")) return exe;
   const folder = dirname(exe);
   // Named by the folder and the build's time, so a newer Remotion Chrome gets a fresh copy.

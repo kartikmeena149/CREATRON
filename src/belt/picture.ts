@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { cpus, totalmem } from "node:os";
 import { join } from "node:path";
-import { chromeOutsideProtectedFolders, freeMemory, renderBudget } from "../machine.ts";
+import { MIN_MEDIA_CACHE, chromeOutsideProtectedFolders, freeMemory, renderBudget } from "../machine.ts";
 import { FALLBACK, find } from "../toolchain.ts";
 import { ROOT, round, run } from "../tools.ts";
 import { DIR, P, fail, firstLine, rel, safeName } from "./context.ts";
@@ -238,7 +238,7 @@ async function remotionPieces(draft: boolean): Promise<Rendered> {
         // Safe try: its own browser, one worker, small caches, x264.
         why = await guarded(r, "safe", report, (cancelSignal, onProgress) => r.renderMedia({
           ...common, onProgress, cancelSignal, chromiumOptions: rm.chromiumOptions(), concurrency: 1, timeoutInMilliseconds: 240_000,
-          crf: draft ? 28 : 18, offthreadVideoCacheSizeInBytes: 128 * 2 ** 20, mediaCacheSizeInBytes: 96 * 2 ** 20,
+          crf: draft ? 28 : 18, offthreadVideoCacheSizeInBytes: 128 * 2 ** 20, mediaCacheSizeInBytes: MIN_MEDIA_CACHE,
         }));
         if (why) {
           rmSync(part, { force: true });

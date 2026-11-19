@@ -129,7 +129,11 @@ So it must read as the finished video, shot by shot:
     { "id": "s1", "line": "Google just put an AI chip in space.", "from": 0.12, "to": 2.40,
       "kind": "broll", "query": "satellite orbiting earth at night", "camera": "punch-in", "transition": "cut",
       "sound": "whoosh + bass hit",
-      "layers": [ { "kind": "text", "x": 0.08, "y": 0.12, "w": 0.84, "h": 0.16, "text": "AI CHIP IN SPACE", "color": "#FF3B30" },
+      "focus": { "x": 0.5, "y": 0.42 },
+      "layers": [ { "kind": "text", "x": 0.08, "y": 0.12, "w": 0.84, "h": 0.16, "text": "AI CHIP IN SPACE", "color": "#FF3B30",
+                    "enter": "from-left" },
+                  { "kind": "sticker", "x": 0.66, "y": 0.5, "w": 0.2, "h": 0.11, "text": "NEW", "enter": "pop",
+                    "note": "small bounce, then holds" },
                   { "kind": "caption", "x": 0.1, "y": 0.72, "w": 0.8, "h": 0.07, "text": "AI chip in space" } ],
       "why": "Hook: the strongest claim with the most striking picture, first 2 seconds." }
   ]
@@ -145,7 +149,11 @@ So it must read as the finished video, shot by shot:
 - `layers`: everything on screen besides the base picture, as boxes in fractions of the frame (x, y, w, h from the
   top left): text (titles, labels, with their real words), caption, image, footage (a picture-in-picture or card),
   box, arrow, sticker, chart. Colours from the palette. The sketch is drawn from these boxes, so place them where
-  they will really be.
+  they will really be. How each one moves is drawn as arrows, so say it: `enter` (cut, pop, fade, zoom, type, draw,
+  from-left, from-right, from-top, from-bottom), `to` `{ "x", "y" }` when it travels during the shot (where its top
+  left ends), `note` for a detail of the build ("counter rolls 0 to 7", "underline draws under SPACE").
+- `focus` `{ "x", "y" }`: where a zoom-in, zoom-out or punch-in is aimed (the face, the chip), so the sketch draws
+  the frame it ends on.
 - `camera`: still, zoom-in, zoom-out, punch-in, pan-left, pan-right, shake. `transition` into the shot: cut, whip,
   zoom, fade, slide, glitch, flash. `sound`: the effect on it, if any. `why`: one short sentence for the user.
 - If the user changes the storyboard, their version in notes/storyboard.json is the plan: a dropped shot's line is

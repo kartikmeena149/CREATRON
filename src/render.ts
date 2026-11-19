@@ -1,6 +1,6 @@
 // Step 3: turn an edit plan into a finished video with ffmpeg, on the user's machine.
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { drawCues } from "./captions.ts";
 import { buildCues, clipLength, editDuration, outputDuration } from "./timeline.ts";
 import { TRANSITION_TYPES, clipHandles, placedTransitions } from "./transitions.ts";
@@ -17,6 +17,7 @@ import { run, workDir } from "./tools.ts";
 import { effectivePlan } from "./tracks.ts";
 import { DEFAULT_EXPORT, type ExportOptions, encoderArgs, exportSize } from "./exportOptions.ts";
 import { personCutout } from "./person.ts";
+import { scratchDir } from "./machine.ts";
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
@@ -216,94 +217,104 @@ export async function render(
   });
 
   // Its own folder for stills, so looking never disturbs an export running at the same time.
-  const dir = join(workDir(analysis.source), stills ? "look-render" : "render");
+  // Its working files (the animated layer, gigabytes for a long edit) live in ~/Library/Caches, not
+  // on the Desktop where a synced folder (Google Drive, iCloud) copies them and keeps the copies after
+  // they're gone. They're deleted when the export ends, finished or not: nothing reuses them.
+  const dir = scratchDir("render", basename(workDir(analysis.source)), stills ? "look" : "export");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  // Animated captions are drawn by the Remotion layer below; plain ones as pictures here.
-  if (plan.captions.enabled && plan.captions.animation === "none" && analysis.words.length) {
-    const cues = buildCues(plan, analysis.words);
-    log(`render: drawing ${cues.length} captions`);
-    const list = drawCues(cues, plan, size.width, size.height, dir, total);
-    const input = args.filter((a) => a === "-i").length;
-    args.push("-f", "concat", "-safe", "0", "-i", list);
-    filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[caps]`);
-    // Captions go on top of everything, B-roll included.
-    filters.push(`${videoOut}[caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
-    videoOut = "[final]";
-  }
-  if (hasOverlay(plan, analysis.words) && stills) {
-    // Stills: the Remotion layer drawn only at those moments, each laid on its own frame.
-    log(`render: drawing ${stills.length} frames of the animated layer`);
-    const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
-    for (const [k, t] of stills.entries()) {
-      const file = join(dir, `layer-${k}.png`);
-      await renderOverlayStill(props, Math.round(t * fps), file, customDir(analysis.source));
+  try {
+    // Animated captions are drawn by the Remotion layer below; plain ones as pictures here.
+    if (plan.captions.enabled && plan.captions.animation === "none" && analysis.words.length) {
+      const cues = buildCues(plan, analysis.words);
+      log(`render: drawing ${cues.length} captions`);
+      const list = drawCues(cues, plan, size.width, size.height, dir, total);
       const input = args.filter((a) => a === "-i").length;
-      args.push("-loop", "1", "-framerate", String(fps), "-t", total.toFixed(3), "-i", file);
-      filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[still${k}]`);
-      filters.push(`${videoOut}[still${k}]overlay=format=auto:shortest=0:eof_action=pass:enable='${frameAt(t, fps)}',format=yuv420p[stilled${k}]`);
-      videoOut = `[stilled${k}]`;
+      args.push("-f", "concat", "-safe", "0", "-i", list);
+      filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[caps]`);
+      // Captions go on top of everything, B-roll included.
+      filters.push(`${videoOut}[caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
+      videoOut = "[final]";
     }
-  } else if (hasOverlay(plan, analysis.words)) {
-    // The Remotion layer (animated captions, titles, lower thirds) goes on top of everything.
-    log("render: animating text (Remotion)");
-    let shown = -1;
-    const frames = await renderOverlay(overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan)), join(dir, "motion"), (f) => {
-      const pct = Math.floor(f * 20) * 5;
-      if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
-    }, customDir(analysis.source));
-    // The frames become one video (with its see-through parts) before the render. Read as a PNG
-    // sequence inside the big render, ffmpeg froze partway through edits with many cuts, B-roll and
-    // sounds; as a video it doesn't, and the render runs about 10× faster.
-    const layer = join(dir, "motion.mov");
-    await run("ffmpeg", ["-y", "-v", "error", "-framerate", String(fps), "-pattern_type", "glob", "-i", frames, "-c:v", "qtrle", layer]);
-    const input = args.filter((a) => a === "-i").length;
-    args.push("-i", layer);
-    filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[motion]`);
-    filters.push(`${videoOut}[motion]overlay=format=auto:shortest=0:eof_action=pass,format=yuv420p[moved]`);
-    videoOut = "[moved]";
-  }
-  if (behind.length) {
-    // The person on top of the captions and the text layer, only while something "behind me" shows.
-    const when = behind.map((c) => `between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})`).join("+");
-    filters.push(`${videoOut}[person]overlay=format=auto:enable='${when}',format=yuv420p[behindout]`);
-    videoOut = "[behindout]";
-  }
-  if (sound) {
-    // Voiceover files come after the segment (and caption) inputs.
-    const firstVo = args.filter((a) => a === "-i").length;
-    args.push(...voiceoverInputs(plan));
-    const { origGainDb, level } = await prepareAudio(plan, analysis, log);
-    filters.push(...mixFilters(plan, "[acat]", firstVo, origGainDb));
-    filters.push(`[mix]${level},aresample=48000[aout]`);
-  }
+    if (hasOverlay(plan, analysis.words) && stills) {
+      // Stills: the Remotion layer drawn only at those moments, each laid on its own frame.
+      log(`render: drawing ${stills.length} frames of the animated layer`);
+      const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
+      for (const [k, t] of stills.entries()) {
+        const file = join(dir, `layer-${k}.png`);
+        await renderOverlayStill(props, Math.round(t * fps), file, customDir(analysis.source));
+        const input = args.filter((a) => a === "-i").length;
+        args.push("-loop", "1", "-framerate", String(fps), "-t", total.toFixed(3), "-i", file);
+        filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[still${k}]`);
+        filters.push(`${videoOut}[still${k}]overlay=format=auto:shortest=0:eof_action=pass:enable='${frameAt(t, fps)}',format=yuv420p[stilled${k}]`);
+        videoOut = `[stilled${k}]`;
+      }
+    } else if (hasOverlay(plan, analysis.words)) {
+      // The Remotion layer (animated captions, titles, lower thirds) goes on top of everything.
+      log("render: animating text (Remotion)");
+      let shown = -1;
+      await renderOverlay(overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan)), join(dir, "motion"), (f) => {
+        const pct = Math.floor(f * 20) * 5;
+        if (pct !== shown) log(`render: animating text ${(shown = pct)}%`);
+      }, customDir(analysis.source));
+      // The frames become video (with its see-through parts) before the render. Read as a PNG
+      // sequence inside the big render, ffmpeg froze partway through edits with many cuts, B-roll and
+      // sounds; as a video it doesn't, and the render runs about 10× faster.
+      log("render: packing the animated layer");
+      const layer = await packLayer(join(dir, "motion"), fps, dir);
+      const input = args.filter((a) => a === "-i").length;
+      args.push("-f", "concat", "-safe", "0", "-i", layer);
+      filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[motion]`);
+      filters.push(`${videoOut}[motion]overlay=format=auto:shortest=0:eof_action=pass,format=yuv420p[moved]`);
+      videoOut = "[moved]";
+    }
+    if (behind.length) {
+      // The person on top of the captions and the text layer, only while something "behind me" shows.
+      const when = behind.map((c) => `between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})`).join("+");
+      filters.push(`${videoOut}[person]overlay=format=auto:enable='${when}',format=yuv420p[behindout]`);
+      videoOut = "[behindout]";
+    }
+    if (sound) {
+      // Voiceover files come after the segment (and caption) inputs.
+      const firstVo = args.filter((a) => a === "-i").length;
+      args.push(...voiceoverInputs(plan));
+      const { origGainDb, level } = await prepareAudio(plan, analysis, log);
+      filters.push(...mixFilters(plan, "[acat]", firstVo, origGainDb));
+      filters.push(`[mix]${level},aresample=48000[aout]`);
+    }
 
-  if (stills) {
-    // Only the frames at those moments, as pictures.
-    filters.push(`${videoOut}select='${stills.map((t) => frameAt(t, fps)).join("+")}'[picked]`);
-    args.push("-filter_complex", filters.join(";"), "-map", "[picked]", "-fps_mode", "passthrough", "-frames:v", String(stills.length), resolve(out));
-  } else {
-    args.push("-filter_complex", filters.join(";"), "-map", videoOut);
-    if (sound) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
-    args.push(
-      "-t", total.toFixed(3),
-      ...encoderArgs(options), "-r", String(fps),
-      "-movflags", "+faststart", resolve(out),
-    );
-  }
+    if (stills) {
+      // Only the frames at those moments, as pictures.
+      filters.push(`${videoOut}select='${stills.map((t) => frameAt(t, fps)).join("+")}'[picked]`);
+      args.push("-filter_complex", filters.join(";"), "-map", "[picked]", "-fps_mode", "passthrough", "-frames:v", String(stills.length), resolve(out));
+    } else {
+      args.push("-filter_complex", filters.join(";"), "-map", videoOut);
+      if (sound) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
+      args.push(
+        "-t", total.toFixed(3),
+        ...encoderArgs(options), "-r", String(fps),
+        "-movflags", "+faststart", resolve(out),
+      );
+    }
 
-  log(`render: ${n} segments -> ${total.toFixed(1)}s ${size.width}x${size.height}`);
-  // ffmpeg -stats prints "time=00:00:12.34" as it goes; turn that into a 0..1 fraction.
-  await run("ffmpeg", args, (chunk) => {
-    const m = chunk.match(/time=(\d+):(\d+):([\d.]+)/g)?.at(-1)?.match(/(\d+):(\d+):([\d.]+)/);
-    if (m && onProgress) onProgress(Math.min(1, (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / total));
-  });
-  // The sound on its own as well, next to the video.
-  if (options.mp3 && sound) {
-    log("render: saving the sound as mp3");
-    await run("ffmpeg", ["-y", "-v", "error", "-i", resolve(out), "-vn", "-c:a", "libmp3lame", "-b:a", "192k", resolve(out).replace(/\.mp4$/i, "") + ".mp3"]);
+    log(`render: ${n} segments -> ${total.toFixed(1)}s ${size.width}x${size.height}`);
+    // ffmpeg -stats prints "time=00:00:12.34" as it goes; turn that into a 0..1 fraction.
+    await run("ffmpeg", args, (chunk) => {
+      const m = chunk.match(/time=(\d+):(\d+):([\d.]+)/g)?.at(-1)?.match(/(\d+):(\d+):([\d.]+)/);
+      if (m && onProgress) onProgress(Math.min(1, (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / total));
+    });
+    // The sound on its own as well, next to the video.
+    if (options.mp3 && sound) {
+      log("render: saving the sound as mp3");
+      await run("ffmpeg", ["-y", "-v", "error", "-i", resolve(out), "-vn", "-c:a", "libmp3lame", "-b:a", "192k", resolve(out).replace(/\.mp4$/i, "") + ".mp3"]);
+    }
+    return resolve(out);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    try {
+      rmdirSync(dirname(dir)); // this video's folder, when no other render of it is running
+    } catch {}
   }
-  return resolve(out);
 }
 
 /** An ffmpeg expression true on the one frame at output second t. */
@@ -360,4 +371,32 @@ function aacEncoder(): Promise<string> {
   return (aac ??= run("ffmpeg", ["-hide_banner", "-encoders"])
     .then(({ stdout }) => (/\baac_at\b/.test(stdout) ? "aac_at" : "aac"))
     .catch(() => "aac"));
+}
+
+/**
+ * The animated layer's PNG frames (element-NNNN.png, from Remotion) as see-through video, in pieces
+ * of 10 s. Each piece is FFV1: lossless, transparency kept, about half the size of QuickTime
+ * Animation and quicker to make. Each piece's frames are deleted as soon as it's written, so the disk
+ * never holds all the frames and the whole video at once. Returns the list the export reads as one input.
+ */
+async function packLayer(frames: string, fps: number, dir: string): Promise<string> {
+  const files = readdirSync(frames).filter((f) => /^element-\d+\.png$/.test(f)).sort();
+  if (!files.length) throw new Error("the animated layer drew no frames");
+  const digits = files[0]!.match(/\d+/)![0].length;
+  const first = Number(files[0]!.match(/\d+/)![0]);
+  const per = fps * 10;
+  const pieces: string[] = [];
+  for (let i = 0; i < files.length; i += per) {
+    const count = Math.min(per, files.length - i);
+    const piece = join(dir, `motion-${String(pieces.length).padStart(4, "0")}.mkv`);
+    await run("ffmpeg", [
+      "-y", "-v", "error", "-framerate", String(fps), "-start_number", String(first + i), "-i", join(frames, `element-%0${digits}d.png`),
+      "-frames:v", String(count), "-c:v", "ffv1", "-level", "3", "-slices", "24", "-slicecrc", "0", "-pix_fmt", "bgra", piece,
+    ]);
+    for (const f of files.slice(i, i + count)) rmSync(join(frames, f), { force: true });
+    pieces.push(piece);
+  }
+  const list = join(dir, "motion.txt");
+  writeFileSync(list, pieces.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"));
+  return list;
 }

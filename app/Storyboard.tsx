@@ -5,9 +5,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, TRANSITION_LABEL, boardLength,
+  movesOf,
 } from "../src/storyboard.ts";
 import { mediaUrl } from "./format.ts";
 import { Icon } from "./icons.tsx";
+import { SketchPad, sketching } from "./SketchPad.tsx";
 import { DictationBar, DictationNote, MicButton, appendSpeech, dictating, useDictation } from "./Dictation.tsx";
 import { type BoardState, useEditor } from "./store.ts";
 import { INK, PAPER, accentOf, aspect, drawShot } from "./storyboardSketch.ts";
@@ -82,6 +84,7 @@ export function StoryboardSheet() {
   const b = useEditor((s) => s.board);
   const open = useEditor((s) => s.boardOpen);
   const [focus, setFocus] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [changes, setChanges] = useState("");
   const dictation = useDictation((said) => setChanges((c) => appendSpeech(c, said)));
@@ -100,7 +103,7 @@ export function StoryboardSheet() {
   useEffect(() => {
     if (!open || !b) return;
     const onKey = (e: KeyboardEvent) => {
-      if (dictating()) return; // Esc and Return belong to the mic while it listens
+      if (dictating() || sketching()) return; // Esc and Return belong to the mic or the drawing view while they're open
       const typing = /INPUT|TEXTAREA|SELECT/.test((e.target as HTMLElement)?.tagName ?? "");
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -136,7 +139,7 @@ export function StoryboardSheet() {
   const accent = accentOf(board);
   const waiting = b.status === "waiting";
   const redrawing = b.status === "redrawing";
-  const edited = shots.some((s) => s.dropped || s.ask?.trim());
+  const edited = shots.some((s) => s.dropped || s.ask?.trim() || s.marks?.length);
   const focused = shots.find((s) => s.id === focus);
 
   const update = (id: string, patch: Partial<Shot>) => {
@@ -148,7 +151,7 @@ export function StoryboardSheet() {
   async function approve() {
     const s = useEditor.getState().board;
     if (!s || s.status !== "waiting") return;
-    const ok = await window.creatron.storyboardAnswer(s.video, { approve: true, board: s.draft });
+    const ok = await window.creatron.storyboardAnswer(s.video, { approve: true, board: s.draft, drawings: await drawings(s) });
     if (!ok) return setNote("This storyboard isn't waiting any more (the edit was stopped). Ask for a full edit again to start over.");
     useEditor.setState({ board: { ...s, status: "approved" }, boardOpen: false });
   }
@@ -156,8 +159,8 @@ export function StoryboardSheet() {
   async function redraw() {
     const s = useEditor.getState().board;
     if (!s || s.status !== "waiting") return;
-    if (!changes.trim() && !s.draft.shots.some((x) => x.ask?.trim() || x.dropped)) return setNote("Say what to change, or add a note to a shot first.");
-    const ok = await window.creatron.storyboardAnswer(s.video, { approve: false, board: s.draft, changes });
+    if (!changes.trim() && !s.draft.shots.some((x) => x.ask?.trim() || x.dropped || x.marks?.length)) return setNote("Say what to change, draw on a shot, or add a note to one first.");
+    const ok = await window.creatron.storyboardAnswer(s.video, { approve: false, board: s.draft, changes, drawings: await drawings(s) });
     if (!ok) return setNote("This storyboard isn't waiting any more (the edit was stopped).");
     setNote("");
     useEditor.setState({ board: { ...s, status: "redrawing" } });
@@ -225,13 +228,19 @@ export function StoryboardSheet() {
                   {s.camera !== "still" && <span className="sb-chip">{CAMERA_LABEL[s.camera]}</span>}
                   </div>
                 {s.sound && <p className="sb-sound" title={s.sound}><Icon name="volume" size={11} />{s.sound}</p>}
-                {s.ask?.trim() && <span className="sb-flag" title={s.ask}>note</span>}
+                {(s.ask?.trim() || s.marks?.length) && (
+                  <span className="sb-flag" title={s.ask?.trim() || "You drew on this shot"}>{s.marks?.length ? (s.ask?.trim() ? "drawn · note" : "drawn") : "note"}</span>
+                )}
               </button>
             </div>
           ))}
         </div>
         {redrawing && <div className="sb-redraw"><span className="shimmer">Claude is redrawing the storyboard…</span></div>}
-        {focused && <ShotDrawer b={b} shot={focused} index={shots.indexOf(focused)} editable={waiting} onClose={() => setFocus(null)} onChange={(p) => update(focused.id, p)} />}
+        {focused && <ShotDrawer b={b} shot={focused} index={shots.indexOf(focused)} editable={waiting} onClose={() => setFocus(null)} onChange={(p) => update(focused.id, p)} onDraw={() => setDrawing(focused.id)} />}
+        {drawing && shots.some((x) => x.id === drawing) && (
+          <Pad b={b} shot={shots.find((x) => x.id === drawing)!} index={shots.findIndex((x) => x.id === drawing)} editable={waiting}
+            onChange={(marks) => update(drawing, { marks })} onClose={() => setDrawing(null)} />
+        )}
       </div>
 
       <footer className="sb-foot">
@@ -273,7 +282,7 @@ function Ribbon({ shots, total, focus, onPick, at }: { shots: Shot[]; total: num
 }
 
 /** One shot, big, with everything about it you can change. */
-function ShotDrawer({ b, shot, index, editable, onClose, onChange }: { b: BoardState; shot: Shot; index: number; editable: boolean; onClose: () => void; onChange: (p: Partial<Shot>) => void }) {
+function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b: BoardState; shot: Shot; index: number; editable: boolean; onClose: () => void; onChange: (p: Partial<Shot>) => void; onDraw: () => void }) {
   const texts = shot.layers.map((l, i) => ({ l, i })).filter(({ l }) => l.kind === "text" || l.kind === "caption" || l.kind === "sticker");
   const setLayerText = (i: number, text: string) => onChange({ layers: shot.layers.map((l, j) => (j === i ? { ...l, text } : l)) });
   return (
@@ -283,9 +292,22 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange }: { b: BoardS
         <span className="dim small">{shot.from.toFixed(1)}–{shot.to.toFixed(1)}s of the recording</span>
         <button className="icon-btn" onClick={onClose} title="Close (esc)"><Icon name="close" size={14} /></button>
       </div>
-      <Sketch b={b} shot={shot} width={232} className="big" />
+      <div className="sb-drawable" onDoubleClick={onDraw} title="Double-click to draw on it">
+        <Sketch b={b} shot={shot} width={232} className="big" />
+      </div>
+      <div className="sb-draw-row">
+        <button className="sb-btn" onClick={onDraw} disabled={!editable && !shot.marks?.length}>
+          <Icon name="pencil" size={13} /> {shot.marks?.length ? "Edit your drawing" : "Draw on this shot"}
+        </button>
+        {shot.marks?.length ? <span className="dim small">Claude sees it when you answer</span> : <span className="dim small">Show it: not like that, like this</span>}
+      </div>
       <blockquote className="sb-quote">{shot.line ? `“${shot.line}”` : "No words in this shot."}</blockquote>
       {shot.why && <p className="sb-why"><Icon name="sparkle" size={11} /> {shot.why}</p>}
+      {movesOf(shot).length > 0 && (
+        <ul className="sb-moves" title="Drawn in red on the sketch">
+          {movesOf(shot).map((m, i) => <li key={i}>{m}</li>)}
+        </ul>
+      )}
       <fieldset disabled={!editable} className="sb-fields">
         <label className="sb-row-toggle">
           <span>Keep this line in the video</span>
@@ -331,6 +353,32 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange }: { b: BoardS
       {!editable && <p className="hint">The storyboard is {b.status === "approved" ? "approved" : "not waiting"}: changes now go through the chat.</p>}
     </aside>
   );
+}
+
+/** The drawing view for one shot, with that shot's picture. */
+function Pad(props: { b: BoardState; shot: Shot; index: number; editable: boolean; onChange: (marks: NonNullable<Shot["marks"]>) => void; onClose: () => void }) {
+  const picture = usePicture(props.b, props.shot);
+  return <SketchPad {...props} picture={picture} />;
+}
+
+/**
+ * Each shot the user drew on, as a picture for Claude: the sketch as they saw it (Creatro's dark
+ * view) with their strokes on top, 540 px wide. Keyed by shot id, as PNG data URLs.
+ */
+async function drawings(b: BoardState): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const ratio = aspect(b.draft.format);
+  const w = ratio < 1 ? 540 : 960;
+  const h = Math.round(w / ratio);
+  for (const s of b.draft.shots) {
+    if (!s.marks?.length) continue;
+    const src = shotSource(b, s);
+    const picture = src ? await loadPicture(src.file, src.at) : null;
+    const c = document.createElement("canvas");
+    drawShot(c, w, h, 1, s, b.draft, picture, "dark");
+    out[s.id] = c.toDataURL("image/png");
+  }
+  return out;
 }
 
 // ---- the animatic ----
@@ -455,6 +503,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
       <img src="${images[i]}" />
       <p class="line">${s.line ? `“${esc(s.line)}”` : "<em>no words</em>"}</p>
       <p class="tags"><span>${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
+      ${movesOf(s).map((m) => `<p class="move">→ ${esc(m)}</p>`).join("")}
       ${s.query && (s.kind === "broll" || s.kind === "image") ? `<p class="why">Shows: ${esc(s.query)}</p>` : ""}
       ${s.why ? `<p class="why">${esc(s.why)}</p>` : ""}
     </div>`;
@@ -484,6 +533,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
     .line { font-size: 8.5pt; line-height: 1.32; margin-top: 2mm; font-weight: 600; }
     .tags { font-size: 7pt; color: #5d5a52; margin-top: 1.2mm; }
     .tags span { font-weight: 700; }
+    .move { font-size: 7pt; color: ${"#c81d16"}; margin-top: .8mm; line-height: 1.3; }
     .why { font-size: 7pt; color: #77736a; margin-top: 1mm; font-style: italic; line-height: 1.3; }
   </style></head><body>
     <section class="page cover">

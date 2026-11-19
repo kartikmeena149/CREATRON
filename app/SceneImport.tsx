@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { type Detail, type Scene, captionLayers, sceneShots } from "../src/scene.ts";
 import { clipKeys } from "../src/sceneClips.ts";
+import { setTrack } from "../src/tracks.ts";
 import { clipsOf } from "./SceneClips.tsx";
 import { useEditor } from "./store.ts";
 
@@ -39,6 +40,9 @@ function switchToCreatronCaptions(id: string, scene: Scene): number {
   return found.ids.length;
 }
 
+/** Auto Edit's project of a video (work/<video>/autoedit/project): a whole finished edit, voice included. */
+export const isFullEdit = (path: string) => /\/autoedit\/project\/?$/.test(path);
+
 /** Asks for a Claude edit (a HyperFrames folder or .html) and opens the import dialog with it. */
 export async function pickClaudeEdit() {
   const path = await window.creatron.pickScene();
@@ -49,7 +53,10 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
   const hasProject = useEditor((s) => Boolean(s.project && s.plan.segments.length));
   const status = useEditor((s) => s.status);
   const [detail, setDetail] = useState<Detail>("balanced");
-  const [into, setInto] = useState<"new" | "here">(hasProject ? "here" : "new");
+  // A full edit (Auto Edit's project) is a finished video with its own cut voice and music. On top of
+  // the uncut original it would play two voices, so it opens as its own project unless asked otherwise.
+  const finished = isFullEdit(path);
+  const [into, setInto] = useState<"new" | "here">(hasProject && !finished ? "here" : "new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState<{ seconds: number; shots: number; titles: number; graphics: number; keyframes: number; sounds: number; id: string; captions: number } | null>(null);
@@ -73,6 +80,12 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
       if (!(await onOpenMain(base.value, !useEditor.getState().project))) return setBusy(false), setError("Couldn't open the new project.");
       const s = useEditor.getState();
       s.commit({ ...s.plan, tracks: { settings: { ...s.plan.tracks.settings, "video:1": { name: "Background" } } } });
+      at = 0;
+    }
+    if (into === "here" && finished) {
+      // In this project: from the start, and the original's sound off (the edit carries the voice, already cut).
+      const s = useEditor.getState();
+      s.commit(setTrack(s.plan, "video:1", { muted: true }));
       at = 0;
     }
     const id = useEditor.getState().addScene(file, scene, at, { withoutVoice: into === "new" });
@@ -137,11 +150,18 @@ export function SceneImport({ path, onClose, onOpenMain }: { path: string; onClo
               <span className="field-label">Build into</span>
               <div className="segmented">
                 <button className={into === "new" ? "on" : ""} disabled={busy} onClick={() => setInto("new")}>New project</button>
-                <button className={into === "here" ? "on" : ""} disabled={busy || !hasProject} title={hasProject ? "At the playhead, on a Text track" : "Open a video first"} onClick={() => setInto("here")}>
+                <button className={into === "here" ? "on" : ""} disabled={busy || !hasProject} title={!hasProject ? "Open a video first" : finished ? "From 0:00, with the original's sound turned off" : "At the playhead, on a Text track"} onClick={() => setInto("here")}>
                   This project
                 </button>
               </div>
             </div>
+            {finished && (
+              <p className="dim small">
+                {into === "new"
+                  ? "A finished edit has its own cut voice and music: as a new project it plays exactly as exported, from 0:00, one voice."
+                  : "It goes in at 0:00 and the original video's sound is turned off, so you hear one voice (the edit's, already cut)."}
+              </p>
+            )}
             <div className="si-row">
               <span className="field-label">Keyframes</span>
               <div className="segmented">

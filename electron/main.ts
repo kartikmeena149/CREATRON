@@ -3,6 +3,7 @@ import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "e
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type StoryboardReview, autoEditDir } from "../src/autoedit.ts";
 import { Storyboard } from "../src/storyboard.ts";
+import { withDrawings } from "../src/storyboardFiles.ts";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
 import { isDocument, readDocument } from "../src/documents.ts";
@@ -189,7 +190,7 @@ ipcMain.handle(
       // Storyboard first: shown in the window, the edit waits for the answer (storyboard-answer below).
       const review: StoryboardReview = (board, dir, round) =>
         new Promise((resolve) => {
-          boardAnswers.set(path, resolve);
+          boardAnswers.set(path, { resolve, dir });
           emit({ type: "storyboard", board, dir, round, video: path });
         });
       const result = await runFullEdit(path, handoff, model.replace(/^claude-code\//, ""), emit, { clips: library, review });
@@ -206,16 +207,18 @@ ipcMain.handle(
 ipcMain.handle("chat-stop", (_e, path: string) => (boardAnswers.delete(path), stopFullEdit(path), stopChat(path)));
 
 /** Storyboards waiting for the user, by video: their answer lets the full edit go on (or redraw). */
-const boardAnswers = new Map<string, (answer: Awaited<ReturnType<StoryboardReview>>) => void>();
-ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boolean; board: unknown; changes?: string }) => {
-  const done = boardAnswers.get(video);
-  if (!done) return false;
+const boardAnswers = new Map<string, { resolve: (answer: Awaited<ReturnType<StoryboardReview>>) => void; dir: string }>();
+ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string> }) => {
+  const waiting = boardAnswers.get(video);
+  if (!waiting) return false;
   const parsed = Storyboard.safeParse(answer.board);
   if (!parsed.success) return false;
   boardAnswers.delete(video);
-  done(answer.approve ? { approve: true, board: parsed.data } : { approve: false, board: parsed.data, changes: answer.changes ?? "" });
+  const board = withDrawings(parsed.data, waiting.dir, answer.drawings ?? {});
+  waiting.resolve(answer.approve ? { approve: true, board } : { approve: false, board, changes: answer.changes ?? "" });
   return true;
 });
+
 /** Whether a storyboard is waiting for this video's answer (after a reload of the window, say). */
 ipcMain.handle("storyboard-waiting", (_e, video: string) => boardAnswers.has(video));
 
@@ -235,10 +238,12 @@ ipcMain.handle("dictate", safe(async (wav: Uint8Array) => dictate(wav)));
 
 /** One frame of a video (or a picture) as a small JPEG data URL, for the storyboard's sketches. Null without a picture. */
 const frameCache = new Map<string, string | null>();
+let frameCount = 0;
 ipcMain.handle("frame-at", async (_e, file: string, seconds: number, width = 360) => {
   const key = `${file}|${seconds.toFixed(2)}|${width}`;
   if (frameCache.has(key)) return frameCache.get(key);
-  const out = join(app.getPath("temp"), `creatro-frame-${process.pid}-${frameCache.size}.jpg`);
+  // Its own file: many frames load at once, and a shared name let them delete each other's.
+  const out = join(app.getPath("temp"), `creatro-frame-${process.pid}-${++frameCount}.jpg`);
   let url: string | null = null;
   try {
     const still = /\.(png|jpe?g|webp|gif|avif)$/i.test(file);

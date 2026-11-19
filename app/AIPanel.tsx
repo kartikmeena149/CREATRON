@@ -315,17 +315,19 @@ export function AIPanel() {
             {enhancing ? <span className="mini-spin" /> : <Icon name="sparkle" size={16} />}
           </button>
           <ModelPicker value={model} onChange={setModel} />
-          <MicButton d={dictation} disabled={!project} />
           {busy && !live && <span className="mini-spin" />}
-          {busy && live ? (
-            <button className="send stop" onClick={stopClaude} title="Stop Claude">
-              <i className="stop-square" />
-            </button>
-          ) : (
-            <button className="send" disabled={!text.trim() || busy || !project} onClick={() => send()} title="Send (Enter)">
-              <Icon name="arrowUp" size={16} />
-            </button>
-          )}
+          <div className="ai-actions">
+            <MicButton d={dictation} disabled={!project} className="mic-round" />
+            {busy && live ? (
+              <button className="send stop" onClick={stopClaude} title="Stop Claude">
+                <i className="stop-square" />
+              </button>
+            ) : (
+              <button className="send" disabled={!text.trim() || busy || !project} onClick={() => send()} title="Send (Enter)">
+                <Icon name="arrowUp" size={16} />
+              </button>
+            )}
+          </div>
         </div>}
         </div>
       </div>
