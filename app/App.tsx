@@ -19,6 +19,7 @@ import * as act from "./clipActions.ts";
 import { isAudio, isImage } from "./format.ts";
 import { MIN, Splitter, defaultSize, fitLayout, useLayoutRoom, useLayoutSizes } from "./Splitter.tsx";
 import { SceneImport, pickClaudeEdit } from "./SceneImport.tsx";
+import { StoryboardSheet } from "./Storyboard.tsx";
 import { clipsOf, deleteSceneClip } from "./SceneClips.tsx";
 
 export function App() {
@@ -122,6 +123,7 @@ export function App() {
       </div>
       <ClipMenu />
       <TransitionPicker />
+      <StoryboardSheet />
       {sceneImport && <SceneImport key={sceneImport} path={sceneImport} onClose={() => set({ sceneImport: null })} onOpenMain={open} />}
       {linkOpen && <LinkImport key={linkOpen} audio={linkOpen === "audio"} onClose={() => setLinkOpen(false)} onOpenMain={(p) => open(p)} />}
       {importing && (

@@ -9,6 +9,7 @@ import { compactTracks, freeTrack, isEffectsTrack, spanFree, userClip } from "..
 import { effectDef, registerPresets } from "../motion/Effects.tsx";
 import type { EffectPreset } from "../src/sceneEffects.ts";
 import { nearestCut } from "./cuts.ts";
+import type { Storyboard } from "../src/storyboard.ts";
 import { useFx } from "./fxState.ts";
 import { AUDIO_KEYS, BROLL_KEYS, SEGMENT_KEYS, routeToKeys, shiftKeys } from "../src/keyframes.ts";
 import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
@@ -49,6 +50,17 @@ export type AgentMessage = {
   job?: FullEditProgress & { at: number };
   /** The finished full edit this turn made. */
   result?: FullEditResult;
+  /** This turn's full edit drew a storyboard (round n): the card that opens it. */
+  board?: number;
+};
+
+/** The storyboard of a full edit: what Claude drew, the user's edited copy, and where it stands. */
+export type BoardState = {
+  video: string;
+  dir: string;
+  round: number;
+  draft: Storyboard;
+  status: "waiting" | "redrawing" | "approved" | "closed";
 };
 
 type State = {
@@ -170,6 +182,9 @@ type State = {
   loadEffectLibrary(): Promise<void>;
   /** A Claude edit waiting in the import dialog (its folder or .html). */
   sceneImport: string | null;
+  /** The full edit's storyboard (the sheet shows it while boardOpen). */
+  board: BoardState | null;
+  boardOpen: boolean;
   /** Puts an imported edit on a Text track at `at` (default: the playhead), its sounds on SFX tracks, one undo step. Returns the clip's id. */
   addScene(file: string, scene: Scene, at?: number, opts?: { withoutVoice?: boolean }): string;
   /** Changes one layer of a scene clip: `fn` gets its current changes and returns the new ones. */
@@ -537,6 +552,8 @@ export const useEditor = create<State>((set, get) => ({
 
   scenes: {},
   sceneImport: null,
+  board: null,
+  boardOpen: false,
   libraryFonts: [],
   effectLibrary: [],
   loadEffectLibrary: async () => {
@@ -652,6 +669,10 @@ export const useEditor = create<State>((set, get) => ({
     } else if (e.type === "result") {
       m.result = e.result;
       m.job = undefined;
+      if (s.board?.status === "waiting" || s.board?.status === "redrawing") set({ board: { ...s.board, status: "closed" } });
+    } else if (e.type === "storyboard") {
+      m.board = e.round;
+      set({ board: { video: e.video, dir: e.dir, round: e.round, draft: e.board, status: "waiting" }, boardOpen: true });
     } else if (e.type === "plan") {
       // The first change of a turn is one undo step; after that the timeline follows Claude live.
       if (!m.before) (m.before = s.plan), get().checkpoint();
@@ -659,7 +680,10 @@ export const useEditor = create<State>((set, get) => ({
     } else if (e.type === "done") {
       if (e.plan) get().live(e.plan);
       Object.assign(m, { status: e.question ? "waiting" : "done", question: e.question, ended: Date.now(), after: m.before ? get().plan : undefined });
-    } else if (e.type === "error") Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
+    } else if (e.type === "error") {
+      Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
+      if (s.board && s.board.status !== "approved") set({ board: { ...s.board, status: "closed" } });
+    }
     msgs[i] = m;
     set({ messages: msgs, busy: e.type === "done" || e.type === "error" ? false : s.busy });
   },

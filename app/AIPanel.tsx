@@ -87,7 +87,7 @@ export function AIPanel() {
   const answer = (a: string) => {
     if (!project) return;
     useEditor.getState().answerQuestion(a);
-    window.creatron.chatSend(project.path, a, useEditor.getState().plan, model, undefined, true).then((r) => !r.ok && say({ role: "error", text: r.error }));
+    window.creatron.chatSend(project.path, a, useEditor.getState().plan, model, undefined, true, useEditor.getState().library).then((r) => !r.ok && say({ role: "error", text: r.error }));
   };
   const stopClaude = () => {
     if (!project) return;
@@ -138,7 +138,7 @@ export function AIPanel() {
         ? { clips: target ? picked : [], broll: pickedBroll?.id, sceneClip, markers: sent, attachments: files.map((path) => ({ path })) }
         : undefined;
       if (focus) set({ picked: [], selected: null, selectedBroll: null, selectedClip: null, markers: [], pointing: false });
-      const r = await window.creatron.chatSend(project.path, request, before, model, focus);
+      const r = await window.creatron.chatSend(project.path, request, before, model, focus, false, useEditor.getState().library);
       if (!r.ok) say({ role: "error", text: signInProblem(r.error) ?? r.error });
       return;
     }

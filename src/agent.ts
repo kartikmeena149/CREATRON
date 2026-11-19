@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { agentDir, compileCustom, customDir, customFiles } from "./customcode.ts";
 import { outputSize } from "./frame.ts";
+import { changedMoments, lookFrames } from "./look.ts";
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { sceneLibrary } from "./sceneFiles.ts";
 import { type Focus, type Marker, describe, describeFocus, keepsUnpicked, placeBroll, unknownAudio, useAttachments } from "./plan.ts";
@@ -55,18 +56,25 @@ export async function runAgent(
       turn = await claude(dir, claudeModel, `Creatro checked your work and found problems. Fix them:\n- ${problems.join("\n- ")}`, turn.session);
       continue;
     }
-    const custom = plan!.motion.filter((m) => m.template === "custom");
-    if (looked || !custom.length) return { plan: plan!, notes: turn.text, model };
+    // Once: frames of the edited video where it changed, drawn by the export, for Claude to check.
+    const moments = changedMoments(current, plan!, analysis);
+    if (looked || !moments.length) return { plan: plan!, notes: turn.text, model };
     looked = true;
     log("rendering frames for Claude to check");
-    const frames = await reviewFrames(dir, analysis, plan!);
-    log("Claude is checking its animations");
+    let frames: { file: string; t: number; what: string }[] = [];
+    try {
+      frames = await lookFrames(dir, analysis, plan!, moments);
+    } catch (e) {
+      log(`couldn't render frames to check: ${e instanceof Error ? e.message : e}`);
+      return { plan: plan!, notes: turn.text, model };
+    }
+    log("Claude is checking how it looks");
     turn = await claude(
       dir,
       claudeModel,
       [
-        "Here is how your animations look over the video (Read each image):",
-        ...frames.map((f) => `- ${f.file} (${f.what})`),
+        "Here is how the edited video looks now, drawn exactly as it will export (Read each image):",
+        ...frames.map((f) => `- ${f.file} at ${f.t.toFixed(2)}s: ${f.what}`),
         "If anything is wrong (cut off, hard to read, in the wrong place, clashing with captions, not what the user asked), fix it.",
         "Then reply again with your one or two sentences for the user.",
       ].join("\n"),
@@ -166,30 +174,6 @@ export async function markerFrames(dir: string, analysis: Analysis, plan: EditPl
     ]);
     rmSync(layer, { force: true });
     out.push(`- #${m.n}: ${file}`);
-  }
-  return out;
-}
-
-/** Two frames of each custom animation (up to 3), drawn over the real video frame, saved in checks/. */
-async function reviewFrames(dir: string, analysis: Analysis, plan: EditPlan) {
-  const size = outputSize(plan, analysis);
-  const fps = analysis.fps;
-  const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
-  const out: { file: string; what: string }[] = [];
-  for (const m of plan.motion.filter((x) => x.template === "custom").slice(0, 3)) {
-    for (const k of [0.3, 0.7]) {
-      const t = Math.min(m.at + m.duration * k, outputDuration(plan) - 0.05);
-      const layer = join(dir, "checks", `${m.id}-${k}-layer.png`);
-      const file = join("checks", `${m.id}-${Math.round(k * 100)}.png`);
-      await renderOverlayStill(props, Math.round(t * fps), layer, customDir(analysis.source));
-      await run("ffmpeg", [
-        "-y", "-v", "error", "-ss", toSourceTime(plan, t).toFixed(3), "-i", analysis.source, "-i", layer,
-        "-filter_complex", `[0:v]scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height}[v];[v][1:v]overlay,scale=-2:'min(960,ih)'`,
-        "-frames:v", "1", join(dir, file),
-      ]);
-      rmSync(layer, { force: true });
-      out.push({ file, what: `${m.component} at ${t.toFixed(1)} s, ${Math.round(k * 100)}% through it` });
-    }
   }
   return out;
 }

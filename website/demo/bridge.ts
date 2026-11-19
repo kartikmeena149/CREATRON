@@ -113,6 +113,11 @@ const api: Api = {
   openFile: async () => "",
   fileSize: async () => 0,
   reveal: async () => {},
+  storyboardAnswer: async () => false,
+  storyboardWaiting: async () => false,
+  storyboardPdf: async () => ({ ok: false as const, error: "Not in the web demo." }),
+  frameAt: async () => null,
+  projectAssets: async () => ({ dir: "", files: [] }),
 
   personCutout: async () => desktop("Putting text behind a person"),
   linkInfo: async () => desktop("Importing from a link"),

@@ -44,7 +44,11 @@ declare global {
       effectLibrary(): Promise<import("../src/sceneEffects.ts").EffectPreset[]>;
       /** Adds a Claude edit's effects to the library; the names of the new ones. */
       extractEffects(file: string): Promise<Result<string[]>>;
-      chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean): Promise<Result<void>>;
+      chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean, library?: string[]): Promise<Result<void>>;
+      storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string }): Promise<boolean>;
+      storyboardWaiting(video: string): Promise<boolean>;
+      storyboardPdf(dir: string, html: string, name: string): Promise<Result<string>>;
+      frameAt(file: string, seconds: number, width?: number): Promise<string | null>;
       chatStop(path: string): Promise<void>;
       onChatEvent(fn: (e: { path: string; event: ChatEvent }) => void): () => void;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
@@ -54,6 +58,7 @@ declare global {
       exportDir(): Promise<string>;
       pickFolder(start?: string): Promise<string | undefined>;
       reveal(path: string): Promise<void>;
+      projectAssets(video: string): Promise<{ dir: string; files: { path: string; folder: string; at: number }[] }>;
       fileThumbs(path: string): Promise<Result<Thumbs>>;
       trashMedia(path: string): Promise<Result<void>>;
       madeByCreatron(path: string): Promise<boolean>;

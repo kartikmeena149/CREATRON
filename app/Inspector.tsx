@@ -191,7 +191,65 @@ function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () 
         {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
       </div>
       {library.length > 0 && <p className="hint pad">Drag videos, photos, music or sound effects onto any track. Double-click a video to open it as the main video in a new tab.</p>}
+      <AiAssets query={query} onOpenMain={onOpenMain} />
     </>
+  );
+}
+
+// The AI project's assets/ subfolders, in this order, with a plain name.
+const ASSET_GROUPS: [string, string][] = [["broll", "B-roll"], ["img", "Images"], ["images", "Images"], ["audio", "Music"], ["sfx", "Sound effects"], ["cutouts", "Cutouts"]];
+
+/** Everything the AI has downloaded or made for this video, live: it fills in while an edit is still running. */
+function AiAssets({ query, onOpenMain }: { query: string; onOpenMain: (path: string) => void }) {
+  const video = useEditor((s) => s.project?.path);
+  const [assets, setAssets] = useState<{ dir: string; files: { path: string; folder: string; at: number }[] }>();
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    setAssets(undefined);
+    if (!video) return;
+    let alive = true;
+    const look = () => window.creatron.projectAssets(video).then((a) => alive && setAssets(a)).catch(() => {});
+    look();
+    const timer = setInterval(look, 2000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [video]);
+  if (!assets?.files.length) return null;
+  const q = query.trim().toLowerCase();
+  const shown = assets.files.filter((f) => baseName(f.path).toLowerCase().includes(q));
+  const names = new Map(ASSET_GROUPS);
+  const order = [...new Set([...ASSET_GROUPS.map(([k]) => k), ...shown.map((f) => f.folder)])];
+  const groups = order
+    .map((k) => ({ key: k, label: names.get(k) ?? k, files: shown.filter((f) => f.folder === k) }))
+    .filter((g) => g.files.length);
+  return (
+    <div className={`ai-assets ${open ? "" : "closed"}`}>
+      <div className="ai-assets-head">
+        <button className="ai-assets-toggle" onClick={() => setOpen(!open)} title={open ? "Hide" : "Show"}>
+          <Icon name="chevron" size={12} />
+          <Icon name="folder" size={14} />
+          <span>Assets</span>
+          <span className="dim small">{assets.files.length}</span>
+        </button>
+        <button className="icon-btn" title="Show the assets folder in Finder" onClick={() => window.creatron.reveal(assets.dir)}><Icon name="expand" size={13} /></button>
+      </div>
+      {open && (
+        <>
+          <p className="hint pad">What the AI downloaded and made for this video. It fills in while the edit runs; drag any of it onto the timeline.</p>
+          {!groups.length && <p className="hint pad">No assets match “{query}”.</p>}
+          {groups.map((g) => (
+            <div key={g.key}>
+              <div className="ai-assets-group">{g.label}<span className="dim small">{g.files.length}</span></div>
+              <div className="media-grid">
+                {g.files.map((f) => <MediaCard key={f.path} path={f.path} onOpenMain={onOpenMain} />)}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

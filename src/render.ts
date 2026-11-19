@@ -9,7 +9,7 @@ import { cropBox, cropOf, isCropped, isIdentity, outputSize, pictureSize, placem
 import { hasOverlay, overlayProps } from "./motion.ts";
 import { sceneLibrary } from "./sceneFiles.ts";
 import { customDir } from "./customcode.ts";
-import { renderOverlay } from "./remotion.ts";
+import { renderOverlay, renderOverlayStill } from "./remotion.ts";
 import { mixFilters, prepareAudio, segmentAudio, voiceoverInputs } from "./loudness.ts";
 import type { Analysis, EditPlan } from "./schema.ts";
 import { checkPlan } from "./schema.ts";
@@ -26,8 +26,16 @@ export async function render(
   out: string,
   log = console.error,
   onProgress?: (fraction: number) => void,
-  options: ExportOptions = DEFAULT_EXPORT,
+  options: ExportOptions & {
+    /**
+     * Stills instead of a video: PNG frames of the edit at these output seconds, exactly as the
+     * export draws them (no sound), written to `out` as a pattern with %02d, in time order. What
+     * the AI looks at to see its own edits.
+     */
+    stills?: number[];
+  } = DEFAULT_EXPORT,
 ): Promise<string> {
+  const stills = options.stills?.length ? [...new Set(options.stills.map((t) => Math.round(t * 1000) / 1000))].sort((a, b) => a - b) : undefined;
   // Hidden and muted tracks stay out of the video; higher video tracks go on top.
   plan = effectivePlan(plan);
   // B-roll that plays its own sound joins the mix like a sound effect (it doesn't dip the voice).
@@ -37,6 +45,8 @@ export async function render(
 
   // A voice recording as the main track has no picture: it plays over black.
   const picture = analysis.width > 0;
+  // Stills are pictures only: no sound to mix or level.
+  const sound = analysis.hasAudio && !stills;
   const W = even(pictureSize(analysis).width);
   const H = even(pictureSize(analysis).height);
   // The chosen frame rate and size: captions, text and B-roll are drawn at that size, not scaled up.
@@ -125,18 +135,18 @@ export async function render(
       filters.push(...segVideo(s, i, `[${i}:v]`, `[v${i}]`));
       vpads.push(`[v${i}]`);
     }
-    if (analysis.hasAudio) {
+    if (sound) {
       filters.push(segmentAudio(s, i, transitions.length ? reach[i].before : undefined));
       apads.push(`[a${i}]`);
     }
   });
   const n = plan.segments.length;
-  if (analysis.hasAudio) filters.push(`${apads.join("")}concat=n=${n}:v=0:a=1[acat0]`);
+  if (sound) filters.push(`${apads.join("")}concat=n=${n}:v=0:a=1[acat0]`);
   if (picture) {
     filters.push(...joinPictures(vpads, ""));
     filters.push(tail > 0.01 ? `[cat0]tpad=stop_mode=add:stop_duration=${tail.toFixed(3)}:color=black[cat]` : "[cat0]null[cat]");
   } else filters.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${total.toFixed(3)},format=yuv420p[cat]`);
-  if (analysis.hasAudio) filters.push(tail > 0.01 ? `[acat0]apad=pad_dur=${tail.toFixed(3)}[acat]` : "[acat0]anull[acat]");
+  if (sound) filters.push(tail > 0.01 ? `[acat0]apad=pad_dur=${tail.toFixed(3)}[acat]` : "[acat0]anull[acat]");
   filters.push(...frameFilters(plan, W, H, size, fps, total));
 
   // "Behind me" captions: the person is cut out of the framed main video (Apple Vision mask, sent
@@ -205,7 +215,8 @@ export async function render(
     videoOut = `[bo${k}]`;
   });
 
-  const dir = join(workDir(analysis.source), "render");
+  // Its own folder for stills, so looking never disturbs an export running at the same time.
+  const dir = join(workDir(analysis.source), stills ? "look-render" : "render");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   // Animated captions are drawn by the Remotion layer below; plain ones as pictures here.
@@ -220,7 +231,20 @@ export async function render(
     filters.push(`${videoOut}[caps]overlay=format=auto:shortest=0,format=yuv420p[final]`);
     videoOut = "[final]";
   }
-  if (hasOverlay(plan, analysis.words)) {
+  if (hasOverlay(plan, analysis.words) && stills) {
+    // Stills: the Remotion layer drawn only at those moments, each laid on its own frame.
+    log(`render: drawing ${stills.length} frames of the animated layer`);
+    const props = overlayProps(plan, analysis.words, size, fps, await sceneLibrary(plan));
+    for (const [k, t] of stills.entries()) {
+      const file = join(dir, `layer-${k}.png`);
+      await renderOverlayStill(props, Math.round(t * fps), file, customDir(analysis.source));
+      const input = args.filter((a) => a === "-i").length;
+      args.push("-loop", "1", "-framerate", String(fps), "-t", total.toFixed(3), "-i", file);
+      filters.push(`[${input}:v]format=rgba,setpts=PTS-STARTPTS[still${k}]`);
+      filters.push(`${videoOut}[still${k}]overlay=format=auto:shortest=0:eof_action=pass:enable='${frameAt(t, fps)}',format=yuv420p[stilled${k}]`);
+      videoOut = `[stilled${k}]`;
+    }
+  } else if (hasOverlay(plan, analysis.words)) {
     // The Remotion layer (animated captions, titles, lower thirds) goes on top of everything.
     log("render: animating text (Remotion)");
     let shown = -1;
@@ -245,7 +269,7 @@ export async function render(
     filters.push(`${videoOut}[person]overlay=format=auto:enable='${when}',format=yuv420p[behindout]`);
     videoOut = "[behindout]";
   }
-  if (analysis.hasAudio) {
+  if (sound) {
     // Voiceover files come after the segment (and caption) inputs.
     const firstVo = args.filter((a) => a === "-i").length;
     args.push(...voiceoverInputs(plan));
@@ -254,13 +278,19 @@ export async function render(
     filters.push(`[mix]${level},aresample=48000[aout]`);
   }
 
-  args.push("-filter_complex", filters.join(";"), "-map", videoOut);
-  if (analysis.hasAudio) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
-  args.push(
-    "-t", total.toFixed(3),
-    ...encoderArgs(options), "-r", String(fps),
-    "-movflags", "+faststart", resolve(out),
-  );
+  if (stills) {
+    // Only the frames at those moments, as pictures.
+    filters.push(`${videoOut}select='${stills.map((t) => frameAt(t, fps)).join("+")}'[picked]`);
+    args.push("-filter_complex", filters.join(";"), "-map", "[picked]", "-fps_mode", "passthrough", "-frames:v", String(stills.length), resolve(out));
+  } else {
+    args.push("-filter_complex", filters.join(";"), "-map", videoOut);
+    if (sound) args.push("-map", "[aout]", "-c:a", await aacEncoder(), "-b:a", "192k");
+    args.push(
+      "-t", total.toFixed(3),
+      ...encoderArgs(options), "-r", String(fps),
+      "-movflags", "+faststart", resolve(out),
+    );
+  }
 
   log(`render: ${n} segments -> ${total.toFixed(1)}s ${size.width}x${size.height}`);
   // ffmpeg -stats prints "time=00:00:12.34" as it goes; turn that into a 0..1 fraction.
@@ -269,12 +299,15 @@ export async function render(
     if (m && onProgress) onProgress(Math.min(1, (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) / total));
   });
   // The sound on its own as well, next to the video.
-  if (options.mp3 && analysis.hasAudio) {
+  if (options.mp3 && sound) {
     log("render: saving the sound as mp3");
     await run("ffmpeg", ["-y", "-v", "error", "-i", resolve(out), "-vn", "-c:a", "libmp3lame", "-b:a", "192k", resolve(out).replace(/\.mp4$/i, "") + ".mp3"]);
   }
   return resolve(out);
 }
+
+/** An ffmpeg expression true on the one frame at output second t. */
+const frameAt = (t: number, fps: number) => `between(t,${(t - 0.5 / fps).toFixed(4)},${(t + 0.5 / fps - 0.0001).toFixed(4)})`;
 
 /** Turns the joined video [cat] into the output frame [framed], placed per plan.transform (labels prefixed with p_). */
 function frameFilters(

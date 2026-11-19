@@ -36,13 +36,14 @@ README.md    the user's "how to edit this" page: keep it true
 - The starter in `project/src/` already plays the whole recording with captions. You build on it.
 
 ## Tools you may run (Bash)
-Commands run in a sandbox that can only write inside this folder and has no internet (downloads go through
-the B-roll commands). Write commands plainly: full command names and paths, no shell variables for commands
-(`T=...; $T` is refused). If a command is refused, it is never the end: run it again simpler (one command per call),
-or use another way. Never try to get around the sandbox itself. Never print, read or ask for API keys.
+You work freely, like Claude Code at a keyboard: no sandbox, the internet, any command, and any skills or MCP
+tools you have (HyperFrames, Remotion, earshot...). Freedom is for making a better video, not for spreading
+out: everything the video uses still lives in this folder (see "Editable, always"). Prefer the commands below,
+because they keep the project editable and send tools through Creatro's fallbacks. Never change files outside
+this folder, never install anything, and never print, read or ask for API keys.
 - `$T tools`: the tool health check again (same as notes/TOOLS.md, fresh).
 - `$T stage <name>`: say which step you're on (the user sees a progress bar). Call it at the start of every step
-  below with exactly these names: look, cut, plan, broll, build, render, check, fix.
+  with exactly these names: board (the storyboard), look, cut, plan, broll, build, render, check, fix.
 - `$T cut notes/keep.json`: keep these SOURCE ranges (`[[start, end], ...]`). Nothing is cut into a file: the
   ranges become `"cuts"` in `project/timeline.json`, the words inside them become `"captions"` there (live text,
   source times), and `notes/cut-words.json` lists every kept word on the finished video's timeline for your planning.
@@ -67,9 +68,9 @@ or use another way. Never try to get around the sandbox itself. Never print, rea
 - `$EARSHOT sfx list` / `$EARSHOT sfx render <id> ... -o assets/sfx/<name>.wav`: a bank of sound effects
   (whoosh, pop, click, ding, swoosh, typing...) rendered to the length and pitch you need (see `--help`).
   `$EARSHOT measure <file>` gives exact loudness.
-- `node <script>.mjs` for your own helper scripts (sandboxed), `ls`, `cat`, `head`, `tail`, `wc`, `mkdir`,
-  `cp`, `mv`, `rm` inside this folder. WebSearch / WebFetch to research facts and visuals for the topic.
-- Read / Write / Edit / Glob / Grep: only in this folder. Read images (PNG/JPG) to SEE them.
+- `node <script>.mjs` for your own helper scripts, and any shell command you need. WebSearch / WebFetch to
+  research facts and visuals for the topic.
+- Read / Write / Edit / Glob / Grep: write only in this folder. Read images (PNG/JPG) to SEE them.
 
 ## When a tool doesn't work (state it in one line, use the next one, finish)
 | Job | First choice | If that's broken | Last resort |
@@ -108,6 +109,48 @@ without you. So:
 - Nothing may exist only in your command history: if making an asset took a command (an ffmpeg SFX, a trimmed
   clip), add one line to `notes/how-assets-were-made.md` with the command.
 
+## Storyboard first
+Every full edit starts with a storyboard the user approves before anything is built. When asked for it, only
+look and draw it (call `$T stage board`): read the notes, look at a few frames of the source and of any clips in
+`assets/clips/` (the user's own clips: use them where they fit), decide the edit, and write
+`notes/storyboard.json`. Don't cut, download or build yet. Creatro draws each shot as a sketch made from the real
+footage, lays them out like a film storyboard, plays them as an animatic over the voice, and makes a PDF of it.
+So it must read as the finished video, shot by shot:
+
+```json
+{
+  "title": "Google put an AI chip in orbit",
+  "idea": "One sentence: what the video says and why someone keeps watching.",
+  "format": "9:16",
+  "look": { "palette": ["#0B0B12", "#F5F5F0", "#FF3B30"], "font": "SF Pro Display Black", "mood": "fast, techy, news",
+            "captions": "white bold, 2 words a page, accent word red, lower third" },
+  "music": "dark pulsing synth, low under the voice",
+  "shots": [
+    { "id": "s1", "line": "Google just put an AI chip in space.", "from": 0.12, "to": 2.40,
+      "kind": "broll", "query": "satellite orbiting earth at night", "camera": "punch-in", "transition": "cut",
+      "sound": "whoosh + bass hit",
+      "layers": [ { "kind": "text", "x": 0.08, "y": 0.12, "w": 0.84, "h": 0.16, "text": "AI CHIP IN SPACE", "color": "#FF3B30" },
+                  { "kind": "caption", "x": 0.1, "y": 0.72, "w": 0.8, "h": 0.07, "text": "AI chip in space" } ],
+      "why": "Hook: the strongest claim with the most striking picture, first 2 seconds." }
+  ]
+}
+```
+- One shot per line or beat, in order, covering everything that stays in the video (usually a new shot every
+  2-4 s). `line` is the exact words said in it; `from`/`to` are SOURCE seconds from notes/transcript.md. Leave out
+  what you'd cut (retakes, dead air): those lines simply have no shot.
+- `kind`: talking (the speaker), broll, image, split (speaker + picture), cutout (speaker cut out on a designed
+  background), text (a title card), graphic (chart, diagram, counter). `source`: `{ "file": "main", "at": 12.3 }`
+  for a frame of the recording, or `{ "file": "assets/clips/x.mp4", "at": 2 }` for the user's clip. `query`: what
+  B-roll still to be found must show (concrete visual words).
+- `layers`: everything on screen besides the base picture, as boxes in fractions of the frame (x, y, w, h from the
+  top left): text (titles, labels, with their real words), caption, image, footage (a picture-in-picture or card),
+  box, arrow, sticker, chart. Colours from the palette. The sketch is drawn from these boxes, so place them where
+  they will really be.
+- `camera`: still, zoom-in, zoom-out, punch-in, pan-left, pan-right, shake. `transition` into the shot: cut, whip,
+  zoom, fade, slide, glitch, flash. `sound`: the effect on it, if any. `why`: one short sentence for the user.
+- If the user changes the storyboard, their version in notes/storyboard.json is the plan: a dropped shot's line is
+  cut, a shot's `ask` is their note on it. Once approved, build exactly that video (better in detail, same structure).
+
 ## The steps
 1. **look**: Read notes/TOOLS.md, notes/brief.md, notes/transcript.md, notes/source.json, and the reference frames
    if any. Look at 4-6 frames of the source (`ffmpeg -ss <t> -i source/<file> -frames:v 1 -vf scale=-2:640
@@ -120,7 +163,7 @@ without you. So:
    Write notes/keep.json, run `$T cut notes/keep.json`, then read notes/cut-words.json for broken sentences.
    Then open timeline.json and fix the captions: wrong words, names, numbers; 1-3 words per page, a new page at
    every sentence end or comma (never "owner. No,"); add `accent` on the key word of a phrase.
-3. **plan**: Write `notes/plan.md`: the beats (hook, points, payoff), and for every few seconds what is on screen:
+3. **plan**: When an approved notes/storyboard.json exists, it is the plan: skip this step. Otherwise write `notes/plan.md`: the beats (hook, points, payoff), and for every few seconds what is on screen:
    which layout, which B-roll and why, captions, graphics/annotations, SFX cues, music. Give the video a hook in the
    first 2 s (a bold title or a striking visual) and something changing on screen at least every 2-4 s.
 4. **broll**: For each B-roll idea search with concrete visual words ("seedling time lapse", "plant roots soil").

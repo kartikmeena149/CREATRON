@@ -1058,4 +1058,5 @@ async function unlock() {
 }
 unlock();
 // For automated tests only: /play/?test exposes the games.
-if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, sound, showBoard, get G() { return G; }, get score() { return score; } };
+// step(dt) runs one frame by hand (for recording gameplay frame by frame).
+if (new URLSearchParams(location.search).has("test")) window.__play = { GAMES, begin, ptr, sound, showBoard, fit, step(dt) { if (!G.waiting) G.update(dt); ended(); sheet(); G.draw(); if (G.waiting) veil(G.name.toUpperCase(), G.start); }, get G() { return G; }, get score() { return score; } };

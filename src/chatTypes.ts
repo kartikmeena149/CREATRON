@@ -1,6 +1,7 @@
 // What the live chat (src/chat.ts) streams to the window, and reading Claude's question out of its
 // reply. Pure, no Node or browser APIs: the app imports it too.
 import type { EditPlan } from "./schema.ts";
+import type { Storyboard } from "./storyboard.ts";
 
 export type StepIcon = "read" | "edit" | "code" | "look" | "search" | "think" | "check" | "fail";
 export type Step = { id: string; icon: StepIcon; label: string; running: string; status: "running" | "done" | "failed"; ms?: number };
@@ -21,6 +22,8 @@ export type ChatEvent =
   | { type: "handoff"; ask: FullEditAsk }
   | { type: "job"; progress: FullEditProgress }
   | { type: "result"; result: FullEditResult }
+  /** The full edit's storyboard, waiting for the user's OK (round 2+ after changes). video: the main video it belongs to. */
+  | { type: "storyboard"; board: Storyboard; dir: string; round: number; video: string }
   | { type: "text"; delta: string }
   | { type: "step"; step: Step }
   | { type: "plan"; plan: EditPlan }
