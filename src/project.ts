@@ -124,7 +124,7 @@ export function scaffoldProject(dir: string, opts: { name: string; video: string
     hasVideo,
     music: null,
     colors: { background: "#0b0d12", caption: "#ffffff", captionOutline: "#000000", accent: "#ffd60a" },
-    captionStyle: { font: "Helvetica Neue", size: 78, bottom: 620, uppercase: true, outline: 10 },
+    captionStyle: { font: "Helvetica Neue", size: 54, bottom: 420, uppercase: true, outline: 7 }, // explainer style: calm, one line, 78 % down
     cuts: [{ start: 0, end: round(analysis.duration, 3) }],
     captions: captionPages(analysis.words),
     sfx: [],
@@ -229,6 +229,6 @@ export function validateProject(dir: string, opts: { needExport?: boolean } = {}
  * The tool-belt commands that need what an AI job's sandbox blocks (headless Chrome, the Vision
  * helper). In a job they run in the app (autoedit-broll.ts), asked for by the tool belt.
  */
-export const APP_COMMANDS = ["render", "still", "cutout"];
+export const APP_COMMANDS = ["render", "still", "cutout", "3d"];
 /** The last line the app sends back for a command it ran for the tool belt: its exit code. */
 export const EXIT_MARK = "\u0000creatro-exit ";

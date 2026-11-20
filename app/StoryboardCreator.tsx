@@ -1,0 +1,531 @@
+// The Storyboard Creator: plan a video before it's filmed. The user gives the script (typed, pasted,
+// dictated or from a file), anything they already have (clips, photos, music, a logo) and how they
+// want it; Claude directs it as a storyboard, shot by shot. It opens in the same storyboard view as
+// a full edit's: pencil sketches, movement, drawing on shots, Redraw, the animatic and the PDF.
+// The job runs in the main process (src/autoedit.ts planStoryboard); its events come in here.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { create } from "zustand";
+import type { PlanEvent, SavedPlan } from "../src/chatTypes.ts";
+import { STYLES, STYLE_INFO, type Style, type Storyboard, sayingTime, scenesOf, stripSceneMark } from "../src/storyboard.ts";
+import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } from "./Dictation.tsx";
+import { Icon } from "./icons.tsx";
+import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
+import { boardFromEvent, useEditor } from "./store.ts";
+import { StoryboardMark } from "./StoryboardMark.tsx";
+import { Sketch } from "./Storyboard.tsx";
+import { aspect } from "./storyboardSketch.ts";
+
+type Job = {
+  key: string;
+  dir: string;
+  title: string;
+  status: "drafting" | "ready" | "approved" | "failed" | "stopped";
+  step: string;
+  fraction?: number;
+  remainingMs?: number;
+  error?: string;
+  /** The script's scenes and the format: what the drawing view lays out while Claude works. */
+  scenes?: string[];
+  format?: Storyboard["format"];
+  started?: number;
+};
+
+/** The storyboard being made from a script (one at a time). */
+export const usePlan = create<{ job: Job | null }>(() => ({ job: null }));
+
+const FORMATS = [["9:16", "Vertical"], ["16:9", "Wide"], ["1:1", "Square"], ["4:5", "Portrait"]] as const;
+const SCRIPT_FILE = /\.(txt|md|markdown|rtf|docx?|pdf|pages|fountain)$/i;
+
+// Events from the job, wherever the user is in the app.
+window.creatron.onPlanEvent?.(({ key, event }: { key: string; event: PlanEvent }) => {
+  const job = usePlan.getState().job;
+  if (!job || job.key !== key) return;
+  const set = (patch: Partial<Job>) => usePlan.setState({ job: { ...job, ...patch } });
+  if (event.type === "log") {
+    if (event.kind !== "tool") set({ step: event.text.replace(/\s+/g, " ").slice(0, 140) });
+  } else if (event.type === "progress") {
+    set({ fraction: event.fraction, remainingMs: event.remainingMs });
+  } else if (event.type === "storyboard") {
+    set({ status: "ready", step: "" });
+    useEditor.setState({ board: boardFromEvent(event, true, useEditor.getState().board), boardOpen: true });
+  } else if (event.type === "done") {
+    set({ status: "approved", dir: event.dir });
+  } else if (event.type === "error") {
+    const stopped = /^Stopped/.test(event.error);
+    set({ status: stopped ? "stopped" : "failed", error: stopped ? undefined : event.error });
+    const b = useEditor.getState().board;
+    if (b?.plan && b.video === key && b.status !== "approved") useEditor.setState({ board: { ...b, status: "closed", error: stopped ? undefined : event.error } });
+  }
+});
+
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+export function StoryboardCreator() {
+  const job = usePlan((s) => s.job);
+  return (
+    <div className="home sbc">
+      <section className="home-hero sbc-hero">
+        <StoryboardMark size={68} animated className="sbc-hero-mark" />
+        <h1>Plan it before you <span className="sbc-pencil">film it.<PencilUnderline /></span></h1>
+        <p className="home-sub">
+          Give Claude your script and anything you already have. It directs the video shot by shot: what's on screen, the camera, the motion, the sound. Draw on it, redraw it, take the PDF to the shoot.
+        </p>
+      </section>
+      {job && job.status !== "failed" && job.status !== "stopped" ? <Progress job={job} /> : <Form failed={job?.status === "failed" ? job.error : undefined} />}
+      <Saved />
+    </div>
+  );
+}
+
+function Form({ failed }: { failed?: string }) {
+  const [title, setTitle] = useState("");
+  const [script, setScript] = useState("");
+  const [direction, setDirection] = useState("");
+  const [format, setFormat] = useState<(typeof FORMATS)[number][0]>("9:16");
+  const [style, setStyle] = useState<Style>("auto");
+  const [assets, setAssets] = useState<string[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const [error, setError] = useState(failed ?? "");
+  const [starting, setStarting] = useState(false);
+  const [model, setModel] = useModelChoice();
+  const dictation = useDictation((said) => setScript((t) => appendSpeech(t, said)));
+  const claude = model.startsWith("claude-code/");
+  const scenes = scenesOf(script);
+  const total = scenes.reduce((a, l) => a + Math.max(1.2, sayingTime(l)), 0);
+
+  const readScript = async (path: string) => {
+    const r = await window.creatron.readScript(path);
+    if (!r.ok) return setError(`Couldn't read ${path.split("/").pop()}: ${r.error}`);
+    const text = r.value.split(/\r?\n/).map(stripSceneMark).filter(Boolean).join("\n");
+    setScript((t) => (t.trim() ? `${t.trimEnd()}\n${text}` : text));
+    if (!title.trim()) setTitle(path.split("/").pop()!.replace(/\.[^.]+$/, ""));
+  };
+  const add = (paths: string[]) => {
+    const docs = paths.filter((p) => SCRIPT_FILE.test(p));
+    for (const d of docs) void readScript(d);
+    const media = paths.filter((p) => !SCRIPT_FILE.test(p));
+    if (media.length) setAssets((a) => [...a, ...media.filter((m) => !a.includes(m))]);
+  };
+
+  const start = async () => {
+    if (!script.trim()) return setError("Write, paste, dictate or import the script first.");
+    if (scenes.length < 3) return setError("Put each scene on its own line: a storyboard needs at least 3 scenes.");
+    if (!claude) return setError("The Storyboard Creator runs on your Claude plan: pick a Claude model below.");
+    setError("");
+    setStarting(true);
+    const r = await window.creatron.planStart({ title: title.trim() || undefined, script, direction: direction.trim() || undefined, format, style, assets, model });
+    setStarting(false);
+    if (!r.ok) return setError(r.error);
+    usePlan.setState({ job: { key: r.value.key, dir: r.value.dir, title: title.trim() || script.trim().split(/\s+/).slice(0, 6).join(" "), status: "drafting", step: "", scenes, format, started: Date.now() } });
+  };
+
+  return (
+    <div
+      className={`sbc-card ${dropping ? "dropping" : ""}`}
+      onDragOver={(e) => (e.preventDefault(), e.stopPropagation(), setDropping(true))}
+      onDragLeave={() => setDropping(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDropping(false);
+        add([...e.dataTransfer.files].map((f) => window.creatron.pathForFile(f)));
+      }}
+    >
+      <label className="sbc-field">
+        <div className="sbc-label"><span>Title</span><span className="mono dim">optional</span></div>
+        <input className="sbc-title" value={title} placeholder="Name it, or Claude names it from the script" onChange={(e) => setTitle(e.target.value)} maxLength={120} />
+      </label>
+
+      <div className="sbc-field">
+        <div className="sbc-label">
+          <span>Script <em className="sbc-rule">one line = one scene</em></span>
+          <span className="mono dim">{scenes.length ? `${scenes.length} scene${scenes.length > 1 ? "s" : ""} · about ${clock(total)}` : "what will be said, in order"}</span>
+        </div>
+        <ScriptEditor value={script} onChange={setScript} readOnly={dictation.listening} />
+        {scenes.length > 0 && scenes.length < 3 && sentences(script).length >= 3 && (
+          <button className="sbc-split" onClick={() => setScript(sentences(script).join("\n"))}>
+            <Icon name="split" size={13} /> Split into {sentences(script).length} scenes, one per sentence
+          </button>
+        )}
+        <DictationNote d={dictation} />
+        {dictation.listening ? <DictationBar d={dictation} /> : (
+          <div className="sbc-tools">
+            <button className="sbc-tool" onClick={async () => { const p = (await window.creatron.pickAttachments()).find((x) => SCRIPT_FILE.test(x)); if (p) void readScript(p); }} title="A Word, PDF, Pages or text file">
+              <Icon name="paperclip" size={14} /> Import script
+            </button>
+            <span className="grow" />
+            <MicButton d={dictation} className="mic-round" />
+          </div>
+        )}
+      </div>
+
+      <div className="sbc-field">
+        <div className="sbc-label">
+          <span>Your assets</span>
+          <span className="mono dim">optional · clips, photos, music, a logo</span>
+        </div>
+        <div className="sbc-assets">
+          {assets.map((a) => (
+            <span key={a} className="sbc-asset" title={a}>
+              <Icon name={/\.(mp3|wav|m4a|aac|aiff?|flac|ogg)$/i.test(a) ? "music" : /\.(png|jpe?g|webp|gif|heic|svg)$/i.test(a) ? "grid" : "video"} size={12} />
+              <span>{a.split("/").pop()}</span>
+              <button aria-label="Remove" title="Remove" onClick={() => setAssets((x) => x.filter((y) => y !== a))}><Icon name="close" size={10} /></button>
+            </span>
+          ))}
+          <button className="sbc-add" onClick={async () => add(await window.creatron.pickLibrary())}><Icon name="plus" size={13} /> Add files</button>
+          {!assets.length && <span className="sbc-drop">or drop them here. Claude looks at each one and uses it where it fits.</span>}
+        </div>
+      </div>
+
+      <div className="sbc-field">
+        <div className="sbc-label"><span>Style</span><span className="mono dim">how it looks and moves</span></div>
+        <div className="sbc-styles" role="radiogroup" aria-label="Style">
+          {STYLES.map((st) => (
+            <button key={st} role="radio" aria-checked={style === st} className={`sbc-style ${style === st ? "on" : ""}`} onClick={() => setStyle(st)} title={STYLE_INFO[st].says}>
+              <StylePreview style={st} />
+              <b>{STYLE_INFO[st].name}</b>
+              <span>{STYLE_INFO[st].says}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="sbc-row">
+        <label className="sbc-field grow">
+          <div className="sbc-label"><span>Direction</span><span className="mono dim">optional</span></div>
+          <input value={direction} placeholder="Style, mood, audience, length: “fast science explainer for teens, warm and funny”" onChange={(e) => setDirection(e.target.value)} />
+        </label>
+        <div className="sbc-field">
+          <div className="sbc-label"><span>Format</span></div>
+          <div className="segmented sbc-format">
+            {FORMATS.map(([f, name]) => (
+              <button key={f} className={format === f ? "on" : ""} onClick={() => setFormat(f)} title={name}>{f}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {error && <p className="sbc-error">{error}</p>}
+      <div className="sbc-foot">
+        <span className="prompt-model"><ModelPicker value={model} onChange={setModel} /></span>
+        {!claude && <span className="sbc-warn">Needs a Claude model</span>}
+        <span className="grow" />
+        <button className="export-btn sbc-go" disabled={starting || !script.trim()} onClick={() => void start()}>
+          {starting ? "Starting…" : "Create storyboard"} <Icon name="arrowUp" size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A tiny picture of each style, drawn in CSS: what the video will feel like at a glance. Explainer:
+ * a face with an accent tag and a calm caption. Editorial: warm paper, a huge red number over an
+ * italic serif line. 3D: a lit block on a dark floor. Auto: the three, shuffled.
+ */
+function StylePreview({ style }: { style: Style }) {
+  if (style === "explainer") return (
+    <span className="sbp sbp-explainer"><i className="face" /><i className="tag">H₂O</i><i className="cap">LOOK FOR WATER</i></span>
+  );
+  if (style === "editorial") return (
+    <span className="sbp sbp-editorial"><i className="big">$10T</i><i className="serif">in assets</i><i className="ring" /></span>
+  );
+  if (style === "3d") return (
+    <span className="sbp sbp-3d"><i className="cube" /><i className="floor" /></span>
+  );
+  return (
+    <span className="sbp sbp-auto"><i /><i /><i /><em>Claude picks</em></span>
+  );
+}
+
+/** Sentences of a block of text: what "Split into scenes" turns into one line each. */
+const sentences = (t: string) => t.replace(/\s+/g, " ").split(/(?<=[.!?…])\s+(?=[A-Z0-9“"'‘(])/).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * The script, one scene per line, numbered like a script editor: each line's scene number and how
+ * long it takes to say, in a gutter that follows the line even when it wraps. A textarea over a copy
+ * of the same text (invisible but for the gutter), grown to fit so the two never scroll apart.
+ * Pasted numbering or bullets are dropped: the gutter numbers the scenes.
+ */
+function ScriptEditor({ value, onChange: set, readOnly }: { value: string; onChange: (v: string) => void; readOnly?: boolean }) {
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const back = useRef<HTMLDivElement>(null);
+  // Blank lines aren't scenes: at most one between two scenes, none above the first.
+  const onChange = (v: string) => set(v.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(\r?\n[ \t]*){3,}/g, "\n\n"));
+  // Grows with the script up to a point, then scrolls inside, the scene numbers scrolling with it.
+  useLayoutEffect(() => {
+    const el = ta.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(200, el.scrollHeight + 2)}px`;
+    if (back.current) back.current.scrollTop = el.scrollTop;
+  }, [value]);
+  let n = 0;
+  const rows = value.split("\n").map((line) => {
+    const words = stripSceneMark(line);
+    return words ? { n: ++n, line, secs: Math.max(1.2, sayingTime(words)) } : { n: 0, line, secs: 0 };
+  });
+  const paste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData("text/plain");
+    if (!text.includes("\n") && !/^\s*(\d{1,3}\s*[.):-]|[-•*–]|scene\s*\d)/i.test(text)) return;
+    e.preventDefault();
+    const clean = text.split(/\r?\n/).map(stripSceneMark).filter(Boolean).join("\n");
+    const el = e.currentTarget;
+    el.setRangeText(clean, el.selectionStart, el.selectionEnd, "end");
+    onChange(el.value);
+  };
+  return (
+    <div className="sbc-editor">
+      <div className="sbc-back" aria-hidden ref={back}>
+        {rows.map((r, i) => (
+          <div key={i} className={`sbc-line ${r.n ? "scene" : ""}`} data-n={r.n ? String(r.n).padStart(2, "0") : ""} data-s={r.n ? `${r.secs.toFixed(1)}s` : ""}>
+            {r.line || "\u200b"}
+          </div>
+        ))}
+      </div>
+      <textarea
+        ref={ta} className="sbc-script" value={value} readOnly={readOnly} spellCheck
+        placeholder="Write or paste your script, one scene per line."
+        onChange={(e) => onChange(e.target.value)} onPaste={paste}
+        onScroll={(e) => back.current && (back.current.scrollTop = e.currentTarget.scrollTop)}
+      />
+    </div>
+  );
+}
+
+/** What the status line says while Claude works, scene by scene (Claude's own notes take over when it writes them). */
+const BEATS = ["Reading your script", "Finding the hook", "Blocking out the shots", "Choosing the camera moves", "Planning what moves on screen", "Picking the B-roll", "Writing the sound", "Checking every scene against the script"];
+
+/**
+ * While Claude draws the storyboard: the Storyboard Creator's mark drawing itself in the middle of the
+ * page, what Claude is doing under it, the scene it's on, and a strip with a segment per scene of the
+ * script that fills as the scenes are done. Claude's real shots open on their own when it's finished.
+ */
+function Drawing({ job, redrawing, onStop }: { job: Job; redrawing: boolean; onStop: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const scenes = job.scenes?.length ? job.scenes : [];
+  const n = scenes.length;
+  const opening = job.step === "Opening the storyboard";
+  const at = n ? (redrawing ? Math.floor((now / 900) % n) : Math.min(n - 1, Math.floor((job.fraction ?? 0) * n))) : 0;
+  const elapsed = Math.max(0, (now - (job.started ?? now)) / 1000);
+  const left = redrawing ? "" : job.remainingMs && job.remainingMs > 45_000 ? `about ${Math.ceil(job.remainingMs / 60_000)} min left` : "almost there";
+  const said = job.step && !/^(Step:|Tools:|Starting|Reading your script|Opening)/.test(job.step) ? job.step : BEATS[Math.min(BEATS.length - 1, Math.floor(elapsed / 9))];
+  const line = scenes[at]?.trim();
+  return (
+    <div className="sbc-card sbc-drawing">
+      <div className="sbc-drawing-head">
+        <span className="sbc-drawing-state">
+          <i className="sbc-rec" />
+          {opening ? "Opening your storyboard" : redrawing ? "Redrawing with your changes" : n ? `Drawing scene ${String(at + 1).padStart(2, "0")} of ${String(n).padStart(2, "0")}` : "Drawing your storyboard"}
+        </span>
+        <span className="mono dim">{clock(elapsed)}{left ? ` · ${left}` : ""}</span>
+      </div>
+      <div className="sbc-load">
+        <div className="sbc-load-mark"><StoryboardMark size={132} animated /></div>
+        <h3 className="sbc-drawing-title">{job.title}</h3>
+        <p className="sbc-drawing-say"><span className="shimmer">{opening ? "Getting it back where you left it" : redrawing ? "Claude is reworking the shots you asked about" : said}</span></p>
+        {!opening && line && (
+          <p key={at} className="sbc-load-line"><span className="mono">{String(at + 1).padStart(2, "0")}</span>“{line}”</p>
+        )}
+        {!opening && n > 0 && (
+          <div className="sbc-load-strip" role="progressbar" aria-valuemin={0} aria-valuemax={n} aria-valuenow={at}>
+            {scenes.map((_, i) => <i key={i} className={i < at ? "done" : i === at ? "now" : ""} />)}
+          </div>
+        )}
+      </div>
+      <div className="sbc-drawing-foot">
+        <span className="dim">{redrawing ? "The new draft opens on its own when it's ready." : "The storyboard opens on its own when every scene is drawn. You can leave this page."}</span>
+        <button className="sb-btn" onClick={onStop}>Stop</button>
+      </div>
+    </div>
+  );
+}
+
+function Progress({ job }: { job: Job }) {
+  const board = useEditor((s) => s.board);
+  const mine = board?.plan && board.video === job.key ? board : null;
+  const redrawing = mine?.status === "redrawing";
+  const open = () => useEditor.setState({ boardOpen: true });
+  const stop = () => void window.creatron.planStop();
+  const fresh = () => usePlan.setState({ job: null });
+
+  if (job.status === "drafting" || redrawing) return <Drawing job={job} redrawing={redrawing} onStop={stop} />;
+  return (
+    <div className="sbc-card sbc-progress">
+      <span className="sbc-done"><Icon name="check" size={18} /></span>
+      <b>{job.status === "approved" ? "Storyboard approved" : "Your storyboard is ready"}</b>
+      <span className="sbc-step">
+        {job.status === "approved"
+          ? "Saved with your script. Take the PDF to the shoot, then bring the footage back for a full edit."
+          : "Look through it, draw on any shot, ask for changes, or approve it."}
+      </span>
+      <div className="sbc-actions">
+        {mine && <button className="export-btn" onClick={open}>Open storyboard</button>}
+        <button className="sb-btn" onClick={() => window.creatron.reveal(`${job.dir}/notes/storyboard.json`)}>Show in Finder</button>
+        {job.status === "approved" ? <button className="sb-btn" onClick={fresh}>Plan another</button> : <button className="sb-btn" onClick={stop} title="Put it away: it stays saved in Your storyboards">Close</button>}
+      </div>
+    </div>
+  );
+}
+
+/** When something was last changed, the way a person says it: "Today 19:35", "Yesterday", "12 Nov". */
+function when(ms: number): string {
+  const d = new Date(ms);
+  const days = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(ms).setHours(0, 0, 0, 0)) / 86_400_000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return days === 0 ? `Today ${time}` : days === 1 ? `Yesterday ${time}` : d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+/**
+ * Every storyboard made here, newest first, as cards: a filmstrip of its first shots for a cover,
+ * its name (rename by double-click or the pencil), length and status, and Open / PDF / Finder /
+ * Delete. Opening one brings it back ready to draw on, redraw or approve; Claude picks up where it
+ * left off. Delete moves it to the Trash, after asking.
+ */
+function Saved() {
+  const job = usePlan((s) => s.job);
+  const [list, setList] = useState<SavedPlan[] | null>(null);
+  const [error, setError] = useState("");
+  const [model] = useModelChoice();
+  const refresh = () => void window.creatron.plansList().then(setList);
+  useEffect(refresh, [job?.status, job?.key]);
+  useEffect(() => {
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+  if (!list?.length) return null;
+  const drafting = job?.status === "drafting";
+
+  const open = async (p: SavedPlan) => {
+    const key = `plan:${p.dir}`;
+    const b = useEditor.getState().board;
+    // Already the one on screen: just show it.
+    if (b?.plan && b.video === key && job?.key === key && job.status === "ready") return useEditor.setState({ boardOpen: true });
+    setError("");
+    const before = usePlan.getState().job;
+    usePlan.setState({ job: { key, dir: p.dir, title: p.title, status: "drafting", step: "Opening the storyboard", scenes: p.board.shots.map((x) => x.line), format: p.format, started: Date.now() } });
+    const r = await window.creatron.planOpen(p.dir, model);
+    if (!r.ok) usePlan.setState({ job: before }), setError(r.error);
+  };
+
+  return (
+    <section className="home-open sbc-saved">
+      <div className="home-head">
+        <h2>Your storyboards</h2>
+        <span className="mono dim">{list.length}</span>
+      </div>
+      {error && <p className="sbc-error">{error}</p>}
+      <div className="sbc-list">
+        {list.map((p) => (
+          <PlanCard
+            key={p.dir} p={p} busy={drafting && job?.key !== `plan:${p.dir}`}
+            here={job?.key === `plan:${p.dir}` && (job.status === "ready" || job.status === "drafting") ? job.status : null}
+            onOpen={() => void open(p)} onChanged={refresh} onError={setError}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** One saved storyboard. */
+function PlanCard({ p, here, busy, onOpen, onChanged, onError }: {
+  p: SavedPlan; here: "ready" | "drafting" | null; busy: boolean;
+  onOpen: () => void; onChanged: () => void; onError: (e: string) => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(p.title);
+  const [confirm, setConfirm] = useState(false);
+  const ratio = aspect(p.format);
+  // The cover: its first shots side by side (tall frames) or two by two (wide ones).
+  const strip = ratio < 1 ? p.board.shots.slice(0, 3) : p.board.shots.slice(0, 4);
+  const cell = ratio < 1 ? 64 : 106; // both fit the same cover height, so titles line up across a row
+  const state = { video: `plan:${p.dir}`, dir: p.dir, round: 1, draft: p.board, status: "closed" as const, plan: true };
+
+  const saveName = async () => {
+    setRenaming(false);
+    if (!name.trim() || name.trim() === p.title) return setName(p.title);
+    const r = await window.creatron.planRename(p.dir, name);
+    if (!r.ok) return onError(r.error), setName(p.title);
+    onChanged();
+  };
+  const remove = async () => {
+    const r = await window.creatron.planDelete(p.dir);
+    setConfirm(false);
+    if (!r.ok) return onError(r.error);
+    if (usePlan.getState().job?.dir === p.dir) usePlan.setState({ job: null });
+    const b = useEditor.getState().board;
+    if (b?.plan && b.dir === p.dir) useEditor.setState({ board: null, boardOpen: false });
+    onChanged();
+  };
+
+  return (
+    <article className={`sbc-item ${here ? "on" : ""} ${confirm ? "confirming" : ""}`}>
+      <button className={`sbc-cover ${ratio < 1 ? "tall" : "landscape"}`} onClick={onOpen} disabled={busy} title={busy ? "Claude is working on another storyboard" : "Open"}>
+        {strip.map((shot) => (
+          <Sketch key={shot.id} b={state} shot={shot} width={cell} theme="dark" />
+        ))}
+        <i className={`sbc-chip ${here ? "live" : p.approved ? "ok" : ""}`}>{here ? (here === "drafting" ? "Opening" : "Open now") : p.approved ? "Approved" : "Draft"}</i>
+      </button>
+      <div className="sbc-item-tools">
+        <button onClick={() => setRenaming(true)} title="Rename"><Icon name="pencil" size={12} /></button>
+        <button onClick={() => setConfirm(true)} title="Delete" disabled={here === "drafting"}><Icon name="close" size={12} /></button>
+      </div>
+      {confirm && (
+        <div className="sbc-confirm" role="alertdialog" aria-label="Delete this storyboard?">
+          <b>Delete “{p.title}”?</b>
+          <span>It goes to the Trash with its script and PDF. You can put it back from there.</span>
+          <div>
+            <button className="sb-btn" onClick={() => setConfirm(false)} autoFocus>Cancel</button>
+            <button className="sb-btn danger" onClick={() => void remove()}>Move to Trash</button>
+          </div>
+        </div>
+      )}
+      <div className="sbc-item-body">
+        {renaming ? (
+          <input
+            className="sbc-rename" value={name} autoFocus onChange={(e) => setName(e.target.value)} onBlur={() => void saveName()}
+            onKeyDown={(e) => (e.key === "Enter" ? (e.currentTarget as HTMLInputElement).blur() : e.key === "Escape" ? (setName(p.title), setRenaming(false)) : null)}
+          />
+        ) : (
+          <b className="sbc-item-title" title="Double-click to rename" onDoubleClick={() => setRenaming(true)}>{p.title}</b>
+        )}
+        <span className="sbc-item-meta mono">{p.shots} scenes · {clock(p.seconds)} · {p.format}<em>{when(p.updated)}</em></span>
+        <div className="sbc-item-actions">
+          <button className="sb-btn primary" onClick={onOpen} disabled={busy}>Open</button>
+          {p.pdf && <button className="sb-btn" onClick={() => window.creatron.openFile(p.pdf!)} title="Open the PDF"><Icon name="download" size={12} /> PDF</button>}
+          <button className="sb-btn icon" onClick={() => window.creatron.reveal(`${p.dir}/notes/storyboard.json`)} title="Show in Finder"><Icon name="folder" size={13} /></button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** A red pencil stroke under a word: how a storyboard artist marks what matters. */
+function PencilUnderline() {
+  return (
+    <svg className="sbc-underline" viewBox="0 0 200 18" preserveAspectRatio="none" aria-hidden>
+      <path d="M3 11 C 40 5, 80 13, 120 8 S 180 6, 197 9" />
+      <path d="M14 15 C 60 10, 110 16, 186 12" />
+    </svg>
+  );
+}
+
+/** On Home: the way in for someone with a script but no footage yet. */
+export function PlanEntry({ onOpen }: { onOpen: () => void }) {
+  const job = usePlan((s) => s.job);
+  return (
+    <button className="sbc-entry" onClick={onOpen}>
+      <span className="sbc-entry-icon"><StoryboardMark size={34} /></span>
+      <span className="sbc-entry-text">
+        <b>Storyboard Creator</b>
+        <span>{job && (job.status === "drafting" || job.status === "ready") ? "Your storyboard is in progress: open it" : "Have a script but no video yet? Plan every shot first."}</span>
+      </span>
+      <Icon name="chevron" size={14} />
+    </button>
+  );
+}

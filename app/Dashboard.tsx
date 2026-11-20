@@ -10,10 +10,19 @@ import { Icon } from "./icons.tsx";
 import { Orb } from "./Orb.tsx";
 import { useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
+import { PlanEntry, StoryboardCreator, usePlan } from "./StoryboardCreator.tsx";
+import { StoryboardMark } from "./StoryboardMark.tsx";
 
-type View = "home" | "connections";
-/** Whether the Dashboard is showing (and which page), and a request waiting for its video to open. */
-export const useHome = create<{ view: View | null; pending: string | null }>(() => ({ view: "home", pending: null }));
+type View = "home" | "connections" | "storyboard";
+/**
+ * Whether the Dashboard is showing (and which page), and a request waiting for its video to open.
+ * opening: a file to open in the editor (asked from outside the app shell, e.g. the storyboard).
+ * build: "Make the video" from a storyboard: once `media` is open, the full edit builds it from `plan`.
+ */
+export const useHome = create<{
+  view: View | null; pending: string | null; opening: string | null;
+  build: { media: string; plan: string; title: string; model: string } | null;
+}>(() => ({ view: "home", pending: null, opening: null, build: null }));
 export const openHome = (view: View = "home") => useHome.setState({ view });
 export const closeHome = () => useHome.setState({ view: null });
 
@@ -22,7 +31,8 @@ const IDEAS: [string, string][] = [
   ["Reel", "Make it a tight 9:16 reel with bold captions, cut the pauses and retakes"],
   ["Talking head", "Clean up this talking-head video: cut dead air and retakes, add captions"],
   ["Podcast clip", "Find the best 45 seconds and make a vertical clip with captions"],
-  ["Explainer", "Turn this into a clear explainer with titles for each point"],
+  ["Explainer", "Make it a full explainer reel in Creatro's Explainer style: me on camera for the claim and the turns, pictures in between, tags on things, sources highlighted, calm captions"],
+  ["Documentary", "Make it a full documentary reel in Creatro's Editorial style: kinetic type on warm paper, ring charts, archive and cinematic story scenes, a punchline at the end"],
   ["Vlog", "Cut this into a fast, fun vlog with music and sound effects"],
   ["Ad", "Make a punchy 30-second ad with a strong hook in the first 2 seconds"],
 ];
@@ -46,11 +56,16 @@ const ready = (s?: AgentState) => Boolean(s?.installed && s.signedIn);
 export function Dashboard({ onOpenVideo }: { onOpenVideo: (path: string) => Promise<boolean> }) {
   const view = useHome((h) => h.view) ?? "home";
   const [conn, setConn, refresh] = useConnections();
+  const planBusy = usePlan((p) => Boolean(p.job && (p.job.status === "drafting" || p.job.status === "ready")));
   return (
     <div className="dash">
       <aside className="dash-side">
         <nav>
           <button className={view === "home" ? "on" : ""} onClick={() => openHome("home")}><Icon name="grid" size={15} /> Home</button>
+          <button className={view === "storyboard" ? "on" : ""} onClick={() => openHome("storyboard")} title="Plan a video from a script, before you film it">
+            <StoryboardMark size={17} className="sbm-nav" /> Storyboard Creator
+            {planBusy && <span className="dash-live" title="A storyboard is in progress" />}
+          </button>
           <button className={view === "connections" ? "on" : ""} onClick={() => openHome("connections")}>
             <Icon name="link" size={15} /> Connections
             <span className={`dash-count ${conn && (ready(conn.claude) || ready(conn.codex) || conn.openrouter) ? "ok" : ""}`}>
@@ -61,7 +76,7 @@ export function Dashboard({ onOpenVideo }: { onOpenVideo: (path: string) => Prom
         <p className="dash-note mono">Your footage stays on this Mac. Only the transcript goes to the AI.</p>
       </aside>
       <main className="dash-main">
-        {view === "home" ? <Home conn={conn} onOpenVideo={onOpenVideo} /> : <ConnectionsPage conn={conn} setConn={setConn} refresh={refresh} />}
+        {view === "home" ? <Home conn={conn} onOpenVideo={onOpenVideo} /> : view === "storyboard" ? <StoryboardCreator /> : <ConnectionsPage conn={conn} setConn={setConn} refresh={refresh} />}
       </main>
     </div>
   );
@@ -116,6 +131,12 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), void start())}
             rows={3}
           />
+          {/* Quick starts: a preset brief for the box, the one in it stays lit. */}
+          <div className="ideas" role="group" aria-label="Quick starts">
+            {IDEAS.map(([label, prompt]) => (
+              <button key={label} className={text === prompt ? "on" : ""} onClick={() => setText(text === prompt ? "" : prompt)} title={prompt}>{label}</button>
+            ))}
+          </div>
           <div className="prompt-foot">
             <button className="prompt-file" onClick={async () => { const p = await window.creatron.pickVideo(); if (p) setVideo(p); }}>
               <Icon name={video ? "video" : "paperclip"} size={14} />
@@ -130,11 +151,7 @@ function Home({ conn, onOpenVideo }: { conn?: Connections; onOpenVideo: (path: s
             <button className="prompt-go" title="Start (Enter)" onClick={() => void start()}><Icon name="arrowUp" size={15} /></button>
           </div>
         </div>
-        <div className="ideas">
-          {IDEAS.map(([label, prompt]) => (
-            <button key={label} onClick={() => setText(prompt)}>{label}</button>
-          ))}
-        </div>
+        <PlanEntry onOpen={() => openHome("storyboard")} />
       </section>
 
       <section className="home-open">

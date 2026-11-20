@@ -1,0 +1,1416 @@
+// A storyboard shot drawn the way a storyboard artist draws a panel: the real footage traced in
+// pencil (contour strokes where the picture has edges, hatching for its shadows), the layout (titles,
+// captions, cards) in marker on top, and every movement in red: the camera's move with the frame it
+// ends on, how each title or picture comes in, where it travels. Without a picture (audio only, B-roll
+// not found yet) the same pencil draws what the shot will be: the speaker, a landscape, a title card's
+// guides. Same input, same drawing (seeded), so the board, the animatic and the PDF always match.
+import { sketchObjects } from "../src/sketchObjects.ts";
+import { create } from "zustand";
+import { graphite } from "./graphite.ts";
+import { photoSketch } from "./photoSketch.ts";
+import { mediaUrl } from "./format.ts";
+
+/**
+ * Pictures that are layers of a shot (a photo the user added, one found of a thing they named),
+ * loaded once: drawn as pencil studies. `version` changes when one arrives, so views draw again.
+ */
+export const usePictures = create<{ version: number }>(() => ({ version: 0 }));
+const pictures = new Map<string, HTMLImageElement | null>();
+let pictureDir = "";
+const pictureKey = (dir: string, file: string) => (file.startsWith("/") ? file : `${dir}/${file.replace(/^\.\//, "")}`);
+function pictureOf(file: string): HTMLImageElement | undefined {
+  const key = pictureKey(pictureDir, file);
+  const have = pictures.get(key);
+  if (have) return have;
+  if (!pictures.has(key)) {
+    pictures.set(key, null);
+    const img = new Image();
+    img.onload = () => (pictures.set(key, img), usePictures.setState((st) => ({ version: st.version + 1 })));
+    img.onerror = () => pictures.delete(key);
+    img.src = mediaUrl(key);
+  }
+  return undefined;
+}
+/** Every picture a board's layers use, loaded (for a one-off drawing: the PDF, the pictures sent to Claude). */
+export function loadPictures(dir: string, b: Storyboard): Promise<void> {
+  const files = [...new Set(b.shots.flatMap((s) => s.layers.filter((l) => l.file).map((l) => l.file!)))];
+  return Promise.all(files.map((f) => new Promise<void>((ok) => {
+    const key = pictureKey(dir, f);
+    if (pictures.get(key)) return ok();
+    const img = new Image();
+    img.onload = () => (pictures.set(key, img), ok());
+    img.onerror = () => ok();
+    img.src = mediaUrl(key);
+  }))).then(() => undefined);
+}
+import { type Layer, type Mark, noteNumbers, type Shot, type Storyboard, type Stroke, fontParts, fontStack } from "../src/storyboard.ts";
+
+export const PAPER = "#f3efe6";
+export const INK = "#1c1b1f";
+const PENCIL = "#e5231b"; // Creatro's red: the recording light. On a storyboard, red is movement.
+
+/**
+ * Two ways to draw the same shot. "dark", in the app: white pencil on black paper, so the board sits
+ * in Creatro's own dark interface. "paper", for the PDF: graphite on paper.
+ */
+const THEMES = {
+  dark: {
+    bg: "#0f0f0f", grain: "rgba(255,255,255,0.035)", lead: "#e4e4e4", line: "#9a9a9a", plate: "rgba(0,0,0,0.8)", plateText: "#f2f2f2",
+    fade: "rgba(15,15,15,0.72)", red: "#ff4136", halo: "rgba(15,15,15,0.85)", light: true,
+  },
+  paper: {
+    bg: PAPER, grain: "rgba(60,50,30,0.06)", lead: "#2a292e", line: INK, plate: "rgba(28,27,31,0.88)", plateText: PAPER,
+    fade: "rgba(243,239,230,0.72)", red: PENCIL, halo: "rgba(243,239,230,0.9)", light: false,
+  },
+};
+export type SketchTheme = keyof typeof THEMES;
+let T = THEMES.dark;
+
+/** Width / height of a frame in this format. */
+export const aspect = (format: Storyboard["format"]) => ({ "9:16": 9 / 16, "16:9": 16 / 9, "1:1": 1, "4:5": 4 / 5 })[format];
+
+/** The board's accent: its brightest, most saturated palette colour (a red pencil without one). */
+export function accentOf(b: Storyboard): string {
+  let best = PENCIL;
+  let score = -1;
+  for (const c of b.look.palette) {
+    const [r, g, bl] = rgb(c);
+    const max = Math.max(r, g, bl);
+    const s = max ? (max - Math.min(r, g, bl)) / max : 0;
+    if (s * (max / 255) > score) (score = s * (max / 255)), (best = c);
+  }
+  return score > 0.25 ? best : PENCIL;
+}
+
+/** The outline that keeps a colour readable on paper: dark ink around light colours, paper around dark ones. */
+function edge(c: string): string {
+  const [r, g, b] = rgb(c);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? INK : PAPER;
+}
+
+function rgb(c: string): [number, number, number] {
+  let h = c.replace("#", "");
+  if (h.length === 3) h = h.split("").map((x) => x + x).join("");
+  const n = parseInt(h.slice(0, 6), 16) || 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** A small seeded random, so a shot always draws the same way. */
+function rand(seed: string) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+  return () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+}
+
+type Box = { x: number; y: number; w: number; h: number };
+/** What's already on the frame that a label mustn't cover: titles, captions, stickers, cards, charts, other labels. */
+let taken: Box[] = [];
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Where the last drawShot put each piece of text, in CSS pixels of its canvas, so the drawing view
+ * can make them editable where they are: a layer's words, the B-roll / page tag (the shot's query),
+ * a movement label (the camera's move, or how a layer comes in), a note's number.
+ */
+export type TextHit = { kind: "layer" | "query" | "camera" | "enter" | "note" | "art"; i?: number; x: number; y: number; w: number; h: number };
+let hits: TextHit[] = [];
+/** Whose movement labels are being drawn now (label() records them as theirs). */
+let labelOwner: Pick<TextHit, "kind" | "i"> | null = null;
+const TEXT_LAYERS = new Set<Layer["kind"]>(["text", "caption", "sticker", "image", "footage", "box", "arrow", "chart"]);
+
+/** How much a drawing this size can say: a thumbnail draws the picture only, a card adds the movement, a big view adds notes. */
+const sizeOf = (w: number, h: number) => {
+  const m = Math.min(w, h);
+  return { motion: m >= 50, labels: m >= 110, notes: m >= 230 };
+};
+
+/**
+ * Draws one shot into the canvas (sized w x h in CSS pixels, drawn at `scale` for sharpness).
+ * `picture` is the frame the shot is made from, if there is one.
+ */
+export function drawShot(canvas: HTMLCanvasElement, w: number, h: number, scale: number, shot: Shot, board: Storyboard, picture: HTMLImageElement | null, theme: SketchTheme = "dark", dir = ""): TextHit[] {
+  T = THEMES[theme];
+  pictureDir = dir;
+  hits = [];
+  labelOwner = null;
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  const r = rand(shot.id + shot.kind);
+  const accent = accentOf(board);
+  const size = sizeOf(w, h);
+  taken = shot.layers
+    .filter((l) => l.kind !== "box" && l.kind !== "arrow")
+    .map((l) => ({ x: l.x * w, y: l.y * h, w: l.w * w, h: l.h * h }));
+
+  // Paper: a little grain and a few fibres.
+  ctx.fillStyle = T.bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = T.grain;
+  for (let i = 0; i < (w * h) / 70; i++) ctx.fillRect(r() * w, r() * h, 1, 1);
+
+  // The picture: a frame of the footage traced in pencil; without one, Claude's own drawing of the
+  // shot (shot.sketch); without that either (older storyboards), a drawn stand-in, never a blob.
+  const kind = shot.kind;
+  const all = shot.sketch?.length ? shot.sketch : null;
+  // Only things the user added (no drawing of Claude's yet): the shot keeps its stand-in under them.
+  const drawn = all?.some((st) => !st.added) ? all : null;
+  let drewArt = false; // Claude's drawing is on the frame (its objects can be picked and moved)
+  if (picture && kind === "split") {
+    pencil(ctx, 0, 0, w, h / 2, shot.source?.file !== "main" ? sampler(picture, w, h / 2) : () => 0, r);
+    if (shot.source?.file === "main") pencil(ctx, 0, h / 2, w, h / 2, sampler(picture, w, h / 2), r);
+    else if (!drawn) strokes(ctx, 0, h / 2, w, h / 2, bust(w, h / 2), r);
+    if (drawn) strokes(ctx, 0, 0, w, h, drawn, r), (drewArt = true);
+    wobblyLine(ctx, 0, h / 2, w, h / 2, r, T.lead, 1.4);
+  } else if (kind === "cutout") {
+    // The speaker cut out over a designed background: an accent wash, then them.
+    wash(ctx, w, h, accent, r);
+    if (picture) pencil(ctx, 0, 0, w, h, masked(sampler(picture, w, h), silhouette(0.5, 0.5)), r);
+    else strokes(ctx, 0, 0, w, h, drawn ?? bust(w, h), r), (drewArt = Boolean(drawn));
+  } else if (kind === "document" && !picture) {
+    page(ctx, w, h, r); // a source on screen: the page itself, pushed in until it runs off the edge
+  } else if (picture && kind !== "text" && kind !== "graphic") {
+    pencil(ctx, 0, 0, w, h, sampler(picture, w, h), r);
+  } else if (drawn) {
+    if (kind === "text" || kind === "graphic") guides(ctx, w, h, r);
+    strokes(ctx, 0, 0, w, h, drawn, r);
+    drewArt = true;
+  } else if (kind === "text" || kind === "graphic") {
+    guides(ctx, w, h, r);
+  } else if (kind === "talking") {
+    strokes(ctx, 0, 0, w, h, bust(w, h), r);
+  } else if (kind === "split") {
+    insert(ctx, 0, 0, w, h / 2, r);
+    strokes(ctx, 0, h / 2, w, h / 2, bust(w, h / 2), r);
+    wobblyLine(ctx, 0, h / 2, w, h / 2, r, T.lead, 1.4);
+  } else {
+    insert(ctx, 0, 0, w, h, r); // B-roll still to find: the storyboard's "picture goes here"
+  }
+
+  // A painted frame (Claude's drawing, not traced footage) gets the painter's light: a soft vignette.
+  if (drewArt) vignette(ctx, w, h);
+
+  // Things the user added themselves (Add → Things) are drawn on every shot, footage or not.
+  const mine = all && !drewArt ? all.filter((st) => st.added) : [];
+  if (mine.length) strokes(ctx, 0, 0, w, h, mine, r);
+
+  // B-roll not found yet: say what it must show.
+  // Low in the frame, else at the top, wherever no title or caption is; left out when neither is
+  // free (the card says it's B-roll, and the shot's view says what it must show).
+  if ((kind === "broll" || kind === "image" || kind === "document") && !picture && shot.query) {
+    const th = Math.max(7, Math.min(11, (w * 0.92) / 14)) + 8;
+    const spot = [h * 0.9, h * 0.035].find((y) => !taken.some((t) => overlaps(t, { x: w * 0.04, y, w: w * 0.92, h: th })));
+    if (spot !== undefined) {
+      tagAt(ctx, w * 0.04, spot, w * 0.92, `${kind === "broll" ? "B-ROLL" : kind === "document" ? "PAGE" : "IMAGE"} · ${shot.query}`);
+      hits.push({ kind: "query", x: w * 0.04, y: spot, w: w * 0.92, h: th });
+      taken.push({ x: w * 0.04, y: spot, w: w * 0.92, h: th });
+    }
+  }
+
+  // Titles last, so nothing drawn crosses the lettering (each title clears the lines under it).
+  for (const l of shot.layers) if (l.kind !== "text") layer(ctx, w, h, l, board, accent, r, picture);
+  for (const l of shot.layers) if (l.kind === "text") layer(ctx, w, h, l, board, accent, r, picture);
+  shot.layers.forEach((l, i) => TEXT_LAYERS.has(l.kind) && hits.push({ kind: "layer", i, x: l.x * w, y: l.y * h, w: Math.max(l.w * w, 8), h: Math.max(l.h * h, 8) }));
+  // The things in Claude's drawing (the satellite, the car), each one object.
+  if ((drewArt && drawn) || mine.length) {
+    const drawn = all!;
+    const k = w / 1000;
+    sketchObjects(drawn).forEach((o, i) => (drewArt || o.strokes.every((j) => drawn[j]!.added)) && hits.push({ kind: "art", i, x: o.box.x * k, y: o.box.y * k, w: Math.max(o.box.w * k, 6), h: Math.max(o.box.h * k, 6) }));
+  }
+  if (size.motion) {
+    // One idea per panel: the camera move, and at most two layers' moves (titles first, then the
+    // biggest). The rest are in the words under the panel.
+    const movers = shot.layers
+      .filter((l) => (l.enter && l.enter !== "cut") || l.to)
+      .sort((a, b) => Number(b.kind === "text") - Number(a.kind === "text") || b.w * b.h - a.w * a.h)
+      .slice(0, 2);
+    for (const l of movers) {
+      labelOwner = { kind: "enter", i: shot.layers.indexOf(l) };
+      motion(ctx, w, h, l, r, size.labels);
+    }
+    labelOwner = { kind: "camera" };
+    camera(ctx, w, h, shot, r, size.notes); // a card names its camera move under the picture already
+    labelOwner = null;
+  }
+  // A layer's note is a numbered mark here; its words are under the panel, under the same number.
+  if (size.labels) for (const [i, n] of noteNumbers(shot)) callout(ctx, w, h, shot.layers[i]!, n, i);
+
+  // What the user drew on it, over everything.
+  if (shot.marks?.length) drawMarks(ctx, w, h, scale, shot.marks, theme);
+
+  // The panel's own pencil border.
+  ctx.globalAlpha = 0.5;
+  roughRect(ctx, 1.5, 1.5, w - 3, h - 3, r, T.lead, 0.9);
+  ctx.globalAlpha = 1;
+
+  if (shot.dropped) {
+    ctx.fillStyle = T.fade;
+    ctx.fillRect(0, 0, w, h);
+    wobblyLine(ctx, w * 0.12, h * 0.12, w * 0.88, h * 0.88, r, T.red, 3);
+    wobblyLine(ctx, w * 0.88, h * 0.12, w * 0.12, h * 0.88, r, T.red, 3);
+  }
+  return hits;
+}
+
+// ---- pencil ----
+
+type Field = (x: number, y: number) => number; // 0 = bare paper, 1 = full pencil; x and y in 0..1
+
+/**
+ * A picture in pencil. Its tones become hatching (one set of lines, then crossed, then dense, the
+ * darker it gets) and its edges become contour strokes along them, darker where the edge is
+ * stronger, the way an artist traces a frame.
+ */
+function pencil(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, field: Field, r: () => number) {
+  const m = Math.min(w, h);
+  const step = Math.max(1.4, m / 110); // pixels per sample
+  const gw = Math.max(16, Math.round(w / step));
+  const gh = Math.max(16, Math.round(h / step));
+  const g = new Float32Array(gw * gh);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) g[j * gw + i] = Math.min(1, Math.max(0, field((i + 0.5) / gw, (j + 0.5) / gh)));
+  const at = (px: number, py: number) => g[Math.min(gh - 1, Math.max(0, Math.floor(py / step))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(px / step)))]!;
+  const thin = Math.max(0.45, m / 300);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, w, h);
+  ctx.clip();
+  ctx.strokeStyle = T.lead;
+  ctx.lineCap = "round";
+
+  // Hatching: each tone level is a set of parallel lines, lifted where the picture is lighter.
+  const gap = Math.max(2.2, m / 62);
+  const levels = [
+    { over: 0.42, angle: Math.PI * 0.27, alpha: 0.26, gap: gap * 1.15 },
+    { over: 0.66, angle: -Math.PI * 0.22, alpha: 0.24, gap: gap * 1.25 },
+    { over: 0.86, angle: Math.PI * 0.03, alpha: 0.3, gap: gap * 0.9 },
+  ];
+  const diag = Math.hypot(w, h);
+  for (const L of levels) {
+    const dx = Math.cos(L.angle);
+    const dy = Math.sin(L.angle);
+    ctx.beginPath();
+    for (let k = -diag / 2; k <= diag / 2; k += L.gap) {
+      const ox = w / 2 - dy * k + (r() - 0.5) * L.gap * 0.35;
+      const oy = h / 2 + dx * k + (r() - 0.5) * L.gap * 0.35;
+      const sway = (r() - 0.5) * 0.02; // a hand's lines are never quite parallel
+      let on = false;
+      let lx = 0;
+      let ly = 0;
+      for (let s = -diag / 2; s <= diag / 2; s += 1.6) {
+        const px = ox + (dx + sway * dy) * s;
+        const py = oy + (dy - sway * dx) * s;
+        const inside = px >= 0 && py >= 0 && px < w && py < h;
+        const ink = inside && at(px, py) > L.over + (r() - 0.5) * 0.08;
+        if (ink && !on) ctx.moveTo(x0 + px, y0 + py), (on = true);
+        else if (!ink && on) ctx.lineTo(x0 + lx, y0 + ly), (on = false);
+        lx = px;
+        ly = py;
+      }
+      if (on) ctx.lineTo(x0 + lx, y0 + ly);
+    }
+    ctx.globalAlpha = L.alpha;
+    ctx.lineWidth = thin;
+    ctx.stroke();
+  }
+
+  // Contours: short strokes along the edges (Sobel), only the strongest ones, in two weights.
+  const mag = new Float32Array(gw * gh);
+  const dir = new Float32Array(gw * gh);
+  for (let j = 1; j < gh - 1; j++) {
+    for (let i = 1; i < gw - 1; i++) {
+      const v = (a: number, b: number) => g[(j + b) * gw + (i + a)]!;
+      const gx = v(1, -1) + 2 * v(1, 0) + v(1, 1) - v(-1, -1) - 2 * v(-1, 0) - v(-1, 1);
+      const gy = v(-1, 1) + 2 * v(0, 1) + v(1, 1) - v(-1, -1) - 2 * v(0, -1) - v(1, -1);
+      mag[j * gw + i] = Math.hypot(gx, gy);
+      dir[j * gw + i] = Math.atan2(gy, gx) + Math.PI / 2; // along the edge, not across it
+    }
+  }
+  const sorted = Float32Array.from(mag).sort();
+  const firm = Math.max(0.3, sorted[Math.floor(sorted.length * 0.8)]!);
+  const bold = Math.max(0.75, sorted[Math.floor(sorted.length * 0.94)]!);
+  for (const [lo, hi, alpha, width] of [[firm, bold, 0.55, thin * 1.3], [bold, Infinity, 0.9, thin * 1.8]] as const) {
+    ctx.beginPath();
+    for (let j = 1; j < gh - 1; j++) {
+      for (let i = 1; i < gw - 1; i++) {
+        const k = j * gw + i;
+        if (mag[k]! < lo || mag[k]! >= hi || r() > 0.8) continue;
+        const a = dir[k]! + (r() - 0.5) * 0.25;
+        const len = step * (1.1 + r() * 0.9);
+        const cx = x0 + (i + 0.5) * step + (r() - 0.5) * step * 0.4;
+        const cy = y0 + (j + 0.5) * step + (r() - 0.5) * step * 0.4;
+        ctx.moveTo(cx - (Math.cos(a) * len) / 2, cy - (Math.sin(a) * len) / 2);
+        ctx.lineTo(cx + (Math.cos(a) * len) / 2, cy + (Math.sin(a) * len) / 2);
+      }
+    }
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/** Brightness (dark theme: white pencil draws the light) or darkness (paper) of a picture, fitted to cover a w x h frame. */
+function sampler(img: HTMLImageElement, w: number, h: number): Field {
+  const cols = 160;
+  const rows = Math.max(1, Math.round((cols * h) / w));
+  const c = document.createElement("canvas");
+  c.width = cols;
+  c.height = rows;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const s = Math.max(cols / img.naturalWidth, rows / img.naturalHeight);
+  const dw = img.naturalWidth * s;
+  const dh = img.naturalHeight * s;
+  g.drawImage(img, (cols - dw) / 2, (rows - dh) / 2, dw, dh);
+  const data = g.getImageData(0, 0, cols, rows).data;
+  // Stretch the contrast (ignoring the extreme 2% each side) so dark footage still draws.
+  const lum = new Float32Array(cols * rows);
+  for (let i = 0; i < lum.length; i++) lum[i] = 0.299 * data[i * 4]! + 0.587 * data[i * 4 + 1]! + 0.114 * data[i * 4 + 2]!;
+  const sorted = Float32Array.from(lum).sort();
+  const lo = sorted[Math.floor(sorted.length * 0.02)]!;
+  const hi = sorted[Math.floor(sorted.length * 0.98)]!;
+  const span = Math.max(40, hi - lo);
+  return (x, y) => {
+    const fx = Math.min(cols - 1.001, Math.max(0, x * cols - 0.5));
+    const fy = Math.min(rows - 1.001, Math.max(0, y * rows - 0.5));
+    const i = Math.floor(fx);
+    const j = Math.floor(fy);
+    const tx = fx - i;
+    const ty = fy - j;
+    const p = (a: number, b: number) => lum[(j + b) * cols + (i + a)] ?? lum[j * cols + i]!;
+    const v = ((p(0, 0) * (1 - tx) + p(1, 0) * tx) * (1 - ty) + (p(0, 1) * (1 - tx) + p(1, 1) * tx) * ty - lo) / span;
+    const t = Math.min(1, Math.max(0, v));
+    return T.light ? t : 1 - t;
+  };
+}
+
+/** Whether (x, y) is inside a chest-up silhouette centred at (cx, cy). */
+const silhouette = (cx: number, cy: number) => (x: number, y: number) => {
+  const head = ((x - cx) / 0.17) ** 2 + ((y - (cy - 0.13)) / 0.115) ** 2;
+  const neck = Math.abs(x - cx) < 0.06 && y > cy - 0.04 && y < cy + 0.06 ? 0 : 2;
+  const body = ((x - cx) / 0.4) ** 2 + ((y - (cy + 0.3)) / 0.26) ** 2;
+  return Math.min(head, neck, body) < 1;
+};
+
+/** The picture only inside `inside` (the speaker over a designed background). */
+const masked = (picture: Field, inside: (x: number, y: number) => boolean): Field => (x, y) => (inside(x, y) ? Math.max(0.2, picture(x, y)) : 0);
+
+/** A designed background: soft diagonal strokes in the accent. */
+function wash(ctx: CanvasRenderingContext2D, w: number, h: number, color: string, r: () => number) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.22;
+  ctx.lineWidth = Math.max(3, Math.min(w, h) / 30);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let k = -h; k < w; k += ctx.lineWidth * 1.6) {
+    ctx.moveTo(k + r() * 4, h + 4);
+    ctx.lineTo(k + h * 0.9 + r() * 4, -4);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A title card's page: the artist's construction lines (thirds, a centre line), barely there. */
+function guides(ctx: CanvasRenderingContext2D, w: number, h: number, r: () => number) {
+  ctx.globalAlpha = 0.18;
+  for (const f of [1 / 3, 2 / 3]) {
+    wobblyLine(ctx, w * f, h * 0.04, w * f, h * 0.96, r, T.lead, 0.7);
+    wobblyLine(ctx, w * 0.04, h * f, w * 0.96, h * f, r, T.lead, 0.7);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---- drawn strokes ----
+
+/** Tones for painting, per page: the ink, a warm light and a cool shadow (r,g,b), and how a wash shows on the page. */
+const PAINT = {
+  dark: { ink: "228,228,228", warm: "255,238,210", cool: "140,170,210", lit: true, shadow: "0,0,0", shadowA: 0.55, vignette: "0,0,0", vignetteA: 0.5 },
+  paper: { ink: "42,41,46", warm: "250,236,206", cool: "38,52,74", lit: false, shadow: "40,30,20", shadowA: 0.28, vignette: "70,52,30", vignetteA: 0.2 },
+};
+
+/** A path traced into polylines in its own units (where the brush goes), cached by its d. */
+const traced = new Map<string, number[][]>();
+function trace(d: string): number[][] {
+  const hit = traced.get(d);
+  if (hit) return hit;
+  const lines: number[][] = [];
+  try {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    el.setAttribute("d", d);
+    const total = el.getTotalLength();
+    const step = Math.max(2.5, total / 180);
+    let cur: number[] = [];
+    for (let at = 0; at <= total + 0.01; at += step) {
+      const p = el.getPointAtLength(Math.min(at, total));
+      const n = cur.length;
+      // A jump (the pen lifted for a new "M") starts a new line.
+      if (n && Math.hypot(p.x - cur[n - 2]!, p.y - cur[n - 1]!) > step * 2.5) lines.push(cur), (cur = []);
+      cur.push(p.x, p.y);
+    }
+    if (cur.length > 2) lines.push(cur);
+  } catch {
+    // no SVG here (a test without a DOM): the plain stroke below is used instead
+  }
+  if (traced.size > 4000) traced.clear();
+  traced.set(d, lines);
+  return lines;
+}
+
+/** A smooth wobble in 0..1 along a line (pressure), from a seed: the same every time it's drawn. */
+const wobble = (x: number, seed: number) => 0.5 + 0.28 * Math.sin(x * 0.9 + seed) + 0.22 * Math.sin(x * 2.3 + seed * 1.7);
+
+/**
+ * One line of ink as a brush lays it: thin where it lands and lifts, fuller in the middle, its weight
+ * breathing with the hand's pressure; then a dry second pass, broken, a hair beside it.
+ */
+function brush(ctx: CanvasRenderingContext2D, pts: number[], width: number, color: string, seed: number, closed: boolean) {
+  const n = pts.length / 2;
+  if (n < 2) return;
+  const len: number[] = [0];
+  for (let i = 1; i < n; i++) len.push(len[i - 1]! + Math.hypot(pts[i * 2]! - pts[i * 2 - 2]!, pts[i * 2 + 1]! - pts[i * 2 - 1]!));
+  const total = len[n - 1]! || 1;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = `rgba(${color},1)`;
+  for (const pass of [0, 1]) {
+    const off = pass ? width * 0.55 : 0;
+    for (let i = 1; i < n; i++) {
+      const t = len[i]! / total;
+      const taper = closed ? 0.85 : Math.pow(Math.min(1, t / 0.14, (1 - t) / 0.2) * 0.85 + 0.15, 0.7);
+      const press = 0.7 + 0.6 * wobble(len[i]! * 0.04, seed);
+      if (pass && press < 0.95) continue; // the dry brush skips
+      ctx.globalAlpha = pass ? 0.22 : 0.88;
+      ctx.lineWidth = Math.max(0.35, width * taper * press * (pass ? 0.45 : 1.25));
+      ctx.beginPath();
+      ctx.moveTo(pts[i * 2 - 2]! + off, pts[i * 2 - 1]! + off * 0.6);
+      ctx.lineTo(pts[i * 2]! + off, pts[i * 2 + 1]! + off * 0.6);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Strokes in units where the box (x0, y0, w, h) is 1000 wide (see Stroke), drawn the way an artist
+ * renders them in graphite (app/graphite.ts): each thing's closed shapes as lit, rounded forms, toned
+ * with the pencil, its shadow cast on the ground; then the lines over them with a brush. Kept inside
+ * the box.
+ */
+function strokes(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, list: Stroke[], r: () => number) {
+  const P = T === THEMES.paper ? PAINT.paper : PAINT.dark;
+  const k = w / 1000;
+  const m = Math.min(w, h);
+  const line = Math.max(0.8, m / 240);
+  const tall = (1000 * h) / w;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, w, h);
+  ctx.clip();
+  ctx.translate(x0, y0);
+  ctx.scale(k, k);
+  const px = ctx.getTransform().a; // device pixels per unit, for a sharp render
+
+  // Each thing rendered as a form, its shadow under everything.
+  const look = T === THEMES.paper ? "paper" : "dark";
+  const things = sketchObjects(list).map((o) => {
+    const b = o.box;
+    const stands = !(b.w > 820 || b.h < 30 || b.y + b.h > tall * 0.97);
+    return graphite(o.strokes.map((i) => list[i]!), px, look, stands);
+  });
+  for (const t of things) if (t?.shadow && t.shadowBox) ctx.drawImage(t.shadow, t.shadowBox.x, t.shadowBox.y, t.shadowBox.w, t.shadowBox.h);
+  for (const t of things) if (t) ctx.drawImage(t.body, t.bodyBox.x, t.bodyBox.y, t.bodyBox.w, t.bodyBox.h);
+
+  // The lines, with a brush, over the forms: a graphite contour, firm but not heavy.
+  list.forEach((s, i) => {
+    let p: Path2D;
+    try {
+      p = new Path2D(s.d);
+    } catch {
+      return; // not a path: skip it, keep the drawing
+    }
+    const lines = trace(s.d);
+    const width = (line / k) * 0.62;
+    if (!lines.length) {
+      ctx.strokeStyle = `rgba(${P.ink},0.85)`;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke(p);
+      return;
+    }
+    for (const [j, pts] of lines.entries()) {
+      const n = pts.length;
+      const closed = /z\s*$/i.test(s.d) || Math.hypot(pts[0]! - pts[n - 2]!, pts[1]! - pts[n - 1]!) < width * 3;
+      brush(ctx, pts, width, contourOf(s.color, P), i * 7.3 + j * 3.1 + r() * 2, closed);
+    }
+  });
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/** A coloured shape's contour: its own colour, deepened on paper (lifted toward white on the dark page); else the ink. */
+function contourOf(color: string | undefined, P: (typeof PAINT)["dark"]): string {
+  if (!color) return P.ink;
+  const c = rgb(color);
+  const to = P.lit ? [235, 235, 235] : [20, 16, 22];
+  return c.map((v, i) => Math.round(v + (to[i]! - v) * (P.lit ? 0.35 : 0.5))).join(",");
+}
+
+/** A painted page's soft vignette: the light falls on the middle of the frame, the corners sink. */
+function vignette(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const P = T === THEMES.paper ? PAINT.paper : PAINT.dark;
+  const g = ctx.createRadialGradient(w / 2, h * 0.45, Math.min(w, h) * 0.25, w / 2, h * 0.5, Math.hypot(w, h) * 0.62);
+  g.addColorStop(0, `rgba(${P.vignette},0)`);
+  g.addColorStop(1, `rgba(${P.vignette},${P.vignetteA})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+/**
+ * A person from the chest up, as a storyboard artist sketches one: head and jaw, hair, ears, eyes,
+ * brows, nose, mouth, neck, collar and shoulders, sized to stand at the bottom of a w x h box.
+ */
+function bust(w: number, h: number): Stroke[] {
+  // Drawn in a 1000 x 1000 box, then placed: as wide as fits, feet of the box on the frame's bottom.
+  const H = (1000 * h) / w;
+  const s = Math.min(0.95, (H * 0.92) / 1000);
+  const dx = 500 - 500 * s;
+  const dy = H - 1000 * s;
+  const at = (d: string) => d.replace(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g, (_, x, y) => `${round1(dx + Number(x) * s)} ${round1(dy + Number(y) * s)}`);
+  return [
+    { d: at("M120 1000 C130 760 230 655 452 588 L500 645 L550 588 C770 655 870 760 880 1000"), shade: 0.3 },
+    { d: at("M452 588 L500 700 L550 588") },
+    { d: at("M455 498 L452 590 M545 498 L550 590") },
+    { d: at("M378 322 C374 175 440 142 500 142 C570 142 628 178 624 322 C620 425 584 498 500 507 C416 498 381 425 378 322 Z") },
+    { d: at("M370 305 C360 150 440 105 505 108 C592 110 648 168 633 305 C612 228 560 200 505 206 C455 210 410 238 370 305 Z"), shade: 0.75 },
+    { d: at("M380 305 C352 300 347 358 384 372 M620 305 C648 300 653 358 616 372") },
+    { d: at("M432 292 C450 282 468 282 482 290 M520 290 C534 282 552 282 570 292") },
+    { d: at("M442 322 C452 316 466 316 476 322 M526 322 C536 316 550 316 560 322") },
+    { d: at("M501 335 L492 398 C498 404 508 405 514 400") },
+    { d: at("M466 442 C482 452 518 452 536 442") },
+  ];
+}
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/** A frame still to fill (B-roll not found yet): the storyboard's crossed box, in faint pencil. */
+function insert(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: () => number) {
+  const p = Math.min(w, h) * 0.12;
+  ctx.globalAlpha = 0.35;
+  roughRect(ctx, x + p, y + p, w - 2 * p, h - 2 * p, r, T.lead, 1);
+  wobblyLine(ctx, x + p, y + p, x + w - p, y + h - p, r, T.lead, 0.9);
+  wobblyLine(ctx, x + w - p, y + p, x + p, y + h - p, r, T.lead, 0.9);
+  ctx.globalAlpha = 1;
+}
+
+// ---- marker ----
+
+function wobblyLine(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, r: () => number, color: string, width: number) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  const base = ctx.globalAlpha;
+  for (let pass = 0; pass < 2; pass++) {
+    const j = () => (r() - 0.5) * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x1 + j(), y1 + j());
+    ctx.quadraticCurveTo((x1 + x2) / 2 + j() * 1.5, (y1 + y2) / 2 + j() * 1.5, x2 + j(), y2 + j());
+    ctx.globalAlpha = base * (pass ? 0.4 : 1);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = base;
+}
+
+function roughRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: () => number, color: string, width = 1.6) {
+  wobblyLine(ctx, x, y, x + w, y, r, color, width);
+  wobblyLine(ctx, x + w, y, x + w, y + h, r, color, width);
+  wobblyLine(ctx, x + w, y + h, x, y + h, r, color, width);
+  wobblyLine(ctx, x, y + h, x, y, r, color, width);
+}
+
+function dashedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: () => number, color: string, width: number, dash = [5, 4]) {
+  ctx.setLineDash(dash);
+  roughRect(ctx, x, y, w, h, r, color, width);
+  ctx.setLineDash([]);
+}
+
+/** A frame shown only by its four corners, like crop marks. */
+function brackets(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: () => number, color: string, width: number) {
+  const k = Math.min(w, h) * 0.16;
+  for (const [cx, cy, sx, sy] of [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]] as const) {
+    wobblyLine(ctx, cx, cy, cx + sx * k, cy, r, color, width);
+    wobblyLine(ctx, cx, cy, cx, cy + sy * k, r, color, width);
+  }
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, rad: number) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, Math.min(rad, w / 2, h / 2));
+}
+
+/** Text fitted into a box: as big as fits, on up to three lines. */
+function fitText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, w: number, h: number, weight: number, family: string, fill: string, stroke?: string, align: CanvasTextAlign = "center") {
+  const words = text.trim().split(/\s+/);
+  for (let size = Math.min(h * 0.9, w * 0.35); size >= 6; size *= 0.9) {
+    ctx.font = `${weight} ${size}px ${family}`;
+    const lines: string[] = [];
+    let line = "";
+    for (const wd of words) {
+      const next = line ? `${line} ${wd}` : wd;
+      if (ctx.measureText(next).width > w && line) lines.push(line), (line = wd);
+      else line = next;
+    }
+    if (line) lines.push(line);
+    const lh = size * 1.05;
+    if (lines.length * lh > h || lines.some((l) => ctx.measureText(l).width > w) || lines.length > 3) continue;
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    const top = y + (h - lines.length * lh) / 2 + lh / 2;
+    const ax = align === "center" ? x + w / 2 : x;
+    lines.forEach((l, i) => {
+      if (stroke) {
+        ctx.lineWidth = Math.max(1.2, size * 0.16);
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = stroke;
+        ctx.strokeText(l, ax, top + i * lh);
+      }
+      ctx.fillStyle = fill;
+      ctx.fillText(l, ax, top + i * lh);
+    });
+    return;
+  }
+}
+
+const SANS = 'system-ui, "Helvetica Neue", sans-serif';
+/**
+ * The movement labels' letters: production markup, condensed capitals tracked out a little (the
+ * hand feel is in the wobbly lines, not in the letters).
+ */
+const HAND = '"Avenir Next Condensed", "DIN Condensed", "Helvetica Neue", sans-serif';
+
+/**
+ * A title as it will look in the video: its own typeface, weight, case and spacing, and its finish
+ * (a soft shadow by default; outline, glow, 3D block, gold or chrome when the shot asks for it).
+ * Fitted into its box, as big as fits, on up to three lines.
+ */
+function title(ctx: CanvasRenderingContext2D, l: Layer, b: Storyboard, x: number, y: number, w: number, h: number, color: string) {
+  const own = fontParts(l.font || b.look.font);
+  const family = fontStack(own.family);
+  const weight = l.weight ?? own.weight ?? (l.font ? 700 : 800);
+  const italic = l.italic ?? own.italic ? "italic " : "";
+  const text = (l.text || "TITLE").trim();
+  const effect = l.effect ?? "none";
+  // Highlighted words are quoted from a page: as written, unless the shot asks for capitals.
+  const caps = effect === "highlight" ? l.caps === true : l.caps !== false;
+  const words = (caps ? text.toUpperCase() : text).split(/\s+/);
+  const boxed = effect === "tag" || effect === "highlight";
+  const script = /roundhand|zapfino|script|chancery/i.test(own.family);
+  const pad = effect === "extrude" || effect === "gold" || effect === "chrome" ? 0.9 : 1;
+  ctx.save();
+  // A tag's box and a highlight's band take room around the letters.
+  const fitW = effect === "tag" ? w * 0.8 : effect === "highlight" ? w * 0.94 : w;
+  const fitH = effect === "tag" ? h * 0.78 : h;
+  for (let size = Math.min(fitH * 0.92, fitW * 0.4) * pad; size >= 6; size *= 0.92) {
+    ctx.font = `${italic}${weight} ${size}px ${family}`;
+    ctx.fontStretch = own.condensed ? "condensed" : "normal";
+    ctx.letterSpacing = `${(l.tracking ?? 0) * size}px`;
+    const lines: string[] = [];
+    let line = "";
+    for (const wd of words) {
+      const next = line ? `${line} ${wd}` : wd;
+      if (ctx.measureText(next).width > fitW && line) lines.push(line), (line = wd);
+      else line = next;
+    }
+    if (line) lines.push(line);
+    const lh = size * (script ? 1.25 : boxed ? 1.3 : 1.02);
+    if (lines.length * lh > fitH || lines.some((s) => ctx.measureText(s).width > fitW) || lines.length > 3) continue;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const top = y + (h - lines.length * lh) / 2 + lh / 2;
+    if (boxed) {
+      lines.forEach((s, i) => marked(ctx, s, x + w / 2, top + i * lh, size, color, effect === "tag", i));
+      break;
+    }
+    // Like a storyboard artist, the pencil lines are rubbed out around the lettering first.
+    ctx.save();
+    ctx.fillStyle = T.bg;
+    ctx.shadowColor = T.bg;
+    ctx.shadowBlur = size * 0.45;
+    for (let k = 0; k < 3; k++) lines.forEach((s, i) => ctx.fillText(s, x + w / 2, top + i * lh));
+    ctx.restore();
+    lines.forEach((s, i) => finish(ctx, s, x + w / 2, top + i * lh, size, color, effect));
+    break;
+  }
+  ctx.restore();
+}
+
+/**
+ * A line set on colour: a tag (an accent box, dark capitals, tilted a hair, naming a thing) or a
+ * highlight (a marker band over words quoted from a page, dark letters on top).
+ */
+function marked(ctx: CanvasRenderingContext2D, s: string, cx: number, cy: number, size: number, color: string, tag: boolean, i: number) {
+  const tw = ctx.measureText(s).width;
+  const padX = size * (tag ? 0.32 : 0.14);
+  const bh = size * (tag ? 1.18 : 1.02);
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (tag) ctx.rotate(-0.035);
+  ctx.fillStyle = color;
+  if (tag) {
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = size * 0.25;
+    ctx.shadowOffsetY = size * 0.06;
+    roundRect(ctx, -tw / 2 - padX, -bh / 2, tw + padX * 2, bh, size * 0.12);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+  } else {
+    // A marker stroke: slightly uneven ends, a little lower than the letters' middle.
+    const sk = (i % 2 ? 1 : -1) * size * 0.05;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-tw / 2 - padX + sk, -bh * 0.42);
+    ctx.lineTo(tw / 2 + padX, -bh * 0.46);
+    ctx.lineTo(tw / 2 + padX - sk, bh * 0.5);
+    ctx.lineTo(-tw / 2 - padX, bh * 0.46);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = "#111111";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(s, 0, size * 0.03);
+  ctx.restore();
+}
+
+/** One line of a title, finished. */
+function finish(ctx: CanvasRenderingContext2D, s: string, cx: number, cy: number, size: number, picked: string, effect: NonNullable<Layer["effect"]>) {
+  // On the paper page, white and cream letters are drawn in ink (as a storyboard artist would); metal stays metal.
+  const paper = T === THEMES.paper;
+  const [lr, lg, lb] = rgb(picked);
+  const color = paper && (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255 > 0.78 ? INK : picked;
+  const shadow = (blur: number, dy: number, alpha: number, c = "0,0,0") => {
+    ctx.shadowColor = `rgba(${c},${paper && c === "0,0,0" ? alpha * 0.55 : alpha})`;
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = dy;
+  };
+  const clear = () => shadow(0, 0, 0);
+  // A hairline edge keeps light letters readable on the paper page, dark ones on the dark page.
+  const hairline = (c = edge(color), k = 0.035) => {
+    ctx.lineWidth = Math.max(1, size * k);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = c;
+    ctx.strokeText(s, cx, cy);
+  };
+  const block = (c: string, depth: number) => {
+    // The letters' sides: the same line stacked down and to the right, darker.
+    ctx.fillStyle = c;
+    const steps = Math.max(2, Math.round(depth));
+    for (let i = steps; i >= 1; i--) ctx.fillText(s, cx + (i * depth) / steps * 0.7, cy + (i * depth) / steps);
+  };
+  const metal = (stops: [number, string][]) => {
+    const g = ctx.createLinearGradient(0, cy - size * 0.5, 0, cy + size * 0.5);
+    for (const [at, c] of stops) g.addColorStop(at, c);
+    return g;
+  };
+  switch (effect) {
+    case "none":
+      hairline(edge(color), 0.02);
+      ctx.fillStyle = color;
+      ctx.fillText(s, cx, cy);
+      break;
+    case "shadow":
+      shadow(size * 0.28, size * 0.07, 0.45);
+      ctx.fillStyle = color;
+      ctx.fillText(s, cx, cy);
+      clear();
+      hairline(edge(color), 0.025);
+      ctx.fillText(s, cx, cy);
+      break;
+    case "outline":
+      ctx.lineWidth = Math.max(1.2, size * 0.04);
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = color;
+      ctx.strokeText(s, cx, cy);
+      break;
+    case "glow": {
+      const [r, g, bl] = rgb(color);
+      ctx.fillStyle = color;
+      shadow(size * 0.7, 0, 0.9, `${r},${g},${bl}`);
+      ctx.fillText(s, cx, cy);
+      shadow(size * 0.25, 0, 0.9, `${r},${g},${bl}`);
+      ctx.fillText(s, cx, cy);
+      clear();
+      ctx.fillStyle = paper ? color : mix(color, "#ffffff", 0.55);
+      ctx.fillText(s, cx, cy);
+      if (paper) hairline(mix(color, "#000000", 0.45), 0.012);
+      break;
+    }
+    case "extrude":
+      shadow(size * 0.3, size * 0.1, 0.4);
+      block(mix(color, "#000000", 0.55), size * 0.1);
+      clear();
+      ctx.fillStyle = color;
+      ctx.fillText(s, cx, cy);
+      hairline(mix(color, "#000000", 0.6), 0.015);
+      break;
+    case "gold":
+      shadow(size * 0.3, size * 0.08, 0.45);
+      block("#6b4510", size * (paper ? 0.045 : 0.03));
+      clear();
+      // On the dark page the gold catches a little light; on paper it sits on a hairline edge.
+      if (!paper) shadow(size * 0.35, 0, 0.35, "240,200,110");
+      ctx.fillStyle = metal([[0, "#fff8dc"], [0.3, "#f7da7f"], [0.5, "#c58f2c"], [0.6, "#f5d77f"], [1, "#b98222"]]);
+      ctx.fillText(s, cx, cy);
+      clear();
+      if (paper) hairline("#3d2706", 0.01);
+      break;
+    case "chrome":
+      shadow(size * 0.3, size * 0.08, 0.45);
+      block("#2b3038", size * 0.045);
+      clear();
+      ctx.fillStyle = metal([[0, "#ffffff"], [0.42, "#cfd5de"], [0.5, "#5b636f"], [0.58, "#eef1f5"], [1, "#8a929e"]]);
+      ctx.fillText(s, cx, cy);
+      hairline("#20242a", 0.012);
+      break;
+  }
+  clear();
+}
+
+/** Two colours mixed: t = 0 is a, 1 is b. */
+function mix(a: string, b: string, t: number): string {
+  const p = rgb(a);
+  const q = rgb(b);
+  const c = p.map((v, i) => Math.round(v + (q[i]! - v) * t));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+function layer(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, b: Storyboard, accent: string, r: () => number, picture: HTMLImageElement | null) {
+  const x = l.x * w;
+  const y = l.y * h;
+  const lw = Math.max(l.w * w, 8);
+  const lh = Math.max(l.h * h, 8);
+  const color = l.color && /^#/.test(l.color) ? l.color : accent;
+  switch (l.kind) {
+    case "text":
+      title(ctx, l, b, x, y, lw, lh, color);
+      break;
+    case "caption": {
+      // As creators set them: white bold capitals with a dark edge, one calm line, no box.
+      // On the paper page it is drawn in ink, as an artist would; in the app, white with a dark edge.
+      if (T === THEMES.paper) fitText(ctx, (l.text || "caption").toUpperCase(), x, y + lh * 0.1, lw, lh * 0.8, 800, SANS, INK);
+      else fitText(ctx, (l.text || "caption").toUpperCase(), x, y + lh * 0.1, lw, lh * 0.8, 800, SANS, "#ffffff", "#141414");
+      break;
+    }
+    case "image":
+    case "footage": {
+      // A real picture (theirs, or one found of a thing they named): drawn as a pencil study, in its
+      // own shape, as big as fits its box, with a soft shadow where it stands.
+      const own = l.kind === "image" && l.file ? pictureOf(l.file) : undefined;
+      if (own) {
+        const k = Math.min(lw / own.naturalWidth, lh / own.naturalHeight);
+        const pw = own.naturalWidth * k;
+        const ph = own.naturalHeight * k;
+        const px = x + (lw - pw) / 2;
+        const py = y + (lh - ph) / 2;
+        const sc = ctx.getTransform().a;
+        ctx.save();
+        ctx.translate(px + pw / 2, py + ph);
+        ctx.scale(1, 0.12);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, pw * 0.5);
+        g.addColorStop(0, T === THEMES.paper ? "rgba(40,30,20,0.22)" : "rgba(0,0,0,0.5)");
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(-pw * 0.6, -pw * 0.5, pw * 1.2, pw);
+        ctx.restore();
+        ctx.drawImage(photoSketch(own, pw * sc, ph * sc, T === THEMES.paper ? "paper" : "dark", own.src), px, py, pw, ph);
+        break;
+      }
+      ctx.save();
+      roundRect(ctx, x, y, lw, lh, 6);
+      ctx.fillStyle = T.bg;
+      ctx.fill();
+      ctx.restore();
+      // A card of the speaker shows them; any other card without a picture is a frame to fill.
+      const speaker = l.kind === "footage" && /speaker|camera|face|host|presenter|\b(me|you|him|her)\b/i.test(l.text ?? "");
+      if (l.kind === "footage" && picture && speaker) pencil(ctx, x, y, lw, lh, sampler(picture, lw, lh), r);
+      else if (speaker) strokes(ctx, x, y, lw, lh, bust(lw, lh), r);
+      else insert(ctx, x, y, lw, lh, r);
+      ctx.setLineDash(l.kind === "image" ? [5, 4] : []);
+      roughRect(ctx, x, y, lw, lh, r, T.line, 1.4);
+      ctx.setLineDash([]);
+      if (l.text) tagAt(ctx, x + 4, y + 4, lw - 8, l.text);
+      break;
+    }
+    case "box":
+      roughRect(ctx, x, y, lw, lh, r, color, 2.4);
+      if (l.text) fitText(ctx, l.text, x, y + lh + 2, lw, Math.min(18, h * 0.05), 700, SANS, color, edge(color));
+      break;
+    case "arrow": {
+      arrow(ctx, x, y, x + lw, y + lh, r, color, 3, 0.12);
+      if (l.text) fitText(ctx, l.text, x - lw * 0.2, y - 18, lw * 0.9, 16, 800, SANS, color, edge(color), "left");
+      break;
+    }
+    case "sticker": {
+      const rad = Math.min(lw, lh) / 2;
+      ctx.beginPath();
+      ctx.arc(x + lw / 2, y + lh / 2, rad, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = T.bg;
+      ctx.stroke();
+      fitText(ctx, l.text || "★", x + rad * 0.3, y + rad * 0.3, lw - rad * 0.6, lh - rad * 0.6, 900, SANS, "#ffffff");
+      break;
+    }
+    case "chart": {
+      roughRect(ctx, x, y, lw, lh, r, T.lead, 1.2);
+      const bars = 4;
+      for (let i = 0; i < bars; i++) {
+        const bh = lh * (0.25 + (0.65 * (i + 1)) / bars) * (0.85 + r() * 0.15);
+        const bw = (lw / bars) * 0.55;
+        const bx = x + (lw / bars) * i + bw * 0.4;
+        if (i === bars - 1) {
+          ctx.fillStyle = color;
+          ctx.fillRect(bx, y + lh - bh - 2, bw, bh);
+        } else {
+          roughRect(ctx, bx, y + lh - bh - 2, bw, bh, r, T.lead, 1);
+          hatch(ctx, bx, y + lh - bh - 2, bw, bh, T.lead, r);
+        }
+      }
+      if (l.text) fitText(ctx, l.text, x, y - 18, lw, 16, 800, SANS, T.lead, T.bg);
+      break;
+    }
+  }
+}
+
+/** Quick diagonal shading inside a small box (chart bars). */
+function hatch(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string, r: () => number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  for (let k = -h; k < w; k += 3) ctx.moveTo(x + k + r(), y + h), ctx.lineTo(x + k + h + r(), y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A label stuck on the frame (B-roll still to be found). */
+function tagAt(ctx: CanvasRenderingContext2D, x: number, y: number, maxW: number, text: string) {
+  const size = Math.max(7, Math.min(11, maxW / 14));
+  ctx.font = `600 ${size}px "SF Mono", Menlo, monospace`;
+  let t = text.toUpperCase();
+  while (t.length > 4 && ctx.measureText(t).width > maxW - 10) t = `${t.slice(0, -2)}…`;
+  const tw = ctx.measureText(t).width;
+  ctx.fillStyle = T.plate;
+  ctx.fillRect(x, y, tw + 10, size + 8);
+  ctx.fillStyle = T.plateText;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(t, x + 5, y + (size + 8) / 2 + 0.5);
+}
+
+// ---- movement (red) ----
+
+/**
+ * A hand-drawn arrow from (x1, y1) to (x2, y2), bowed sideways by `bend` (a fraction of its length),
+ * with an open head along its last direction.
+ */
+function arrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, r: () => number, color: string, width: number, bend = 0) {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (len < 3) return;
+  const nx = -(y2 - y1) / len;
+  const ny = (x2 - x1) / len;
+  const cx = (x1 + x2) / 2 + nx * len * bend;
+  const cy = (y1 + y2) / 2 + ny * len * bend;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (let pass = 0; pass < 2; pass++) {
+    const j = () => (r() - 0.5) * 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x1 + j(), y1 + j());
+    ctx.quadraticCurveTo(cx + j(), cy + j(), x2, y2);
+    ctx.globalAlpha = pass ? 0.4 : 1;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const a = Math.atan2(y2 - cy, x2 - cx);
+  const s = Math.max(4, Math.min(len * 0.35, width * 3.6));
+  ctx.beginPath();
+  ctx.moveTo(x2 - s * Math.cos(a - 0.45), y2 - s * Math.sin(a - 0.45));
+  ctx.lineTo(x2, y2);
+  ctx.lineTo(x2 - s * Math.cos(a + 0.45), y2 - s * Math.sin(a + 0.45));
+  ctx.stroke();
+}
+
+/**
+ * A hand-lettered label with a halo, so it reads over the drawing. Kept inside the frame and off
+ * titles, captions and other labels: it tries a few spots near where it's asked for, and is left out
+ * when none is free (a clear panel beats a complete one).
+ */
+function label(ctx: CanvasRenderingContext2D, w: number, h: number, text: string, x: number, y: number, color: string, size: number, align: CanvasTextAlign = "left") {
+  ctx.font = `600 ${size}px ${HAND}`;
+  ctx.letterSpacing = `${size * 0.06}px`;
+  const tw = ctx.measureText(text).width;
+  const left = align === "center" ? x - tw / 2 : align === "right" ? x - tw : x;
+  const spot = (dx: number, dy: number) => {
+    const lx = Math.min(w - tw - 3, Math.max(3, left + dx));
+    const ly = Math.min(h - size * 0.7, Math.max(size * 0.7, y + dy));
+    return { lx, ly, box: { x: lx - 2, y: ly - size * 0.6, w: tw + 4, h: size * 1.2 } };
+  };
+  const tries = [[0, 0], [0, size * 1.3], [0, -size * 1.3], [0, size * 2.6], [0, -size * 2.6], [-tw * 0.6, 0], [tw * 0.6, 0]];
+  const free = tries.map(([dx, dy]) => spot(dx!, dy!)).find((p) => !taken.some((t) => overlaps(t, p.box)));
+  if (!free) return void (ctx.letterSpacing = "0px");
+  taken.push(free.box);
+  if (labelOwner) hits.push({ ...labelOwner, x: free.box.x, y: free.box.y, w: free.box.w, h: free.box.h });
+  const { lx, ly } = free;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(2.5, size * 0.35);
+  ctx.strokeStyle = T.halo;
+  ctx.strokeText(text, lx, ly);
+  ctx.fillStyle = color;
+  ctx.fillText(text, lx, ly);
+  ctx.letterSpacing = "0px";
+}
+
+/** How a layer comes in, or where it goes: a ghost of where it starts or ends, and the arrow between. */
+function motion(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, r: () => number, labels: boolean) {
+  const x = l.x * w;
+  const y = l.y * h;
+  const lw = Math.max(l.w * w, 8);
+  const lh = Math.max(l.h * h, 8);
+  const m = Math.min(w, h);
+  const red = T.red;
+  // Thinner than the camera's marks (which sit at the frame edge): the two kinds of red read apart.
+  const stroke = Math.max(1, m / 175);
+  const fs = Math.max(8, Math.min(13, m / 14));
+  const under = y + lh + fs * 0.9 < h ? y + lh + fs * 0.8 : y - fs * 0.7; // where its label goes
+  const cx = x + lw / 2;
+  const cy = y + lh / 2;
+
+  if (l.to) {
+    // It travels: dashed where it ends, a bowed arrow from here to there.
+    const tx = l.to.x * w;
+    const ty = l.to.y * h;
+    dashedRect(ctx, tx, ty, lw, lh, r, red, stroke * 0.8, [4, 4]);
+    arrow(ctx, cx, cy, tx + lw / 2, ty + lh / 2, r, red, stroke, 0.18);
+    if (labels) label(ctx, w, h, "MOVES", (cx + tx + lw / 2) / 2, (cy + ty + lh / 2) / 2 - fs, red, fs, "center");
+  }
+
+  switch (l.enter) {
+    case "from-left":
+    case "from-right":
+    case "from-top":
+    case "from-bottom": {
+      // Speed lines trailing on the side it comes from, and an arrow beside it (never through it).
+      // A dashed ghost of where it starts, when enough of that would be on the frame to read.
+      const [dx, dy] = l.enter === "from-left" ? [-1, 0] : l.enter === "from-right" ? [1, 0] : l.enter === "from-top" ? [0, -1] : [0, 1];
+      const gx = x + dx * lw * 0.75;
+      const gy = y + dy * lh * 1.15;
+      const seen = (Math.max(0, Math.min(w, gx + lw) - Math.max(0, gx)) * Math.max(0, Math.min(h, gy + lh) - Math.max(0, gy))) / (lw * lh);
+      if (seen > 0.45) {
+        ctx.globalAlpha = 0.7;
+        dashedRect(ctx, gx, gy, lw, lh, r, red, stroke * 0.7, [3, 4]);
+        ctx.globalAlpha = 1;
+      }
+      const gapPx = m * 0.025;
+      for (let i = 0; i < 3; i++) {
+        const t = 0.25 + i * 0.25;
+        const len = m * (0.05 + r() * 0.035);
+        // At the trailing edge, outside the layer (inside the frame).
+        const sx = dx ? (dx < 0 ? Math.max(len + 2, x - gapPx) : Math.min(w - len - 2, x + lw + gapPx)) : x + lw * t;
+        const sy = dy ? (dy < 0 ? Math.max(len + 2, y - gapPx) : Math.min(h - len - 2, y + lh + gapPx)) : y + lh * t;
+        wobblyLine(ctx, sx, sy, sx + dx * len, sy + dy * len, r, red, stroke * 0.8);
+      }
+      if (dx) {
+        // Under the layer (over it when it sits at the bottom): from its trailing side, in the direction it travels.
+        const ay = y + lh + m * 0.035 < h - 4 ? y + lh + m * 0.035 : y - m * 0.035;
+        const from = dx < 0 ? x + lw * 0.2 : x + lw * 0.8;
+        arrow(ctx, from, ay, from - dx * lw * 0.45, ay, r, red, stroke * 1.2, 0);
+        taken.push({ x: Math.min(from, from - dx * lw * 0.45) - 4, y: ay - 6, w: lw * 0.45 + 8, h: 12 });
+      } else {
+        const ax = x + lw + m * 0.035 < w - 4 ? x + lw + m * 0.035 : x - m * 0.035;
+        const from = dy < 0 ? y + lh * 0.1 : y + lh * 0.9;
+        arrow(ctx, ax, from, ax, from - dy * Math.max(lh * 0.8, m * 0.08), r, red, stroke * 1.2, 0);
+      }
+      break;
+    }
+    case "pop": {
+      // Burst marks around it.
+      const rx = lw / 2 + m * 0.03;
+      const ry = lh / 2 + m * 0.03;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + 0.3;
+        const k = 1 + r() * 0.12;
+        wobblyLine(ctx, cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k, cx + Math.cos(a) * (rx * k + m * 0.045), cy + Math.sin(a) * (ry * k + m * 0.045), r, red, stroke);
+      }
+      if (labels) label(ctx, w, h, "POP!", x + lw + 2, y - fs * 0.2, red, fs);
+      break;
+    }
+    case "zoom": {
+      // It grows from small: arrows out of its corners, outside it (never across its words).
+      const k = m * 0.06;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+        const ox = sx < 0 ? x - 2 : x + lw + 2;
+        const oy = sy < 0 ? y - 2 : y + lh + 2;
+        arrow(ctx, ox, oy, ox + sx * k, oy + sy * k * 0.8, r, red, stroke, 0);
+      }
+      if (labels) label(ctx, w, h, "GROWS IN", cx, under + fs * 0.4, red, fs, "center");
+      break;
+    }
+    case "fade":
+      dashedRect(ctx, x - 3, y - 3, lw + 6, lh + 6, r, red, stroke * 0.7, [1.2, 3.5]);
+      if (labels) label(ctx, w, h, "FADES IN", cx, under, red, fs, "center");
+      break;
+    case "type": {
+      // A cursor at the end of the line.
+      const tx = Math.min(w - 4, x + lw + 2);
+      wobblyLine(ctx, tx, y + lh * 0.15, tx, y + lh * 0.85, r, red, stroke * 1.4);
+      if (labels) label(ctx, w, h, "TYPES ON", cx, under, red, fs, "center");
+      break;
+    }
+    case "draw":
+      if (labels) label(ctx, w, h, "DRAWS ON", cx, under, red, fs, "center");
+      break;
+  }
+}
+
+/** The camera's move: the frame it ends on (aimed at the shot's focus) and how it gets there. */
+function camera(ctx: CanvasRenderingContext2D, w: number, h: number, shot: Shot, r: () => number, labels: boolean) {
+  const move = shot.camera;
+  if (move === "still") return;
+  const red = T.red;
+  const m = Math.min(w, h);
+  const stroke = Math.max(1.4, m / 100);
+  const fs = Math.max(8, Math.min(14, m / 13));
+  const fx = (shot.focus?.x ?? 0.5) * w;
+  const fy = (shot.focus?.y ?? 0.5) * h;
+  /** A frame of `k` the size, centred on the focus, kept inside the picture. */
+  const inner = (k: number) => {
+    const iw = w * k;
+    const ih = h * k;
+    return { x: Math.min(w - iw - 2, Math.max(2, fx - iw / 2)), y: Math.min(h - ih - 2, Math.max(2, fy - ih / 2)), w: iw, h: ih };
+  };
+  const corners = (b: { x: number; y: number; w: number; h: number }) =>
+    [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]] as const;
+  const outer = corners({ x: m * 0.05, y: m * 0.05, w: w - m * 0.1, h: h - m * 0.1 });
+
+  if (move === "zoom-in" || move === "zoom-out" || move === "punch-in") {
+    // The frame it ends on as four corner brackets (crop marks): it reads as "we end here" and
+    // covers little of the drawing. A slow zoom ends about 1.3x in, a punch-in about 1.8x.
+    const box = inner(move === "punch-in" ? 0.55 : 0.75);
+    brackets(ctx, box.x, box.y, box.w, box.h, r, red, stroke * (move === "punch-in" ? 1.3 : 1.1));
+    corners(box).forEach(([ix, iy], i) => {
+      const [ox, oy] = outer[i]!;
+      const [ax, ay, bx, by] = move === "zoom-out" ? [ix, iy, ox, oy] : [ox, oy, ix, iy];
+      // The middle stretch only: short, and the heads stop just short of the frame they point at.
+      arrow(ctx, ax + (bx - ax) * 0.3, ay + (by - ay) * 0.3, ax + (bx - ax) * 0.85, ay + (by - ay) * 0.85, r, red, stroke, 0);
+    });
+    if (move === "punch-in") {
+      // Impact ticks at its corners: it's a cut-in, not a drift.
+      for (const [ix, iy] of corners(box)) {
+        for (const a of [0, Math.PI / 2]) wobblyLine(ctx, ix - Math.cos(a) * m * 0.03, iy - Math.sin(a) * m * 0.03, ix + Math.cos(a) * m * 0.03, iy + Math.sin(a) * m * 0.03, r, red, stroke * 0.8);
+      }
+    }
+    if (labels) label(ctx, w, h, move === "zoom-in" ? "SLOW ZOOM IN" : move === "zoom-out" ? "ZOOM OUT" : "PUNCH IN", box.x + 3, box.y - fs * 0.75, red, fs);
+  } else if (move === "pan-left" || move === "pan-right") {
+    // The frame slides across: a long arrow over the top.
+    const d = move === "pan-left" ? -1 : 1;
+    const y = h * 0.07;
+    arrow(ctx, w / 2 - d * w * 0.3, y, w / 2 + d * w * 0.3, y, r, red, stroke * 1.3, -0.06);
+    if (labels) label(ctx, w, h, move === "pan-left" ? "PAN LEFT" : "PAN RIGHT", w / 2, y + fs * 1.1, red, fs, "center");
+  } else if (move === "shake") {
+    for (const sx of [0.05, 0.95]) {
+      ctx.beginPath();
+      ctx.strokeStyle = red;
+      ctx.lineWidth = stroke;
+      for (let i = 0; i <= 6; i++) ctx.lineTo(w * sx + (i % 2 ? 1 : -1) * m * 0.025, h * (0.4 + i * 0.035));
+      ctx.stroke();
+    }
+    if (labels) label(ctx, w, h, "SHAKE", w / 2, h * 0.36, red, fs, "center");
+  }
+}
+
+/** A layer's note number: a small dark disc at its top left corner (movement labels take the right), kept inside the frame. */
+function callout(ctx: CanvasRenderingContext2D, w: number, h: number, l: Layer, n: number, layerIndex: number) {
+  const rad = Math.max(6, Math.min(10, Math.min(w, h) / 24));
+  const cx = Math.min(w - rad - 2, Math.max(rad + 2, l.x * w - rad * 0.3));
+  const cy = Math.min(h - rad - 2, Math.max(rad + 2, l.y * h - rad * 0.2));
+  ctx.beginPath();
+  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+  ctx.fillStyle = T.plate;
+  ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = T.plateText;
+  ctx.stroke();
+  ctx.fillStyle = T.plateText;
+  ctx.font = `700 ${rad * 1.25}px ${SANS}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(n), cx, cy + 0.5);
+  hits.push({ kind: "note", i: layerIndex, x: cx - rad, y: cy - rad, w: rad * 2, h: rad * 2 });
+}
+
+/**
+ * A page on screen (an article, a paper, a lab's announcement) as a creator shows a source: no card,
+ * no browser, the page itself pushed in until its lines run off the right edge. A date line, a heavy
+ * headline, a byline, then ruled body text. The highlighted words are the shot's own layer on top.
+ */
+function page(ctx: CanvasRenderingContext2D, w: number, h: number, r: () => number) {
+  const m = Math.min(w, h);
+  const left = w * 0.07;
+  const line = (y: number, to: number, width: number, alpha: number) => {
+    ctx.globalAlpha = alpha;
+    wobblyLine(ctx, left, y, to, y, r, T.lead, width);
+    ctx.globalAlpha = 1;
+  };
+  line(h * 0.1, left + w * 0.28, Math.max(1, m * 0.008), 0.5); // the date line
+  const head = Math.max(3, m * 0.05); // the headline: three heavy lines, the first two running off the edge
+  [0.17, 0.17 + head * 1.9 / h, 0.17 + head * 3.8 / h].forEach((f, i) => line(h * f, i < 2 ? w * 1.05 : w * (0.45 + r() * 0.2), head, 0.75));
+  line(h * 0.17 + head * 5.4, left + w * 0.35, Math.max(1, m * 0.009), 0.45); // the byline
+  for (let y = h * 0.17 + head * 7; y < h * 0.97; y += Math.max(6, m * 0.045)) {
+    line(y, r() < 0.15 ? w * (0.4 + r() * 0.3) : w * 1.05, Math.max(0.8, m * 0.012), 0.35);
+  }
+}
+
+// ---- the user's own drawing ----
+
+/**
+ * The user's strokes on a w x h frame. They're drawn on their own layer first, so the eraser rubs out
+ * only their lines, never the sketch under them. On paper, white pencil turns to ink (or it would vanish).
+ */
+export function drawMarks(ctx: CanvasRenderingContext2D, w: number, h: number, scale: number, marks: Mark[], theme: SketchTheme = "dark") {
+  const layer = document.createElement("canvas");
+  layer.width = Math.max(1, Math.round(w * scale));
+  layer.height = Math.max(1, Math.round(h * scale));
+  const g = layer.getContext("2d")!;
+  g.setTransform(scale, 0, 0, scale, 0, 0);
+  strokeMarks(g, w, h, marks, theme);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(layer, 0, 0);
+  ctx.restore();
+}
+
+/** The strokes themselves, onto a layer of their own (so the eraser only reaches them). */
+export function strokeMarks(g: CanvasRenderingContext2D, w: number, h: number, marks: Mark[], theme: SketchTheme = "dark") {
+  g.save();
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  const m = Math.min(w, h);
+  for (const k of marks) {
+    const p = k.points;
+    if (p.length < 2) continue;
+    g.globalCompositeOperation = k.tool === "eraser" ? "destination-out" : "source-over";
+    const color = theme === "paper" && /^#f/i.test(k.color) ? INK : k.color;
+    g.strokeStyle = color;
+    g.fillStyle = color;
+    g.lineWidth = Math.max(1, k.size * m);
+    if (k.tool === "arrow") {
+      if (p.length >= 4) arrowMark(g, w, h, k, color, theme);
+      continue;
+    }
+    if (p.length < 4) {
+      // A dot.
+      g.beginPath();
+      g.arc(p[0]! * w, p[1]! * h, g.lineWidth / 2, 0, Math.PI * 2);
+      g.fill();
+      continue;
+    }
+    // Smoothed through the midpoints, the way a pencil line looks.
+    g.beginPath();
+    g.moveTo(p[0]! * w, p[1]! * h);
+    for (let i = 2; i < p.length - 2; i += 2) {
+      const mx = ((p[i]! + p[i + 2]!) / 2) * w;
+      const my = ((p[i + 1]! + p[i + 3]!) / 2) * h;
+      g.quadraticCurveTo(p[i]! * w, p[i + 1]! * h, mx, my);
+    }
+    g.lineTo(p[p.length - 2]! * w, p[p.length - 1]! * h);
+    g.stroke();
+  }
+  g.restore();
+}
+
+/** Where an arrow's note box sits: centred on the arrow's tail, sized to its words. Null without words. */
+export function noteBox(g: CanvasRenderingContext2D, w: number, h: number, k: Mark): { x: number; y: number; w: number; h: number; fs: number } | null {
+  const text = k.text?.trim();
+  if (!text) return null;
+  const m = Math.min(w, h);
+  const fs = Math.max(11, Math.min(22, m * 0.045));
+  g.save();
+  g.font = `600 ${fs}px ${NOTE_FONT}`;
+  const tw = Math.min(w * 0.6, g.measureText(text).width);
+  g.restore();
+  const bw = tw + fs * 1.3;
+  const bh = fs * 1.9;
+  const cx = Math.min(w - bw / 2 - 2, Math.max(bw / 2 + 2, k.points[0]! * w));
+  const cy = Math.min(h - bh / 2 - 2, Math.max(bh / 2 + 2, k.points[1]! * h));
+  return { x: cx - bw / 2, y: cy - bh / 2, w: bw, h: bh, fs };
+}
+const NOTE_FONT = '"SF Pro Text", "Helvetica Neue", system-ui, sans-serif';
+
+/**
+ * The user's arrow: from its note (tail) to what the note is about (tip), with an open head. The
+ * note sits in a box at the tail in the arrow's colour, the line starting at the box's edge.
+ */
+function arrowMark(g: CanvasRenderingContext2D, w: number, h: number, k: Mark, color: string, theme: SketchTheme) {
+  const p = k.points;
+  let x1 = p[0]! * w;
+  let y1 = p[1]! * h;
+  const x2 = p[p.length - 2]! * w;
+  const y2 = p[p.length - 1]! * h;
+  const box = noteBox(g, w, h, k);
+  if (box) {
+    // Start the line where it leaves the box, toward the tip.
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+    const dx = x2 - cx;
+    const dy = y2 - cy;
+    const t = Math.min(Math.abs(dx) > 0 ? box.w / 2 / Math.abs(dx) : Infinity, Math.abs(dy) > 0 ? box.h / 2 / Math.abs(dy) : Infinity);
+    if (t < 1) (x1 = cx + dx * t), (y1 = cy + dy * t);
+  }
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (len > 4) {
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    const head = Math.max(8, g.lineWidth * 3.2);
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x2, y2);
+    g.moveTo(x2 - head * Math.cos(a - 0.5), y2 - head * Math.sin(a - 0.5));
+    g.lineTo(x2, y2);
+    g.lineTo(x2 - head * Math.cos(a + 0.5), y2 - head * Math.sin(a + 0.5));
+    g.stroke();
+  }
+  if (box) {
+    g.save();
+    g.beginPath();
+    g.roundRect(box.x, box.y, box.w, box.h, box.fs * 0.45);
+    g.fillStyle = theme === "paper" ? "rgba(255, 253, 248, 0.95)" : "rgba(10, 10, 10, 0.88)";
+    g.fill();
+    g.lineWidth = Math.max(1.5, box.fs * 0.12);
+    g.strokeStyle = color;
+    g.stroke();
+    g.font = `600 ${box.fs}px ${NOTE_FONT}`;
+    g.fillStyle = theme === "paper" ? INK : "#ffffff";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    let text = k.text!.trim();
+    while (text.length > 3 && g.measureText(text).width > box.w - box.fs * 1.1) text = `${text.slice(0, -2)}…`;
+    g.fillText(text, box.x + box.w / 2, box.y + box.h / 2 + 0.5);
+    g.restore();
+  }
+}

@@ -5,8 +5,13 @@ import { roughCut } from "../src/autocut.ts";
 import { type Cue, buildCues, captionsOf, clipLength, clipStarts, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
 import { round } from "../src/round.ts";
 import type { Broll, EditPlan, Motion, Segment, Voiceover } from "../src/schema.ts";
-import { type TrackKind, brollSound, freeTrack, userClip, setTrack, trackCount, trackKey, trackName, trackSetting } from "../src/tracks.ts";
+import { type TrackKind, brollSound, freeTrack, isEffectsTrack, userClip, setTrack, trackCount, trackKey, trackName, trackSetting } from "../src/tracks.ts";
 import { wholeVideo } from "../src/autocut.ts";
+import { shiftKeys } from "../src/keyframes.ts";
+import { KeyDiamonds } from "./Keyframes.tsx";
+import { TransitionMarks } from "./TransitionPicker.tsx";
+import { EFFECT_DRAG } from "./EffectsPanel.tsx";
+import { effectDef } from "../motion/Effects.tsx";
 import { isGeneratedVoice, isImage, mediaUrl, shortTime } from "./format.ts";
 import { Icon, type IconName } from "./icons.tsx";
 import { MEDIA_DRAG } from "./Inspector.tsx";
@@ -17,17 +22,13 @@ import { useFileThumbs } from "./fileThumbs.ts";
 import { magnetDone, magnetMove, magnetTrim, useMagnet } from "./magnet.ts";
 import { useFileWave } from "./fileWave.ts";
 import { type Thumbs, type Wave, selectionOf, useEditor } from "./store.ts";
-import { SceneBar, SceneLabels, SceneRows } from "./SceneLayers.tsx";
-import { ShotLane } from "./SceneShots.tsx";
-import { flatLayers, sceneShots } from "../src/scene.ts";
+import { LANE_HEIGHT, clipsOf, type SceneLane, SceneLaneLabel, SceneLaneRow, useSceneLanes } from "./SceneClips.tsx";
 
 const LABEL_W = 150;
 
 export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void }) {
   const { project, plan, time, pxPerSec, selected, picked, past, future, markers, playing, pointing, selectedPart } = useEditor();
   const { seek, select, selectCue, setZoom, split, deleteSelected, undo, redo, commit, say, setPlaying, setCaptionStyle } = useEditor();
-  // A scene clip opened: its layers take the tracks' place.
-  const sceneOpen = useEditor((s) => s.openScene !== null && s.plan.motion.some((m) => m.id === s.openScene));
   const scroller = useRef<HTMLDivElement>(null);
   // The whole edit: the main track, or longer when other clips run past it.
   const total = editDuration(plan);
@@ -67,9 +68,9 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
   }, [plan.segments, pxPerSec]);
 
   const cues = useMemo(() => (project ? buildCues(plan, project.analysis.words) : []), [project, plan]);
-  const scenes = useEditor((s) => s.scenes);
-  const shotScenes = useMemo(() => plan.motion.filter((m) => m.template === "scene" && m.scene && scenes[m.scene] && sceneShots(scenes[m.scene]).length).map((m) => m.id), [plan.motion, scenes]);
-  const lanes = useMemo(() => buildLanes(plan, project?.analysis.hasAudio ?? false, (project?.analysis.width ?? 0) > 0, shotScenes), [plan, project, shotScenes]);
+  // An imported Claude edit's clips, on tracks of their own.
+  const sceneLanes = useSceneLanes();
+  const lanes = useMemo(() => buildLanes(plan, project?.analysis.hasAudio ?? false, (project?.analysis.width ?? 0) > 0, sceneLanes), [plan, project, sceneLanes]);
 
   // Scrub: click or drag on the ruler or empty track space moves the playhead.
   const scrub = (e: React.PointerEvent) => {
@@ -132,7 +133,7 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
         if (k.right < l || k.left > r || k.bottom < t || k.top > b) continue;
         const [kind, value] = clip.dataset.sel!.split(/:(.*)/);
         if (kind === "seg") segments.add(Number(value));
-        else ids.add(value);
+        else if (kind === "id") ids.add(value);
       }
       useEditor.getState().setSelection([...segments], [...ids]);
       setMarquee({ box: { left: l - c.left, top: t - c.top, width: r - l, height: b - t }, count: segments.size + ids.size });
@@ -153,13 +154,23 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
   // A library video dropped on the timeline: the main video when there is none yet, else B-roll on V2 where it lands.
   const [dropping, setDropping] = useState(false);
   const dragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(MEDIA_DRAG)) return;
+    if (!e.dataTransfer.types.includes(MEDIA_DRAG) && !e.dataTransfer.types.includes(EFFECT_DRAG)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     setDropping(true);
   };
   const drop = (e: React.DragEvent) => {
     setDropping(false);
+    // An effect from the Effects section: where it's dropped, on that effects track when it is one.
+    const fx = e.dataTransfer.getData(EFFECT_DRAG);
+    if (fx && useEditor.getState().project) {
+      e.preventDefault();
+      const el = scroller.current!;
+      const at = Math.max(0, (e.clientX - el.getBoundingClientRect().left + el.scrollLeft) / useEditor.getState().pxPerSec);
+      const lane = laneAt(e.clientX, e.clientY);
+      useEditor.getState().addEffect(fx, at, lane?.kind === "text" ? { track: lane.n } : undefined);
+      return;
+    }
     const data = e.dataTransfer.getData(MEDIA_DRAG);
     if (!data) return;
     e.preventDefault();
@@ -253,11 +264,10 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
         </div>
       </div>
 
-      {sceneOpen && <SceneBar />}
       <div className="tl-body">
-        <div className={`tl-labels ${sceneOpen ? "scene" : ""}`} style={{ width: sceneOpen ? LABEL_W + 70 : LABEL_W }}>
+        <div className="tl-labels" style={{ width: LABEL_W }}>
           <div className="tl-ruler-spacer" />
-          {sceneOpen ? <SceneLabels /> : lanes.map((l) => <TrackLabel key={l.key} lane={l} />)}
+          {lanes.map((l) => <TrackLabel key={l.key} lane={l} />)}
         </div>
 
         <div className={`tl-scroll ${dropping ? "dropping" : ""}`} ref={scroller} onWheel={onWheel} {...dropProps}>
@@ -276,13 +286,12 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
               </div>
             ))}
 
-            {sceneOpen && <SceneRows pxPerSec={pxPerSec} />}
-            {!sceneOpen && lanes.map((l) => {
+            {lanes.map((l) => {
               const off = laneOff(plan, l);
               return (
                 <div key={l.key} className={`track ${l.kind} ${off ? "off" : ""}`} data-lane={l.key} style={{ height: l.height }} onPointerDown={boxSelect}>
                   {l.kind === "text" && plan.motion.filter((m) => (m.track ?? 1) === l.n).map((m) => <MotionBlock key={m.id} m={m} />)}
-                  {l.kind === "shots" && plan.motion.filter((m) => m.id === l.scene).map((m) => <ShotLane key={m.id} m={m} pxPerSec={pxPerSec} />)}
+                  {l.kind === "sclip" && <SceneLaneRow lane={l.sl!} pxPerSec={pxPerSec} />}
                   {l.kind === "video" && l.n! > 1 && plan.broll.filter((b) => (b.track ?? 2) === l.n).map((b) => <BrollBlock key={b.id} b={b} />)}
                   {/* A clip whose picture (or sound) was deleted leaves a gap on that lane, like any editor. */}
                   {l.kind === "video" && l.n === 1 && <ReorderMark />}
@@ -290,6 +299,7 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
                     <Clip key={i} index={i} seg={s} x={x} w={w} selected={picked.includes(i) && (picked.length > 1 || selectedPart === "picture")} thumbs={project.thumbs}
                       wave={l.soundOnly ? project.wave : undefined} />
                   ))}
+                  {l.kind === "video" && l.n === 1 && !l.soundOnly && <TransitionMarks starts={clipStarts(plan)} />}
                   {l.kind === "captions" && cues.map((c) => <CueBlock key={c.index} cue={c} />)}
                   {l.kind === "audio" && segs.map(({ s, x, w }, i) => s.sound !== false && (
                     <WaveClip key={i} index={i} seg={s} x={x} w={w} wave={project.wave} selected={picked.includes(i) && (picked.length > 1 || selectedPart === "sound")} />
@@ -301,11 +311,9 @@ export function Timeline({ onOpenMain }: { onOpenMain: (path: string) => void })
             })}
 
             {/* The space under the tracks: drop or drag a clip here to give it a new track. */}
-            {!sceneOpen && (
-              <div className="track below" data-lane="below" onPointerDown={boxSelect}>
-                {!lanes.length && <span className="tl-empty-hint">Drop videos, music or sound effects here</span>}
-              </div>
-            )}
+            <div className="track below" data-lane="below" onPointerDown={boxSelect}>
+              {!lanes.length && <span className="tl-empty-hint">Drop videos, music or sound effects here</span>}
+            </div>
 
             <div className="playhead" style={{ left: time * pxPerSec }} />
             <SnapLine />
@@ -354,14 +362,14 @@ function laneAt(x: number, y: number): { kind: string; n: number } | null {
 }
 
 /** `soundOnly`: Track 1 when the main track is a voice recording (no picture), its wave drawn in the clips. */
-type Lane = { key: string; kind: TrackKind | "captions" | "audio" | "shots"; n?: number; height: number; soundOnly?: boolean; scene?: string };
+type Lane = { key: string; kind: TrackKind | "captions" | "audio" | "sclip"; n?: number; height: number; soundOnly?: boolean; sl?: SceneLane };
 
 /**
  * Top to bottom: Text N…1, Track N…1, Captions, the main audio, Voiceover / Music / SFX 1…N.
  * Only tracks with something on them are listed (captions while they're on). A main track with no
  * picture (a voice recording) is one lane, Track 1 showing its wave, not a picture lane and a sound lane.
  */
-function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean, shotScenes: string[] = []): Lane[] {
+function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean, sceneLanes: SceneLane[] = []): Lane[] {
   const lanes: Lane[] = [];
   const range = (kind: TrackKind, from: number, down: boolean) => {
     const n = trackCount(plan, kind);
@@ -369,8 +377,8 @@ function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean, shot
     return down ? list.reverse() : list;
   };
   for (const n of range("text", 1, true)) lanes.push({ key: trackKey("text", n), kind: "text", n, height: 40 });
-  // The footage of each imported Claude edit, under the text tracks.
-  for (const id of shotScenes) lanes.push({ key: `shots:${id}`, kind: "shots", scene: id, height: 58 });
+  // Each imported Claude edit's clips (titles, graphics, shots, background), under the text tracks.
+  for (const sl of sceneLanes) lanes.push({ key: `sc:${sl.scene}:${sl.lane.kind}:${sl.lane.n}`, kind: "sclip", sl, height: LANE_HEIGHT[sl.lane.kind] });
   const soundOnly = !hasPicture && hasAudio;
   for (const n of range("video", plan.segments.length ? 1 : 2, true))
     lanes.push({ key: trackKey("video", n), kind: "video", n, height: 58, ...(n === 1 && soundOnly ? { soundOnly } : {}) });
@@ -380,21 +388,10 @@ function buildLanes(plan: EditPlan, hasAudio: boolean, hasPicture: boolean, shot
   return lanes;
 }
 
-/** The Clips track of an imported edit: named after it. */
-function ShotsLabel({ lane }: { lane: Lane }) {
-  const name = useEditor((s) => s.plan.motion.find((m) => m.id === lane.scene)?.text ?? "");
-  return (
-    <div className="track-label shots" style={{ height: lane.height }} title={`The clips in ${name}: trim them, swap them, take them out`}>
-      <Icon name="video" size={13} />
-      <span className="track-name">Clips</span>
-      <em className="small">{name}</em>
-    </div>
-  );
-}
 
 /** Whether a lane is switched off (hidden or muted), so it shows dimmed. */
 function laneOff(plan: EditPlan, l: Lane): boolean {
-  if (l.kind === "shots") return false;
+  if (l.kind === "sclip") return false;
   if (l.kind === "captions") return !plan.captions.enabled;
   if (l.kind === "audio") return Boolean(trackSetting(plan, "video:1").muted);
   const t = trackSetting(plan, l.key);
@@ -402,10 +399,10 @@ function laneOff(plan: EditPlan, l: Lane): boolean {
   return Boolean(t.hidden || ((l.kind !== "video" || l.soundOnly) && t.muted));
 }
 
-const LANE_ICON: Record<Lane["kind"], IconName> = { text: "type", video: "video", captions: "cc", audio: "mic", voice: "mic", music: "music", sfx: "bolt", shots: "video" };
+const LANE_ICON: Record<Lane["kind"], IconName> = { text: "type", video: "video", captions: "cc", audio: "mic", voice: "mic", music: "music", sfx: "bolt", sclip: "video" };
 
 function TrackLabel({ lane }: { lane: Lane }) {
-  if (lane.kind === "shots") return <ShotsLabel lane={lane} />;
+  if (lane.kind === "sclip") return <SceneLaneLabel lane={lane.sl!} height={lane.height} />;
   const plan = useEditor((s) => s.plan);
   const commit = useEditor((s) => s.commit);
   const setCaptionStyle = useEditor((s) => s.setCaptionStyle);
@@ -423,7 +420,7 @@ function TrackLabel({ lane }: { lane: Lane }) {
   const canRename = kind !== "audio";
   return (
     <div className={`track-label ${kind} ${laneOff(plan, lane) ? "off" : ""}`} style={{ height: lane.height }}>
-      <Icon name={LANE_ICON[kind]} size={13} />
+      <Icon name={kind === "text" && isEffectsTrack(plan, lane.n) ? "sparkle" : LANE_ICON[kind]} size={13} />
       {editing ? (
         <input
           className="track-name-input"
@@ -613,7 +610,11 @@ function Clip({ index, seg, x, w, selected, thumbs, wave }: { index: number; seg
     const orig = { ...seg };
     const onMove = (ev: PointerEvent) => {
       const d = ((ev.clientX - x0) / pxPerSec) * orig.speed; // pixels -> source seconds
-      if (edge === "start") updateSegment(index, { start: Math.max(0, Math.min(orig.end - 0.1, orig.start + d)) }, false);
+      if (edge === "start") {
+        // Its keyframes stay on the same moments of the picture.
+        const start = Math.max(0, Math.min(orig.end - 0.1, orig.start + d));
+        updateSegment(index, { start, keys: shiftKeys(orig.keys, -(start - orig.start) / orig.speed) }, false);
+      }
       else updateSegment(index, { end: Math.min(duration, Math.max(orig.start + 0.1, orig.end + d)) }, false);
     };
     const up = () => (window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", up));
@@ -624,7 +625,7 @@ function Clip({ index, seg, x, w, selected, thumbs, wave }: { index: number; seg
   const volume = seg.volume ?? 1;
   const badges = [
     seg.speed !== 1 && `${seg.speed}×`,
-    seg.zoom > 1 && `zoom ${Math.round(seg.zoom * 100)}%`,
+    seg.zoom > 1 && !seg.keys?.zoom?.length && `zoom ${Math.round(seg.zoom * 100)}%`,
     volume !== 1 && (volume === 0 ? "muted" : `vol ${Math.round(volume * 100)}%`),
   ].filter(Boolean);
   return (
@@ -700,6 +701,7 @@ function Clip({ index, seg, x, w, selected, thumbs, wave }: { index: number; seg
         <span>Take {index + 1}{noPicture && " · picture deleted"}</span>
         {badges.map((b) => <span key={String(b)} className="badge">{b}</span>)}
       </div>
+      <KeyDiamonds keys={seg.keys} start={x / pxPerSec} pxPerSec={pxPerSec} width={w} />
       <div className="handle left" onPointerDown={trim("start")} />
       <div className="handle right" onPointerDown={trim("end")} />
     </div>
@@ -856,7 +858,7 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
         const lane = { kind: orig.kind ?? "voice", track: orig.track ?? 1 } as const;
         const ds = magnetTrim(vo.id, lane, "start", orig.at + d, orig.at, orig.at + orig.duration) - orig.at;
         const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.2, ds));
-        up(vo.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
+        up(vo.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd, keys: shiftKeys(orig.keys, -dd) }, false);
       } else {
         const lane = { kind: orig.kind ?? "voice", track: orig.track ?? 1 } as const;
         const de = magnetTrim(vo.id, lane, "end", orig.at + orig.duration + d, orig.at, orig.at + orig.duration) - orig.at - orig.duration;
@@ -888,6 +890,7 @@ function VoiceoverBlock({ vo }: { vo: Voiceover }) {
       title={`${vo.voice ? `${vo.voice}: ` : ""}${vo.text}\nDrag to move (up or down to change track) · drag edges to trim · ⌫ to delete`}
     >
       <ClipWave vo={vo} width={Math.max(6, vo.duration * pxPerSec - 1)} />
+      <KeyDiamonds keys={vo.keys} start={vo.at} pxPerSec={pxPerSec} width={vo.duration * pxPerSec} />
       <span className="vo-label">{(vo.kind ?? "voice") === "voice" ? "🎙" : vo.kind === "music" ? "♪" : "✦"} {vo.text || vo.file.split("/").pop()}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
@@ -958,14 +961,16 @@ function MotionBlock({ m }: { m: Motion }) {
       else if (mode === "start") {
         const ds = magnetTrim(m.id, { kind: "text", track: orig.track ?? 1 }, "start", orig.at + d, orig.at, orig.at + orig.duration) - orig.at;
         // A scene can't start before its own beginning: its offset says how far in the clip starts.
-        const dd = Math.max(-orig.at, m.template === "scene" ? -(orig.offset ?? 0) : -Infinity, Math.min(orig.duration - 0.5, ds));
+        // Effects can be as short as a flash; other text clips keep half a second.
+        const least = m.template === "effect" ? 0.1 : 0.5;
+        const dd = Math.max(-orig.at, m.template === "scene" ? -(orig.offset ?? 0) : -Infinity, Math.min(orig.duration - least, ds));
         up(m.id, { at: orig.at + dd, duration: orig.duration - dd, ...(m.template === "scene" ? { offset: (orig.offset ?? 0) + dd } : {}) }, false);
       } else {
         const de = magnetTrim(m.id, { kind: "text", track: orig.track ?? 1 }, "end", orig.at + orig.duration + d, orig.at, orig.at + orig.duration) - orig.at - orig.duration;
         // A scene ends where its edit ends.
         const scene = m.scene ? useEditor.getState().scenes[m.scene] : undefined;
         const most = scene ? scene.duration - (orig.offset ?? 0) : 3600;
-        up(m.id, { duration: Math.max(0.5, Math.min(most, orig.duration + de)) }, false);
+        up(m.id, { duration: Math.max(m.template === "effect" ? 0.1 : 0.5, Math.min(most, orig.duration + de)) }, false);
       }
     };
     const end = () => (magnetDone(), window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", end));
@@ -975,26 +980,25 @@ function MotionBlock({ m }: { m: Motion }) {
   return (
     <div
       data-sel={`id:${m.id}`}
-      className={`motion-clip ${selectedMotion === m.id || pickedIds.includes(m.id) ? "selected" : ""} ${m.hidden ? "hidden" : ""}`}
+      className={`motion-clip ${m.template === "effect" ? `effect fx-${effectDef(m.effect)?.category ?? ""}` : ""} ${selectedMotion === m.id || pickedIds.includes(m.id) ? "selected" : ""} ${m.hidden ? "hidden" : ""}`}
       onContextMenu={(e) => openClipMenu(e, { kind: "motion", id: m.id })}
-      // A Claude edit opens its layers; anything else opens the clip menu.
-      onDoubleClick={(e) => (m.template === "scene" ? useEditor.setState({ openScene: m.id, selectedLayer: null, sceneKey: null, leftView: "text" }) : openClipMenu(e, { kind: "motion", id: m.id }))}
+      onDoubleClick={(e) => openClipMenu(e, { kind: "motion", id: m.id })}
       style={{ left: m.at * pxPerSec, width: Math.max(6, m.duration * pxPerSec - 1), borderLeftColor: m.color }}
       onPointerDown={drag("move")}
-      title={`${m.template === "scene" ? "Claude edit" : m.template === "custom" ? `Custom animation ${m.component}` : m.template === "title" ? "Title" : "Lower third"}: ${m.text}\n${m.template === "scene" ? "Double-click to edit its layers · " : ""}Drag to move · drag edges to trim · ⌫ to delete`}
+      title={`${m.template === "scene" ? "Claude edit" : m.template === "custom" ? `Custom animation ${m.component}` : m.template === "title" ? "Title" : "Lower third"}: ${m.text}\n${m.template === "scene" ? "Its shots, titles and graphics are on the tracks below · " : ""}Drag to move · drag edges to trim · ⌫ to delete`}
     >
-      <span>{m.template === "scene" ? "✦" : m.template === "custom" ? `✦ ${m.component}` : m.template === "title" ? "T" : "▭"} {m.text}{m.template === "scene" && <SceneCount m={m} />}</span>
+      <span>{m.template === "effect" ? "✧" : m.template === "scene" ? "✦" : m.template === "custom" ? `✦ ${m.component}` : m.template === "title" ? "T" : "▭"} {m.template === "effect" ? effectDef(m.effect)?.name ?? m.text : m.text}{m.template === "scene" && <SceneCount m={m} />}</span>
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>
   );
 }
 
-/** "· 46 layers" on a scene clip. */
+/** "· 59 clips" on a scene clip. */
 function SceneCount({ m }: { m: Motion }) {
   const scene = useEditor((s) => (m.scene ? s.scenes[m.scene] : undefined));
-  const n = useMemo(() => (scene ? flatLayers(scene.layers).length : 0), [scene]);
-  return n ? <span className="dim"> · {n} layers</span> : null;
+  const n = scene ? clipsOf(m, scene).length : 0;
+  return n ? <em className="scene-count"> · {n} clips</em> : null;
 }
 
 /** Where a B-roll clip came from, shown on its block (stock libraries and CC BY ask for credit). */
@@ -1047,7 +1051,7 @@ function BrollBlock({ b }: { b: Broll }) {
       else if (mode === "start") {
         const ds = magnetTrim(b.id, { kind: "video", track: orig.track ?? 2 }, "start", orig.at + d, orig.at, orig.at + orig.duration) - orig.at;
         const dd = Math.max(-orig.offset, Math.min(orig.duration - 0.5, ds));
-        up(b.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd }, false);
+        up(b.id, { offset: orig.offset + dd, at: Math.max(0, orig.at + dd), duration: orig.duration - dd, keys: shiftKeys(orig.keys, -dd) }, false);
       } else {
         const de = magnetTrim(b.id, { kind: "video", track: orig.track ?? 2 }, "end", orig.at + orig.duration + d, orig.at, orig.at + orig.duration) - orig.at - orig.duration;
         const max = (orig.length ?? Infinity) - orig.offset;
@@ -1086,6 +1090,7 @@ function BrollBlock({ b }: { b: Broll }) {
       <span className="broll-label">{b.query ?? b.source}</span>
       {/* Stock libraries ask apps to show where their videos come from. */}
       <span className="broll-source">{brollSource(b)}</span>
+      <KeyDiamonds keys={b.keys} start={b.at} pxPerSec={pxPerSec} width={b.duration * pxPerSec} />
       <div className="handle left" onPointerDown={drag("start")} />
       <div className="handle right" onPointerDown={drag("end")} />
     </div>

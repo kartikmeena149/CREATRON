@@ -9,10 +9,13 @@ import { CaptionToolbar } from "./CaptionToolbar.tsx";
 import { cropBox, cropOf, isIdentity, pictureSize, placeBox, placement } from "../src/frame.ts";
 import { buildCues, clipStarts, editDuration, outputDuration } from "../src/timeline.ts";
 import { MotionPreview } from "./MotionPreview.tsx";
+import { SceneClipBox } from "./SceneClips.tsx";
 import { locate, useEditor } from "./store.ts";
 import { isImage, mediaUrl, timecode } from "./format.ts";
 import type { Broll, Voiceover } from "../src/schema.ts";
 import { effectivePlan, trackSetting } from "../src/tracks.ts";
+import { BROLL_KEYS, animated, valueAt } from "../src/keyframes.ts";
+import { transitionAt, transitionLook } from "../src/transitions.ts";
 
 export function Viewer() {
   const { project, plan, time, playing, seek, setPlaying, markers, pointing, busy, status } = useEditor();
@@ -140,8 +143,19 @@ export function Viewer() {
   const shown = useMemo(() => effectivePlan(plan), [plan]);
   // While a voiceover plays, dip the original like the export does (music and SFX don't).
   const underVoiceover = shown.voiceovers.some((v) => (v.kind ?? "voice") === "voice" && time >= v.at && time < v.at + v.duration);
-  // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted), and Track 1 can be muted.
-  const clipVolume = trackSetting(plan, "video:1").muted || seg?.sound === false || inGap ? 0 : (seg?.volume ?? 1);
+  // The clip under the playhead sets its own volume (1 = as recorded, 0 = muted, or its keyframes), and Track 1 can be muted.
+  const clipVolume = trackSetting(plan, "video:1").muted || seg?.sound === false || inGap ? 0 : valueAt(seg?.keys?.volume, time - offset, seg?.volume ?? 1);
+  // The punch-in under the playhead: still, or animated by its keyframes.
+  const zoom = seg ? valueAt(seg.keys?.zoom, time - offset, seg.zoom) : 1;
+  // A transition over the cut: the clip on the other side of it plays on a second picture.
+  const tr = transitionAt(plan, time);
+  const look = tr && transitionLook(tr.type, tr.p);
+  const mainIsOut = tr ? time < tr.cut : false;
+  const other = tr ? plan.segments[mainIsOut ? tr.index : tr.index - 1] : undefined;
+  const otherStart = tr ? clipStarts(plan)[mainIsOut ? tr.index : tr.index - 1] : 0;
+  const otherSource = !tr || !other ? 0 : mainIsOut
+    ? Math.max(0, other.start - (tr.cut - time) * other.speed)
+    : Math.min(a?.duration ?? Infinity, other.end + (time - tr.cut) * other.speed);
   useVoicePreview(video, plan.audio, (underVoiceover && plan.audio.duckDb < 0 ? 10 ** (plan.audio.duckDb / 20) : 1) * clipVolume);
   useVoiceoverPlayback(shown.voiceovers, time, playing);
 
@@ -241,11 +255,13 @@ export function Viewer() {
         <div
           className={`viewer-frame ${dragging ? "dragging" : ""} ${reveal ? "reveal" : ""}`}
           ref={frame}
-          style={{ aspectRatio: String(ratio) }}
+          style={{ aspectRatio: String(ratio), width: `min(100cqw, ${ratio} * 100cqh)` }}
           onPointerDown={startDrag}
           title="Drag to move the video"
         >
           {/* Same placement math as the export. The box clips the per-clip punch-in like the renderer's crop. */}
+          <div className="tr-stack">
+          <div className="tr-layer" style={{ ...(look ? (mainIsOut ? look.a : look.b) : {}), zIndex: mainIsOut ? 0 : 1 }}>
           <div
             className="video-box"
             style={{
@@ -265,8 +281,18 @@ export function Viewer() {
               src={project.videoUrl}
               crossOrigin="anonymous"
               preload="auto"
-              style={{ transform: pictureTransform(seg?.zoom ?? 1, plan.transform.flip) }}
+              style={{ transform: pictureTransform(zoom, plan.transform.flip) }}
             />
+          </div>
+          </div>
+          <div className="tr-layer" style={{ ...(look ? (mainIsOut ? look.b : look.a) : {}), zIndex: mainIsOut ? 1 : 0, visibility: tr && other?.picture !== false ? "visible" : "hidden" }}>
+            <div className="video-box" style={{ width: place.w, height: place.h, left: place.cx - place.w / 2, top: place.cy - place.h / 2,
+              transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined, clipPath: clip }}>
+              <TransitionVideo url={project.videoUrl} at={otherSource} on={Boolean(tr)} playing={playing} speed={other?.speed ?? 1}
+                transform={pictureTransform(other ? valueAt(other.keys?.zoom, time - otherStart, other.zoom) : 1, plan.transform.flip)} />
+            </div>
+          </div>
+          {look?.cover && <div className="tr-cover" style={{ background: look.cover.color, opacity: look.cover.opacity }} />}
           </div>
           <BrollLayer broll={shown.broll} time={time} playing={playing} frame={frameSize} overlay={overlay} />
           {reveal && <div className="frame-veil" aria-hidden="true" />}
@@ -286,6 +312,7 @@ export function Viewer() {
               box in the same place, so they can still be picked, dragged and edited. */}
           {cue && frameSize.w > 0 && <CaptionOverlay key={cue.index} cue={cue} frame={frameSize} ghost={plan.captions.animation !== "none"} />}
           <MotionPreview />
+          <SceneClipBox frame={frame.current} overlay={overlay} />
           {/* "Behind me": the person, cut out, drawn over the caption (same place and zoom as the video). */}
           {cutoutUrl && (
             <div
@@ -300,7 +327,7 @@ export function Viewer() {
                 clipPath: clip,
               }}
             >
-              <CutoutVideo url={cutoutUrl} main={video} zoom={seg?.zoom ?? 1} flip={plan.transform.flip} />
+              <CutoutVideo url={cutoutUrl} main={video} zoom={zoom} flip={plan.transform.flip} />
             </div>
           )}
           {/* Markers near the playhead (all of them while pointing), numbered like in the AI box. */}
@@ -340,6 +367,28 @@ export function Viewer() {
       </div>
     </div>
   );
+}
+
+/**
+ * The clip on the other side of a transition: the next clip's first moments before the cut, the
+ * last clip's tail after it (a held frame where the recording ends), muted, kept on `at`.
+ */
+function TransitionVideo({ url, at, on, playing, speed, transform }: { url: string; at: number; on: boolean; playing: boolean; speed: number; transform?: string }) {
+  const el = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = el.current;
+    if (!v || v.readyState === 0) return;
+    if (!on) return void (!v.paused && v.pause());
+    v.playbackRate = speed;
+    if (playing) {
+      if (v.paused) (v.currentTime = at), v.play().catch(() => {});
+      else if (Math.abs(v.currentTime - at) > 0.15) v.currentTime = at;
+    } else {
+      if (!v.paused) v.pause();
+      if (Math.abs(v.currentTime - at) > 0.02) v.currentTime = at;
+    }
+  }, [at, on, playing, speed]);
+  return <video ref={el} src={url} muted preload="auto" crossOrigin="anonymous" style={{ transform }} />;
 }
 
 /** The see-through person, kept on the same frame as the main video (it plays muted alongside it). */
@@ -419,7 +468,7 @@ function useVoiceoverPlayback(voiceovers: Voiceover[], time: number, playing: bo
       const fin = Math.min(v.fadeIn ?? 0, half);
       const fout = Math.min(v.fadeOut ?? 0, half);
       const ramp = Math.max(0, Math.min(1, fin > 0 ? into / fin : 1, fout > 0 ? (v.duration - into) / fout : 1));
-      a.volume = Math.min(1, 10 ** (v.volumeDb / 20)) * ramp;
+      a.volume = Math.min(1, 10 ** (valueAt(v.keys?.volumeDb, into, v.volumeDb) / 20)) * ramp;
       const inside = playing && time >= v.at && time < v.at + v.duration;
       const want = v.offset + (time - v.at);
       if (!inside) {
@@ -467,13 +516,16 @@ function BrollLayer({ broll, time, playing, frame, overlay }: { broll: Broll[]; 
   const list = broll.filter((b) => b.file).sort((p, q) => (p.track ?? 2) - (q.track ?? 2));
   return (
     <>
-      {list.map((b) => {
+      {list.map((clip) => {
+        // Its keyframed place, size, turn and opacity at this moment.
+        const b = animated(clip, time - clip.at, BROLL_KEYS);
         const [w, h] = shape[b.id] ?? [frame.w, frame.h];
         const p = placeBox(b, w, h, frame.w, frame.h);
         const on = time >= b.at && time < b.at + b.duration;
         const style: React.CSSProperties = {
           left: p.cx - p.w / 2, top: p.cy - p.h / 2, width: p.w, height: p.h, visibility: on ? "visible" : "hidden",
           transform: b.rotate ? `rotate(${b.rotate}deg)` : undefined,
+          opacity: (b.opacity ?? 1) < 1 ? Math.max(0, b.opacity ?? 1) : undefined,
         };
         const media = isImage(b.file!) ? (
           <img src={mediaUrl(b.file!)} alt="" onLoad={(e) => known(b.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} />
@@ -495,7 +547,8 @@ function BrollLayer({ broll, time, playing, frame, overlay }: { broll: Broll[]; 
           </div>
         );
       })}
-      {list.filter((b) => b.id === selectedBroll && time >= b.at && time < b.at + b.duration).map((b) => {
+      {list.filter((b) => b.id === selectedBroll && time >= b.at && time < b.at + b.duration).map((clip) => {
+        const b = animated(clip, time - clip.at, BROLL_KEYS);
         const [w, h] = shape[b.id] ?? [frame.w, frame.h];
         return overlay && <SizeBox key={b.id} overlay={overlay} place={placeBox(b, w, h, frame.w, frame.h)} frame={frame} t={b}
           onStart={() => useEditor.getState().checkpoint()}

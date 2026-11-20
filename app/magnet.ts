@@ -8,7 +8,7 @@ import { clipLength, clipStarts, editDuration } from "../src/timeline.ts";
 import { useEditor } from "./store.ts";
 
 const KEY = "creatron.magnet";
-const SNAP_PX = 8; // how close (on screen) an edge must come to snap
+export const SNAP_PX = 8; // how close (on screen) an edge must come to snap
 
 export const useMagnet = create<{ on: boolean; line: number | null; toggle(): void }>((set, get) => ({
   on: (() => {
@@ -43,7 +43,7 @@ function spans(plan: EditPlan, lane: MagnetLane, self: string): Span[] {
 }
 
 /** Everything worth snapping to: every clip's edges on every track, the main track's cuts, the playhead, 0. */
-function edges(plan: EditPlan, time: number, self: string): number[] {
+export function edges(plan: EditPlan, time: number, self: string): number[] {
   const out = [0, time, editDuration(plan)];
   const starts = clipStarts(plan);
   plan.segments.forEach((s, i) => out.push(starts[i], starts[i] + clipLength(s)));
@@ -51,7 +51,7 @@ function edges(plan: EditPlan, time: number, self: string): number[] {
   return out;
 }
 
-const nearest = (t: number, targets: number[], within: number) => {
+export const nearest = (t: number, targets: number[], within: number) => {
   let best: number | undefined;
   for (const x of targets) if (Math.abs(x - t) <= within && (best === undefined || Math.abs(x - t) < Math.abs(best - t))) best = x;
   return best;

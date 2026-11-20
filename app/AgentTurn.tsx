@@ -7,6 +7,8 @@ import { type Question, type Step, splitAsk } from "../src/chatTypes.ts";
 import { Icon, type IconName } from "./icons.tsx";
 import { Orb } from "./Orb.tsx";
 import { type AgentMessage, useEditor } from "./store.ts";
+import { Sketch } from "./Storyboard.tsx";
+import { boardLength } from "../src/storyboard.ts";
 
 const STEP_ICONS: Record<Step["icon"], IconName> = { read: "eye", edit: "sliders", code: "type", look: "eye", search: "search", think: "sparkle", check: "check", fail: "close" };
 
@@ -35,8 +37,9 @@ export function AgentTurn({ m, index, last, onAnswer, onStop }: Props) {
           <span className="agent-time">{elapsed}</span>
           <button className="agent-stop" onClick={onStop} title="Stop Claude"><i /> Stop</button>
         </div>
-        {m.job && <JobCard job={m.job} now={now} />}
-        {!m.job && texts.at(-1) && <div className="agent-text">{texts.at(-1)}</div>}
+        {m.board ? <BoardCard /> : null}
+        {m.job && !(m.board && boardWaiting()) && <JobCard job={m.job} now={now} />}
+        {!m.job && !m.board && texts.at(-1) && <div className="agent-text">{texts.at(-1)}</div>}
       </div>
     );
   }
@@ -55,6 +58,7 @@ export function AgentTurn({ m, index, last, onAnswer, onStop }: Props) {
       </div>
       {open && <Details m={m} />}
       {m.error && <p className="agent-error">{m.error}</p>}
+      {m.board ? <BoardCard /> : null}
       {m.result && <ResultCard r={m.result} />}
       {final && !open && <div className="agent-text">{final}</div>}
       {m.question && (m.answer !== undefined ? (
@@ -74,7 +78,36 @@ const clock = (ms: number) => {
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
 };
-const STAGES = ["look", "cut", "plan", "broll", "build", "render", "check", "fix"];
+const STAGES = ["board", "look", "cut", "plan", "broll", "build", "render", "check", "fix"];
+
+const boardWaiting = () => {
+  const st = useEditor.getState().board?.status;
+  return st === "waiting" || st === "redrawing";
+};
+
+/** The full edit's storyboard in the chat: a strip of its first shots, where it stands, and the way back to it. */
+function BoardCard() {
+  const b = useEditor((s) => s.board);
+  if (!b) return null;
+  const shots = b.draft.shots.filter((s) => !s.dropped);
+  const open = () => useEditor.setState({ boardOpen: true });
+  const state = { waiting: "Waiting for your OK", redrawing: "Claude is redrawing it", approved: "Approved: building it now", closed: "Storyboard" }[b.status];
+  return (
+    <div className={`sb-mini ${b.status}`} onClick={open} role="button" title="Open the storyboard">
+      <div className="sb-mini-head">
+        <div className="sb-mini-text">
+          <b>{b.draft.title}</b>
+          <span>{state} · {shots.length} shots · {Math.round(boardLength(b.draft))}s</span>
+        </div>
+        <span className="sb-mini-open">{b.status === "waiting" ? "Review" : "Open"}</span>
+      </div>
+      <div className="sb-mini-strip">
+        {shots.slice(0, 7).map((s) => <Sketch key={s.id} b={b} shot={s} width={34} />)}
+        {shots.length > 7 && <span className="sb-mini-more">+{shots.length - 7}</span>}
+      </div>
+    </div>
+  );
+}
 
 /** A full edit at work: the step it's on, the time left, and a bar with one tick per step. */
 function JobCard({ job, now }: { job: NonNullable<AgentMessage["job"]>; now: number }) {

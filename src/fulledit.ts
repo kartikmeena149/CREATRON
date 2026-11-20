@@ -5,11 +5,11 @@
 // video go back to the same Auto Edit session.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AutoEditEvent, autoEdit, autoEditDir, autoEditFix, cancelAutoEdit, lastSessionFile } from "./autoedit.ts";
+import { type AutoEditEvent, type StoryboardReview, autoEdit, autoEditDir, autoEditFix, cancelAutoEdit, lastSessionFile } from "./autoedit.ts";
 import type { ChatEvent, FullEditAsk, FullEditResult, Step } from "./chatTypes.ts";
 
 const STAGE_LABELS: Record<string, string> = {
-  look: "Watching the footage", cut: "Cutting", plan: "Planning the edit", broll: "Finding B-roll and sound",
+  board: "Drawing the storyboard", look: "Watching the footage", cut: "Cutting", plan: "Planning the edit", broll: "Finding B-roll and sound",
   build: "Building the video", render: "Rendering", check: "Checking its work", fix: "Polishing",
 };
 
@@ -37,7 +37,9 @@ export function stopFullEdit(video: string) {
  * Runs the handed-over request: a new full edit (`brief`) or a change to the last one (`change`).
  * `model` is Claude's ("sonnet" or "opus"). Progress and steps go to `emit` as chat events.
  */
-export async function runFullEdit(video: string, ask: FullEditAsk, model: string, emit: (e: ChatEvent) => void): Promise<FullEditResult> {
+export async function runFullEdit(
+  video: string, ask: FullEditAsk, model: string, emit: (e: ChatEvent) => void, opts: { clips?: string[]; review?: StoryboardReview } = {},
+): Promise<FullEditResult> {
   if (running) throw new Error("A full edit is already running. Wait for it to finish, or stop it first.");
   running = video;
   const before = fullEditInfo(video);
@@ -46,7 +48,7 @@ export async function runFullEdit(video: string, ask: FullEditAsk, model: string
   try {
     const r = change
       ? await autoEditFix(video, before!.session, model, change, [], steps.on)
-      : await autoEdit({ video, brief: ask.brief ?? ask.change ?? "", reference: ask.reference, model }, steps.on);
+      : await autoEdit({ video, brief: ask.brief ?? ask.change ?? "", reference: ask.reference, model, clips: opts.clips, review: ask.plan ? undefined : opts.review, plan: ask.plan }, steps.on);
     steps.end();
     writeFileSync(savedFile(video), JSON.stringify({ session: r.session, version: r.version, notes: r.notes, model } satisfies Saved, null, 1));
     return { dir: r.dir, project: r.project, final: r.final, notes: r.notes, version: r.version };

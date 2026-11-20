@@ -1,0 +1,463 @@
+// The storyboard: the first step of every full edit. Before building anything, Claude draws the
+// video as shots: every spoken line, what is on screen while it's said, the look, the motion, the
+// sound. Creatro shows it to the user as sketches made from their own footage; the edit waits until
+// they approve it (or ask for changes). It is plain data in notes/storyboard.json, read by the app and
+// by Claude, so the user's edits to it are what Claude builds from.
+// Pure: no Node or browser APIs, the app imports it too.
+import { z } from "zod";
+
+export const SHOT_KINDS = ["talking", "broll", "image", "split", "cutout", "text", "graphic", "document"] as const;
+/**
+ * Creatro's house styles, each one of its bundled skills (skills/): what the user picks in the
+ * Storyboard Creator, and what Claude builds to. "auto" lets Claude choose from the script.
+ */
+export const STYLES = ["auto", "explainer", "editorial", "3d"] as const;
+export type Style = (typeof STYLES)[number];
+export const STYLE_INFO: Record<Style, { name: string; says: string; skill?: string; brief: string }> = {
+  auto: { name: "Auto", says: "Claude picks the style that fits your script", brief: "Pick the house style that fits the script and the direction (the storyboard-director skill says how), and set it as the storyboard's \"style\"." },
+  explainer: {
+    name: "Explainer", says: "You on camera: science, tech, news. Bold tags, calm captions, sources highlighted", skill: "explainer-reels",
+    brief: "Explainer: a presenter on camera. Plan and build it to the explainer-reels skill (.claude/skills/explainer-reels/SKILL.md).",
+  },
+  editorial: {
+    name: "Editorial", says: "Voice-over documentary: money, business, history. Kinetic type on paper, cinematic story scenes", skill: "editorial-reels",
+    brief: "Editorial: a voice-over documentary, nobody on camera. Plan and build it to the editorial-reels skill (.claude/skills/editorial-reels/SKILL.md).",
+  },
+  "3d": {
+    name: "Cinematic 3D", says: "Products, tech and ideas as lit 3D scenes made in code", skill: "3d-animator",
+    brief: "Cinematic 3D: the explaining shots are 3D scenes made in code. Plan it with the storyboard-director skill, and make those shots with the 3d-animator skill (.claude/skills/3d-animator/SKILL.md and IN-CREATRO.md); the rest follows the explainer-reels or editorial-reels skill, whichever fits.",
+  },
+};
+
+/** Where a shot sits in the story: the claim, the context, the surprise, the evidence, what it means, the ask. */
+export const BEATS = ["hook", "setup", "turn", "proof", "payoff", "cta"] as const;
+export const CAMERAS = ["still", "zoom-in", "zoom-out", "punch-in", "pan-left", "pan-right", "shake"] as const;
+export const TRANSITIONS = ["cut", "whip", "zoom", "fade", "slide", "glitch", "flash"] as const;
+export const LAYER_KINDS = ["text", "caption", "image", "footage", "box", "arrow", "sticker", "chart"] as const;
+/**
+ * How a title's letters are finished: plain, a soft shadow, hollow, lit, 3D block, metal; or as a
+ * tag (an accent box behind dark letters, naming a thing) or a highlight (a marker stroke over words
+ * on a page, the way a creator shows a source).
+ */
+export const EFFECTS = ["none", "shadow", "outline", "glow", "extrude", "gold", "chrome", "tag", "highlight"] as const;
+
+/**
+ * Typefaces every Mac has (checked in Creatro's window and its renderer), with what each one says.
+ * Titles pick from these by name; a weight word may follow ("Avenir Next Condensed Heavy").
+ */
+export const FONTS: Record<string, string> = {
+  "SF Pro": "Apple's own: clean, modern, tech (default)",
+  "Helvetica Neue": "neutral Swiss sans: news, corporate, minimal",
+  "Avenir Next": "friendly geometric sans: premium, product, calm",
+  "Avenir Next Condensed": "tall and tight: trailers, headlines, sport",
+  "Futura": "bold geometry: fashion, retro-future, Kubrick",
+  "Gill Sans": "humanist British sans: heritage, documentary",
+  "Optima": "flared sans: elegant, wellness, luxury without serifs",
+  "DIN Condensed": "industrial: data, engineering, sport scores",
+  "Impact": "loud and blunt: memes, thumbnails",
+  "Didot": "high-contrast serif: fashion magazine, luxury",
+  "Bodoni 72": "editorial serif: Vogue, perfume, drama",
+  "Big Caslon": "dramatic old-style: big statements, history",
+  "Baskerville": "classic book serif: literary, trustworthy",
+  "Hoefler Text": "refined serif: wine, finance, old money",
+  "Iowan Old Style": "warm readable serif: stories, essays",
+  "Copperplate": "engraved capitals: formal, banks, invitations",
+  "Rockwell": "slab serif: vintage, sturdy, Americana",
+  "Superclarendon": "chunky slab: posters, westerns, bold retro",
+  "American Typewriter": "typed: documentary, evidence, letters",
+  "Marker Felt": "felt pen: playful, kids, notes",
+  "Chalkduster": "chalk: classroom, sketchy",
+  "Snell Roundhand": "formal script: weddings, romance",
+  "Zapfino": "flourished calligraphy: one word, very elegant",
+  "Phosphate": "inline poster display: circus, retro signage",
+  "Trattatello": "medieval: fantasy, legends",
+};
+
+/**
+ * A font as the user or Claude wrote it ("Futura Condensed ExtraBold", "Didot Bold Italic", even
+ * "Futura for titles, SF Pro for captions"): its family, weight, italic and width. A family on the
+ * list is matched whatever its case; a condensed cut of one is the family made narrow.
+ */
+const WEIGHT_WORDS: Record<string, number> = { thin: 100, hairline: 100, ultralight: 200, extralight: 200, light: 300, regular: 400, book: 400, roman: 400, medium: 500, demibold: 600, semibold: 600, bold: 700, heavy: 800, extrabold: 800, ultrabold: 800, black: 900, ultra: 900 };
+const NARROW = /^(condensed|compressed|narrow)$/i;
+export function fontParts(name = ""): { family: string; weight?: number; italic?: boolean; condensed?: boolean } {
+  let weight: number | undefined;
+  let italic: boolean | undefined;
+  let condensed: boolean | undefined;
+  // Only the first font named.
+  const first = name.replace(/["']/g, "").split(/[,;(]|\s(?:for|and|with|\+)\s/i)[0]!.trim();
+  const words = first.split(/\s+/).filter(Boolean);
+  const known = (ws: string[]) => Object.keys(FONTS).find((f) => f.toLowerCase() === ws.join(" ").toLowerCase());
+  while (words.length > 1 && !known(words)) {
+    const w = words[words.length - 1]!.toLowerCase();
+    if (w === "italic" || w === "oblique") (italic = true), words.pop();
+    else if (WEIGHT_WORDS[w]) (weight ??= WEIGHT_WORDS[w]), words.pop();
+    else if (NARROW.test(w)) (condensed = true), words.pop();
+    else break;
+  }
+  return { family: known(words) ?? (words.join(" ") || "SF Pro"), weight, italic, condensed };
+}
+/** The CSS font-family for a family name: SF Pro is the system font (it has no name of its own). */
+export function fontStack(family: string): string {
+  if (/^(sf( pro)?( display| text)?|san francisco|system)$/i.test(family.trim()) || !family.trim()) return 'system-ui, "Helvetica Neue", sans-serif';
+  return `"${family.replace(/"/g, "")}", system-ui, sans-serif`;
+}
+
+/** How a layer arrives: just there (cut), or moving in. */
+export const ENTERS = ["cut", "pop", "fade", "zoom", "type", "draw", "from-left", "from-right", "from-top", "from-bottom"] as const;
+
+const unit = z.coerce.number().catch(0).transform((v) => Math.min(1, Math.max(0, v)));
+const str = (fallback = "") => z.coerce.string().catch(fallback);
+const pick = <T extends readonly [string, ...string[]]>(values: T, fallback: T[number]) => z.enum(values).catch(fallback);
+
+/** One thing drawn in a shot's frame. Boxes are fractions of the frame (0..1, from the top left). */
+export const Layer = z.object({
+  kind: pick(LAYER_KINDS, "box"),
+  x: unit, y: unit, w: unit, h: unit,
+  text: str().optional(),
+  color: str().optional(),
+  note: str().optional(),
+  /** How it comes in. */
+  enter: pick(ENTERS, "cut").optional().catch(undefined),
+  /** Where its box's top left travels to during the shot (fractions of the frame), if it moves. */
+  to: z.object({ x: unit, y: unit }).optional().catch(undefined),
+  /** A title's typeface (one of FONTS, a weight word may follow); the look's font when not given. */
+  font: str().optional(),
+  /** 100 (hairline) to 900 (black). */
+  weight: z.coerce.number().transform((v) => Math.min(900, Math.max(100, Math.round(v / 100) * 100))).optional().catch(undefined),
+  italic: z.boolean().optional().catch(undefined),
+  /** All capitals (the default for titles); false keeps the words as written. */
+  caps: z.boolean().optional().catch(undefined),
+  /** Letter spacing, in em: -0.05 tight to 0.4 wide. */
+  tracking: z.coerce.number().transform((v) => Math.min(0.5, Math.max(-0.1, v))).optional().catch(undefined),
+  effect: pick(EFFECTS, "none").optional().catch(undefined),
+  /** A picture of the user's own, relative to the folder (assets/clips/x.png), for an image layer. */
+  file: str().optional(),
+  /** The user put it on the shot themselves (the storyboard view's Add): Claude makes it real, where it is. */
+  added: z.boolean().optional().catch(undefined),
+});
+export type Layer = z.infer<typeof Layer>;
+
+/**
+ * One stroke the user drew on a shot: a pencil line in their colour, or an eraser pass that rubs out
+ * their own lines (never the sketch). Points are x, y pairs in fractions of the frame; size is a
+ * fraction of the frame's shorter side.
+ */
+export const Mark = z.object({
+  /** pen: a pencil line; eraser: rubs out the user's lines; arrow: from its note (points 0-1) to what it means (2-3). */
+  tool: z.enum(["pen", "eraser", "arrow"]).catch("pen"),
+  color: str("#ffd60a"),
+  size: z.coerce.number().catch(0.012),
+  points: z.array(z.coerce.number()).catch([]),
+  /** An arrow's note: what the user wants there ("move the logo here", "make this bigger"). */
+  text: str().optional(),
+});
+export type Mark = z.infer<typeof Mark>;
+
+/** The user's pencil colours: never red, which on a storyboard is Creatro's own movement arrows. */
+export const MARK_COLORS = ["#ffd60a", "#f5f5f5", "#4cc9f0", "#4ade80"] as const;
+
+/**
+ * One stroke of Claude's own drawing of a shot: an SVG path ("M 120 900 C ..."), in units where the
+ * frame is 1000 wide (and 1000 x height/width tall: 1778 for 9:16, 563 for 16:9). `shade` (0..1)
+ * hatches the inside of a closed shape: 0.3 light, 0.7 dark.
+ */
+export const Stroke = z.union([
+  z.string().transform((d) => ({ d, shade: undefined as number | undefined, object: undefined as string | undefined, added: undefined as boolean | undefined, color: undefined as string | undefined })),
+  z.object({
+    d: z.string(), shade: z.coerce.number().min(0).max(1).optional().catch(undefined),
+    /** The thing this stroke is part of ("satellite", "earth"): its strokes move and resize together. */
+    object: z.string().max(40).optional().catch(undefined),
+    /** Drawn in by the user (Add, a thing from the pencil library), not by Claude. */
+    added: z.boolean().optional().catch(undefined),
+    /** The thing's own colour (#rrggbb), painted as a watercolour wash inside a closed shape. */
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().catch(undefined),
+  }),
+]);
+export type Stroke = { d: string; shade?: number; object?: string; added?: boolean; color?: string };
+
+export const Shot = z.object({
+  id: str(),
+  /** The words said during the shot, exactly as in the transcript. Empty for a silent shot. */
+  line: str(),
+  /** Source seconds of the recording this shot plays. */
+  from: z.coerce.number().catch(0),
+  to: z.coerce.number().catch(0),
+  kind: pick(SHOT_KINDS, "talking"),
+  /** Its part in the story (hook, setup, turn, proof, payoff, cta). */
+  beat: z.enum(BEATS).optional().catch(undefined),
+  /** What the picture comes from: "main" (the recording) or a project file (assets/clips/x.mp4), and when. */
+  source: z.object({ file: str("main"), at: z.coerce.number().optional().catch(undefined) }).optional().catch(undefined),
+  /** For B-roll still to be found: what it must show. */
+  query: str().optional(),
+  layers: z.array(Layer).catch([]),
+  camera: pick(CAMERAS, "still"),
+  /** The point a zoom or punch-in goes to (fractions of the frame); the middle when not given. */
+  focus: z.object({ x: unit, y: unit }).optional().catch(undefined),
+  transition: pick(TRANSITIONS, "cut"),
+  sound: str().optional(),
+  /** Why this shot: one short sentence for the user. */
+  why: str().optional(),
+  /** The user's note to Claude about this shot (from the storyboard view). */
+  ask: str().optional(),
+  /** The user took this line out of the video. */
+  dropped: z.boolean().optional().catch(undefined),
+  /** Claude's pencil drawing of what the frame shows, for a shot with no footage of its own (see Stroke). */
+  sketch: z.array(z.unknown()).catch([])
+    .transform((items) => items.flatMap((x) => {
+      const r = Stroke.safeParse(x); // one bad stroke is dropped, not the drawing
+      return r.success && /^\s*[Mm]/.test(r.data.d) ? [r.data] : [];
+    }).slice(0, 120))
+    .optional(),
+  /** What the user drew on the shot (the storyboard view). */
+  marks: z.array(Mark).optional().catch(undefined),
+  /** Their drawing as a picture for Claude (notes/storyboard-marks/<id>.png), written when they answer. */
+  drawing: str().optional(),
+});
+export type Shot = z.infer<typeof Shot>;
+
+export const Storyboard = z.object({
+  title: str("Untitled"),
+  /** The house style it is planned in (STYLES; never "auto": Claude names the one it picked). */
+  style: z.enum(STYLES).optional().catch(undefined),
+  /** The idea of the video in one sentence. */
+  idea: str(),
+  format: pick(["9:16", "16:9", "1:1", "4:5"] as const, "9:16"),
+  look: z.object({
+    palette: z.array(str()).catch([]).transform((p) => p.filter((c) => /^#[0-9a-f]{3,8}$/i.test(c.trim())).slice(0, 5)),
+    font: str("SF Pro Display"),
+    mood: str(),
+    captions: str(),
+  }).catch({ palette: [], font: "SF Pro Display", mood: "", captions: "" }),
+  music: str().optional(),
+  shots: z.array(Shot).catch([]),
+});
+export type Storyboard = z.infer<typeof Storyboard>;
+
+/** A storyboard from JSON text, made usable (ids, order, sane times), or the reason it can't be. */
+export function parseStoryboard(text: string): { board?: Storyboard; problems: string[] } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    return { problems: [`notes/storyboard.json isn't valid JSON: ${(e as Error).message}`] };
+  }
+  const r = Storyboard.safeParse(raw);
+  if (!r.success) return { problems: [`notes/storyboard.json doesn't match the format: ${r.error.issues[0]?.message ?? "unknown"}`] };
+  const board = r.data;
+  board.shots = board.shots
+    .map((s, i) => ({ ...s, id: s.id || `s${i + 1}`, to: Math.max(s.to, s.from) }))
+    .sort((a, b) => a.from - b.from);
+  return { board, problems: checkStoryboard(board) };
+}
+
+/** What makes a storyboard unusable for the user (things Claude must fix). */
+export function checkStoryboard(b: Storyboard): string[] {
+  const out: string[] = [];
+  if (b.shots.length < 3) out.push(`only ${b.shots.length} shot(s): a storyboard needs a shot for every line or beat (usually one every 2-4 s)`);
+  const ids = new Set<string>();
+  for (const s of b.shots) {
+    if (ids.has(s.id)) out.push(`shot id "${s.id}" is used twice`);
+    ids.add(s.id);
+    if (!s.layers.length && s.kind !== "talking" && s.kind !== "broll") out.push(`shot ${s.id} (${s.kind}) has no layers: draw what is on screen`);
+    if (s.kind === "broll" && !s.query && s.source?.file === "main") out.push(`shot ${s.id} is B-roll but says neither what it must show (query) nor which file`);
+    if (s.kind === "document" && !s.query) out.push(`shot ${s.id} is a document but doesn't say which page (query: the publication and its headline or title)`);
+  }
+  return out;
+}
+
+/**
+ * A script's scenes: one per line, in order. Blank lines don't count, and numbering or bullets typed
+ * or pasted in front ("1.", "2)", "-", "•", "Scene 3:") are dropped: the scene's number is its place.
+ */
+export function scenesOf(script: string): string[] {
+  return script.split(/\r?\n/).map(stripSceneMark).filter(Boolean);
+}
+export const stripSceneMark = (line: string) => line.replace(/^\s*(?:(?:scene|shot)\s*\d+\s*[:.)-]?|\d{1,3}\s*[.):-](?!\d)|[-•*–])\s*/i, "").trim();
+
+/** Speaking time of a line at a natural pace (about 2.5 words a second). */
+export const sayingTime = (line: string) => line.trim().split(/\s+/).filter(Boolean).length / 2.5;
+
+/** What's wrong with a storyboard made from a script: it must be exactly one shot per scene, in order, with the scene's words. */
+export function checkScenes(b: Storyboard, scenes: string[]): string[] {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (b.shots.length !== scenes.length) {
+    return [`the storyboard has ${b.shots.length} shots but the script has ${scenes.length} scenes: make exactly one shot per scene (s1 for scene 1, s2 for scene 2...), no more, no fewer`];
+  }
+  const off = scenes.map((sc, i) => [i, sc, b.shots[i]!] as const).filter(([, sc, s]) => norm(s.line) !== norm(sc));
+  return off.slice(0, 4).map(([i, sc, s]) => `shot ${i + 1} (${s.id}) must be scene ${i + 1} word for word: "${sc}" (it says "${s.line}")`);
+}
+
+/** Seconds the shots that stay add up to (the finished video's length, roughly). */
+export const boardLength = (b: Storyboard) => b.shots.filter((s) => !s.dropped).reduce((a, s) => a + Math.max(0, s.to - s.from), 0);
+
+/** The plain name of a shot kind, a camera move, a transition. */
+export const KIND_LABEL: Record<Shot["kind"], string> = {
+  talking: "On camera", broll: "B-roll", image: "Image", split: "Split screen", cutout: "Cutout", text: "Title card", graphic: "Graphic", document: "Document",
+};
+export const BEAT_LABEL: Record<(typeof BEATS)[number], string> = { hook: "Hook", setup: "Setup", turn: "Turn", proof: "Proof", payoff: "Payoff", cta: "Ask" };
+export const CAMERA_LABEL: Record<Shot["camera"], string> = {
+  still: "Still", "zoom-in": "Slow zoom in", "zoom-out": "Zoom out", "punch-in": "Punch in", "pan-left": "Pan left", "pan-right": "Pan right", shake: "Shake",
+};
+export const ENTER_LABEL: Record<NonNullable<Layer["enter"]>, string> = {
+  cut: "", pop: "Pops in", fade: "Fades in", zoom: "Zooms in", type: "Types on", draw: "Draws on",
+  "from-left": "Slides in from the left", "from-right": "Slides in from the right", "from-top": "Drops in from the top", "from-bottom": "Rises from the bottom",
+};
+/** Circled numbers for the notes under a panel: the sketch marks the layer with the same one. */
+const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
+/** Each layer with a note, by its index in shot.layers: its callout number on the sketch (1, 2...). */
+export function noteNumbers(shot: Shot): Map<number, number> {
+  const out = new Map<number, number>();
+  shot.layers.forEach((l, i) => { if (l.note?.trim() && out.size < CIRCLED.length) out.set(i, out.size + 1); });
+  return out;
+}
+export const circled = (n: number) => CIRCLED[n - 1] ?? `(${n})`;
+/**
+ * Each layer's movement in words ("“WHY LONG HAIR?” slides in from the left"), as the sketch draws it.
+ * A layer with a note starts with its callout number (①), the mark next to it on the sketch.
+ */
+export function movesOf(shot: Shot): string[] {
+  const numbers = noteNumbers(shot);
+  const NAME: Record<Layer["kind"], string> = { text: "Title", caption: "Caption", image: "Picture", footage: "Video card", box: "Frame", arrow: "Arrow", sticker: "Sticker", chart: "Chart" };
+  return shot.layers.flatMap((l, i) => {
+    const what = l.text?.trim() ? `${NAME[l.kind]} “${l.text.trim()}”` : NAME[l.kind];
+    const how = [l.enter && l.enter !== "cut" ? ENTER_LABEL[l.enter].toLowerCase() : "", l.to ? "then moves across" : ""].filter(Boolean).join(", ");
+    if (!how && !l.note?.trim()) return [];
+    const n = numbers.get(i);
+    return [`${n ? `${circled(n)} ` : ""}${what}${how ? ` ${how}` : ""}${l.note?.trim() ? ` (${l.note.trim()})` : ""}`];
+  });
+}
+
+export const TRANSITION_LABEL: Record<Shot["transition"], string> = {
+  cut: "Cut", whip: "Whip", zoom: "Zoom", fade: "Fade", slide: "Slide", glitch: "Glitch", flash: "Flash",
+};
+
+/** Whether the user drew on a shot or added something to it (a title, a thing, a picture). */
+export const handled = (s: Shot) => Boolean(s.marks?.length || s.layers.some((l) => l.added) || s.sketch?.some((st) => st.added));
+
+/** What Claude is told about the user's answer, to build from (or to redraw). */
+/** Where the user drew on shots: the pictures to look at, and how to read them. */
+function drawingsNote(b: Storyboard, only?: string[]): string {
+  const drawn = b.shots.filter((s) => s.drawing && (!only?.length || only.includes(s.id)));
+  if (!drawn.length) return "";
+  return [
+    "The user drew on these shots. Read each picture: it is the shot as they saw it, with their own pencil strokes on top",
+    "(yellow, white, blue or green; the red marks are Creatro's movement arrows, not theirs). Their strokes show what they want",
+    "instead: where something goes, what to circle, cross out, add or move. Their arrows start at a note box in their own words",
+    "and point at what the note is about: do what each note says to the thing its arrow points at. Follow them.",
+    ...drawn.map((s) => `- ${s.id}: ${s.drawing}`),
+  ].join("\n");
+}
+
+/**
+ * What the user added to shots themselves (the drawing view's Add): their titles, tags, shapes, named
+ * things and pictures, with where they put them. Claude makes each one real, there.
+ */
+function addedNote(b: Storyboard, only?: string[]): string {
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const NAME: Record<Layer["kind"], string> = { text: "title", caption: "caption", image: "picture", footage: "video card", box: "frame", arrow: "arrow", sticker: "sticker", chart: "chart" };
+  const lines = b.shots.filter((s) => !only?.length || only.includes(s.id)).flatMap((s) => {
+    const layers = s.layers.filter((l) => l.added).map((l) => {
+      const what = l.kind === "image" && !l.file ? `“${l.text?.trim() || "a thing"}” (a thing they named, not drawn yet)` : `a ${l.effect === "tag" ? "tag" : NAME[l.kind]}${l.text?.trim() ? ` “${l.text.trim()}”` : ""}${l.file ? ` (their own picture: ${l.file})` : ""}`;
+      return `${what} at x ${pct(l.x)}, y ${pct(l.y)}, ${pct(l.w)} wide`;
+    });
+    const things = [...new Set((s.sketch ?? []).filter((st) => st.added && st.object).map((st) => st.object!))].map((n) => `a ${n.replace(/ \d+$/, "")} (drawn in by them, the "${n}" strokes)`);
+    const all = [...layers, ...things];
+    return all.length ? [`- ${s.id}: ${all.join("; ")}`] : [];
+  });
+  if (!lines.length) return "";
+  return [
+    "The user added these to their shots themselves (marked \"added\": true in notes/storyboard.json), to show what they want there.",
+    "Make each one real in that shot, where they put it and about that size: a title, tag or caption with their words as written; a named or drawn thing as the real thing (drawn in the sketch with its own `object`, found as B-roll, made as a graphic or in 3D); their own picture used as it is (it is in the folder).",
+    "Keep them, and their \"added\" marks, when you redraw. If one can't be made, say so and why.",
+    ...lines,
+  ].join("\n");
+}
+
+export function approvedPrompt(b: Storyboard): string {
+  const dropped = b.shots.filter((s) => s.dropped).map((s) => s.id);
+  const asks = b.shots.filter((s) => s.ask?.trim()).map((s) => `- ${s.id}: ${s.ask!.trim()}`);
+  return [
+    "The user approved the storyboard. notes/storyboard.json now holds their version (they may have changed shots): it is the plan.",
+    "Build the video from it shot by shot: the same lines, order, layouts, looks, camera moves, transitions and sounds. Improve details freely, never the structure.",
+    dropped.length ? `They took these shots out: ${dropped.join(", ")}. Leave their lines out of the cut.` : "",
+    asks.length ? `Their notes on single shots:\n${asks.join("\n")}` : "",
+    drawingsNote(b),
+    addedNote(b),
+    "Skip the plan step (the storyboard is the plan) and go on with the steps after it.",
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * What Claude is told to change. `only` = the shots the user picked (the one open beside the board,
+ * and any they drew on or wrote a note on): those change, nothing else does.
+ */
+export function redrawPrompt(b: Storyboard, changes: string, only?: string[]): string {
+  const asks = b.shots.filter((s) => s.ask?.trim() && (!only?.length || only.includes(s.id))).map((s) => `- ${s.id}: ${s.ask!.trim()}`);
+  const picked = only?.length ? only.join(", ") : "";
+  return [
+    `The user looked at the storyboard and wants changes${picked ? ` to ${only!.length === 1 ? "shot" : "shots"} ${picked}` : ""}: ${changes.trim() || "(see their notes on shots)"}`,
+    asks.length ? `Their notes on single shots:\n${asks.join("\n")}` : "",
+    drawingsNote(b, only),
+    addedNote(b, only),
+    picked
+      ? `Change only ${picked}: the user picked ${only!.length === 1 ? "that shot" : "those shots"}. Every other shot, and the title, idea, look and music, stay exactly as they are: don't touch them. Keep each changed shot's id, and its from/to unless the change is about timing.`
+      : "",
+    CAN_IT_BE_MADE,
+    "notes/storyboard.json holds their version (they may have edited shots, or dropped some: keep those edits). Redraw it with the changes, same format, then stop. Don't build anything yet.",
+    REPLY_FORM,
+  ].filter(Boolean).join("\n");
+}
+
+/** Before a change: can it be made? Real footage only shows what exists; a drawn picture shows anything. */
+const CAN_IT_BE_MADE = [
+  "Before you change a shot, check the change can really be made. Footage (B-roll to find, the speaker on camera, a real product, place or",
+  "person) can only show what exists and can be filmed or found: a real car with square wheels, a logo on a building that doesn't have one,",
+  "a famous person doing something they never did, can't be. Leave that part out and say why. A graphic, title card, illustration,",
+  "3D or animated shot can show anything: there, nothing is illogical, so just make it. A change that would break the video's own logic",
+  "(contradict the line being said, or the shots around it) is worth a word too.",
+].join(" ");
+
+/** How Claude answers a redraw, so the window can show it: what changed, and what it didn't do and why. */
+const REPLY_FORM = [
+  "Reply in this form and nothing else (each line only if it applies; short, plain words, addressed to the user; call shots \"shot 2\", never by id):",
+  "Changed: <what you changed, one sentence>",
+  "Not changed: <what you left out and why it can't be made, one sentence>",
+  "Try: <one change that would work instead, as an instruction, e.g. \"make this shot an animated graphic, then the wheels can be square\">",
+].join("\n");
+
+/** An arrow's note, copied into the shot's `ask` for Claude; taken out again once answered. */
+const ARROW_NOTE = " (an arrow note on their drawing)";
+export const arrowNote = (text: string) => `“${text.trim()}”${ARROW_NOTE}`;
+export function withoutArrowNotes(ask?: string): string | undefined {
+  const kept = (ask ?? "").split("; ").filter((p) => p.trim() && !p.endsWith(ARROW_NOTE)).join("; ");
+  return kept || undefined;
+}
+
+/** "s2" as the user knows it: "shot 02". */
+const named = (t: string) => t.replace(/\b(?:shot\s+)?s(\d{1,3})\b/gi, (_, n: string) => `shot ${n.padStart(2, "0")}`);
+
+/** Claude's answer to a redraw, read from its reply. */
+export type Verdict = { changed?: string; declined?: string; tryThis?: string };
+export function readVerdict(text: string): Verdict | undefined {
+  const v: Verdict = {};
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.replace(/^[\s*_>#-]+/, "").replace(/\*\*/g, "").trim();
+    const m = /^(not changed|changed|try)\s*:\s*(.+)$/i.exec(line);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase() === "try" ? "tryThis" : m[1]!.toLowerCase() === "changed" ? "changed" : "declined";
+    v[key] ??= named(m[2]!.trim().replace(/^["“]|["”]$/g, "")).slice(0, 300);
+  }
+  if (!v.changed && !v.declined && text.trim()) v.changed = named(text.trim().split(/\n/)[0]!).slice(0, 300);
+  return v.changed || v.declined ? v : undefined;
+}
+
+/**
+ * A redraw of picked shots, held to it: Claude's version of those shots, the user's version of
+ * everything else (even if Claude changed more than asked).
+ */
+export function keepUnpicked(before: Storyboard, after: Storyboard, only: string[]): Storyboard {
+  const picked = new Set(only);
+  const byId = new Map(after.shots.map((s) => [s.id, s]));
+  return { ...before, shots: before.shots.map((s, i) => (picked.has(s.id) ? (byId.get(s.id) ?? after.shots[i] ?? s) : s)) };
+}

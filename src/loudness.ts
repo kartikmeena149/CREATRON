@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import type { Analysis, EditPlan, Segment } from "./schema.ts";
 import { round, run } from "./tools.ts";
 import { editDuration, outputDuration } from "./timeline.ts";
+import { ffExpr } from "./keyframes.ts";
 
 export const TARGET_LUFS = -14;
 /** The level generated voiceovers are made at, and that the original voice is matched to. */
@@ -20,14 +21,22 @@ const LIMIT_DB = -2.5;
 const DUCK_RAMP = 0.25; // seconds to fade the original down/up around a voiceover
 
 /** The per-segment audio chain: speed, 10 ms fades at every cut so joins don't click. */
-export function segmentAudio(s: Segment, i: number): string {
+/**
+ * One main-track clip's sound. `lead`, when its input runs past the clip for the picture's
+ * transition handles: source seconds it starts early. The sound is trimmed back to the clip, so it
+ * always cuts on the cut.
+ */
+export function segmentAudio(s: Segment, i: number, lead?: number): string {
   const fadeOut = Math.max((s.end - s.start) / s.speed - 0.01, 0).toFixed(3);
-  // A clip whose sound was deleted plays silent, like a muted one.
+  // A clip whose sound was deleted plays silent, like a muted one. Keyframed volume changes as it plays.
   const level = s.sound === false ? 0 : (s.volume ?? 1);
-  const volume = level === 1 ? "" : `volume=${level.toFixed(3)},`;
+  const volume = s.sound !== false && s.keys?.volume?.length
+    ? `volume='max(0,${ffExpr(s.keys.volume, "t", level)})':eval=frame,`
+    : level === 1 ? "" : `volume=${level.toFixed(3)},`;
+  const trim = lead !== undefined ? `atrim=start=${lead.toFixed(3)}:duration=${(s.end - s.start).toFixed(3)},` : "";
   // The empty gap before the clip (magnet off): silence first.
   const gap = s.gap ? `,adelay=delays=${Math.round(s.gap * 1000)}:all=1` : "";
-  return `[${i}:a]asetpts=PTS-STARTPTS,atempo=${s.speed},${volume}afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01${gap},aresample=48000[a${i}]`;
+  return `[${i}:a]${trim}asetpts=PTS-STARTPTS,atempo=${s.speed},${volume}afade=t=in:d=0.01,afade=t=out:st=${fadeOut}:d=0.01${gap},aresample=48000[a${i}]`;
 }
 
 /** Filter that takes the mix to the target level. */
@@ -76,7 +85,7 @@ export function mixFilters(plan: EditPlan, src: string, firstVo: number, origGai
     const delay = Math.round(v.at * 1000);
     filters.push(
       `[${firstVo + k}:a]atrim=start=${v.offset.toFixed(3)}:duration=${v.duration.toFixed(3)},asetpts=PTS-STARTPTS,` +
-        `aresample=48000,aformat=channel_layouts=stereo,volume=${v.volumeDb}dB${fades(v)},adelay=${delay}:all=1[vo${k}]`,
+        `aresample=48000,aformat=channel_layouts=stereo,${v.keys?.volumeDb?.length ? `volume='pow(10,(${ffExpr(v.keys.volumeDb, "t", v.volumeDb)})/20)':eval=frame` : `volume=${v.volumeDb}dB`}${fades(v)},adelay=${delay}:all=1[vo${k}]`,
     );
   });
   filters.push(`[orig]${vos.map((_, k) => `[vo${k}]`).join("")}amix=inputs=${vos.length + 1}:normalize=0:duration=first[mix]`);
@@ -98,7 +107,7 @@ export const voiceoverInputs = (plan: EditPlan) => activeVoiceovers(plan).flatMa
 export async function prepareAudio(plan: EditPlan, analysis: Analysis, log = console.error) {
   // Level the voice as recorded; each clip's own volume then applies on top. Otherwise a clip turned
   // down to 20% (or a muted one) would just make the leveling turn everything else up to compensate.
-  const asRecorded = { ...plan, segments: plan.segments.map((s) => ({ ...s, volume: 1 })) };
+  const asRecorded = { ...plan, segments: plan.segments.map((s) => ({ ...s, volume: 1, keys: s.keys && { ...s.keys, volume: undefined } })) };
   let origGainDb = 0;
   if (activeVoiceovers(plan).length && plan.audio.normalize) {
     // Match the original voice to the voiceovers so neither sounds louder than the other.
@@ -117,7 +126,7 @@ async function measure(plan: EditPlan, analysis: Analysis, opts: { withVoiceover
   for (const s of plan.segments) args.push("-ss", String(s.start), "-to", String(s.end), "-i", analysis.source);
   const p = opts.withVoiceovers ? plan : { ...plan, voiceovers: [] };
   args.push(...voiceoverInputs(p));
-  const filters = plan.segments.map(segmentAudio);
+  const filters = plan.segments.map((s, i) => segmentAudio(s, i));
   const pads = plan.segments.map((_, i) => `[a${i}]`).join("");
   // Padded with silence to the end of the edit, so clips past the main track are measured too.
   const tail = Math.max(0, editDuration(p) - outputDuration(p));

@@ -1,5 +1,6 @@
 // Step 1: learn what is in the video, locally. Metadata from ffprobe, word-timed transcript
 // from whisper.cpp, pauses from ffmpeg's silencedetect. Results are cached per video.
+import { hyperframesTranscript } from "./dictation.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Analysis, Word } from "./schema.ts";
@@ -72,11 +73,11 @@ async function transcribe(source: string, dir: string, log: (m: string) => void)
   if (hyperframes) {
     log("analyze: Whisper isn't working, transcribing with HyperFrames instead");
     try {
-      // It writes assets/transcript.json ([{ text, start, end }]) into the folder it runs on.
+      // It writes transcript.json ([{ text, start, end }]) into the folder it runs on.
       const folder = join(dir, "hf-transcribe");
       mkdirSync(folder, { recursive: true });
       await run(hyperframes.cmd, [...hyperframes.pre, "transcribe", wav, "--dir", folder, "--model", "small.en"]);
-      const list = JSON.parse(readFileSync(join(folder, "assets", "transcript.json"), "utf8")) as Word[];
+      const list = JSON.parse(readFileSync(hyperframesTranscript(folder), "utf8")) as Word[];
       return list.filter((w) => w.text?.trim()).map((w) => ({ text: w.text.trim(), start: w.start, end: w.end }));
     } catch (e) {
       log(`analyze: HyperFrames' transcriber failed too (${String(e instanceof Error ? e.message : e).split("\n")[0].slice(0, 120)})`);

@@ -5,6 +5,7 @@
 // Pure: shared by the preview, the export and the import. Times are seconds into the scene.
 import { z } from "zod";
 import type { PageCapture } from "../electron/scenePage.ts";
+import { Key, eased } from "./keyframes.ts";
 
 /** A constant, or keyframes [seconds, value] in time order with straight lines between them. */
 export const Channel = z.union([z.number(), z.array(z.tuple([z.number(), z.number()]))]);
@@ -75,6 +76,16 @@ export const LayerEdit = z.object({
   hidden: z.boolean().optional(),
   src: z.string().optional().describe("A picture or video layer's file swapped for another (absolute path)"),
   offset: z.number().min(0).optional().describe("A video layer: seconds into its file it plays from"),
+  shift: z.number().min(-3600).max(3600).optional().describe("Seconds this layer and everything in it is moved later (negative: earlier) in the scene"),
+  window: z.tuple([z.number(), z.number()]).optional().describe("Trim: it shows only from..to (scene seconds, before any shift); outside it's hidden"),
+  // A clip (stored as "clip:<id>"): the layers it's made of, and its edits, which apply to each of them.
+  members: z.array(z.string()).optional().describe('A clip ("clip:<id>"): the layers it is made of'),
+  keys: z.record(z.string(), z.array(Key)).optional()
+    .describe("A clip's keyframes: x / y (place, as a share of the frame), scale, rotate (degrees), opacity; t is seconds after keyStart. Only how they differ from keyBase changes the picture"),
+  keyBase: z.record(z.string(), z.array(Key)).optional().describe("The keyframes the clip's recorded movement came down to, when its keys were first changed. Keep as it is"),
+  keyStart: z.number().optional().describe("Scene second where the keys' t = 0 (before any shift)"),
+  still: z.record(z.string(), z.number()).optional().describe("A clip's values set without keyframes (same units as keys)"),
+  stillBase: z.record(z.string(), z.number()).optional().describe("Those values as recorded. Keep as it is"),
 });
 export type LayerEdit = z.infer<typeof LayerEdit>;
 
@@ -416,6 +427,106 @@ export function captionLayers(scene: Scene, words: { text: string; start: number
 
 // ---------- the scene with the user's changes ----------
 
+/** What a clip's keyframes can move, and the layer channels each one drives. */
+export const CLIP_PROPS = ["x", "y", "scale", "rotate", "opacity"] as const;
+export type ClipProp = (typeof CLIP_PROPS)[number];
+
+/** A clip's value as a layer channel value (x / y are shares of the frame, the channels pixels). */
+export const toChannelValue = (p: ClipProp, v: number, scene: { width: number; height: number }) =>
+  p === "x" ? v * scene.width : p === "y" ? v * scene.height : v;
+export const fromChannelValue = (p: ClipProp, v: number, scene: { width: number; height: number }) =>
+  p === "x" ? v / scene.width : p === "y" ? v / scene.height : v;
+const CHANNELS_OF: Record<ClipProp, ChannelName[]> = { x: ["tx"], y: ["ty"], scale: ["sx", "sy"], rotate: ["rot"], opacity: ["opacity"] };
+
+/** A keyframe list's value at t (eased between keys, held outside them). */
+function keyValue(keys: { t: number; v: number; ease?: string }[] | undefined, t: number, still: number): number {
+  if (!keys?.length) return still;
+  const k = [...keys].sort((a, b) => a.t - b.t);
+  if (t <= k[0].t) return k[0].v;
+  for (let i = 0; i < k.length - 1; i++) {
+    const a = k[i], b = k[i + 1];
+    if (t < b.t) return a.v + (b.v - a.v) * eased(a.ease as Parameters<typeof eased>[0], b.t > a.t ? (t - a.t) / (b.t - a.t) : 1);
+  }
+  return k[k.length - 1].v;
+}
+
+/**
+ * A clip layer's channels with the user's changes laid on top of its own movement: how the clip's
+ * keyframes (or plain values) differ from what was recorded is added to (place, turn) or
+ * multiplies (size, opacity) the layer's channels. An untouched clip draws exactly as recorded;
+ * a clip made of several layers (a title and its glow) moves as one. `dt`: how far the clip was moved.
+ */
+function clipChannels(e: LayerEdit, anim: SceneLayer["anim"], scene: Scene, dt: number): Partial<Record<ChannelName, Channel>> {
+  const out: Partial<Record<ChannelName, Channel>> = {};
+  const t0 = (e.keyStart ?? 0) + dt;
+  for (const p of CLIP_PROPS) {
+    const user = e.keys?.[p];
+    const was = e.keyBase?.[p];
+    const stillUser = e.still?.[p];
+    if (!user?.length && stillUser === undefined) continue;
+    const baseStill = e.stillBase?.[p] ?? (p === "scale" || p === "opacity" ? 1 : 0);
+    const want = (t: number) => keyValue(user, t, stillUser ?? baseStill);
+    const had = (t: number) => keyValue(was, t, baseStill);
+    const mult = p === "scale" || p === "opacity";
+    const change = (t: number, v: number) => {
+      const a = had(t), b = want(t);
+      if (Math.abs(a - b) < 1e-9) return v;
+      if (mult && Math.abs(a) > 0.05) return v * (b / a);
+      return v + toChannelValue(p, b, scene) - toChannelValue(p, a, scene);
+    };
+    const span = Math.max(0, ...(user ?? []).map((k) => k.t), ...(was ?? []).map((k) => k.t));
+    for (const ch of CHANNELS_OF[p]) {
+      const c = anim[ch];
+      const fallback = CHANNEL_DEFAULT[ch];
+      // Constant changes on a constant channel stay one value.
+      if (!Array.isArray(c) && span === 0) {
+        out[ch] = round(change(0, typeof c === "number" ? c : fallback), 4);
+        continue;
+      }
+      const times = new Set<number>();
+      if (Array.isArray(c)) for (const [t] of c) times.add(t);
+      for (let t = 0; t <= span + 1e-6; t += 1 / scene.fps) times.add(round(t0 + t, 4));
+      times.add(round(t0 + span, 4));
+      out[ch] = [...times].sort((a, b) => a - b).map((t) => [t, round(change(t - t0, channelAt(ch, c, t)), 4)] as [number, number]);
+    }
+  }
+  return out;
+}
+
+const shiftKeys = <T>(c: [number, T][] | undefined, dt: number) => c?.map(([t, v]) => [round(t + dt, 4), v] as [number, T]);
+
+/** The layer itself (not its children) moved `dt` seconds later: every key, and its video's start. */
+function shiftLayer(l: SceneLayer, dt: number): SceneLayer {
+  const anim = Object.fromEntries(Object.entries(l.anim).map(([k, c]) => [k, Array.isArray(c) ? shiftKeys(c, dt) : c])) as SceneLayer["anim"];
+  // Before its first key a channel holds that key's value, so a layer that started shown would
+  // now show before it was meant to: it starts off until it's moved to.
+  if (dt > 0 && Array.isArray(anim.show) && anim.show[0][1] === 1) anim.show = [[0, 0], ...anim.show];
+  else if (dt > 0 && anim.show === undefined) anim.show = [[0, 0], [round(dt, 4), 1]];
+  const paint = (c: ColorChannel | undefined) => (Array.isArray(c) ? shiftKeys(c, dt) : c);
+  return {
+    ...l,
+    anim,
+    ...(l.paint ? { paint: { color: paint(l.paint.color), bg: paint(l.paint.bg) } } : {}),
+    ...(l.styleAnim ? { styleAnim: Object.fromEntries(Object.entries(l.styleAnim).map(([k, v]) => [k, shiftKeys(v, dt)!])) } : {}),
+    ...(l.svgAnim ? { svgAnim: shiftKeys(l.svgAnim, dt) } : {}),
+    ...(l.htmlAnim ? { htmlAnim: shiftKeys(l.htmlAnim, dt) } : {}),
+    ...(l.media ? { media: { ...l.media, start: round(l.media.start + dt, 4) } } : {}),
+  };
+}
+
+/** A show channel cut down to from..to: off before and after, as it was in between. */
+function windowShow(show: Channel | undefined, from: number, to: number): Channel {
+  const at = (t: number) => stepAt(show, t, 1);
+  const times = new Set<number>([0, from, to]);
+  if (Array.isArray(show)) for (const [t] of show) if (t > from && t < to) times.add(t);
+  const keys: [number, number][] = [];
+  for (const t of [...times].filter((t) => t >= 0).sort((a, b) => a - b)) {
+    const v = t >= from - 1e-6 && t < to - 1e-6 ? at(t) : 0;
+    if (!keys.length || keys[keys.length - 1][1] !== v) keys.push([round(t, 4), v]);
+  }
+  return keys.length === 1 ? keys[0][1] : keys;
+}
+
 /** Every layer, depth first, with its depth. */
 export function flatLayers(layers: SceneLayer[], depth = 0, out: { layer: SceneLayer; depth: number }[] = []) {
   for (const l of layers) {
@@ -430,11 +541,21 @@ const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 /** The scene as it should play: each layer with the user's text, style and keyframes applied, hidden ones taken out. */
 export function applyEdits(scene: Scene, edits: Record<string, LayerEdit> | undefined): Scene {
   if (!edits || !Object.keys(edits).length) return scene;
-  const one = (l: SceneLayer): SceneLayer | null => {
-    const e = edits[l.id];
-    if (e?.hidden) return null;
-    const children = l.children.map(one).filter((c): c is SceneLayer => c !== null);
-    if (!e) return children.every((c, i) => c === l.children[i]) && children.length === l.children.length ? l : { ...l, children };
+  // Clip edits apply to every layer of the clip.
+  const clipOf = new Map<string, LayerEdit>();
+  for (const [k, e] of Object.entries(edits)) if (k.startsWith("clip:")) for (const m of e.members ?? []) clipOf.set(m, e);
+  const one = (l0: SceneLayer, inherited = 0): SceneLayer | null => {
+    const e = edits[l0.id];
+    const c = clipOf.get(l0.id);
+    if (e?.hidden || c?.hidden) return null;
+    // Moved in time (with everything in it), its clip's keyframes and plain values, then trimmed.
+    const dt = inherited + (e?.shift ?? 0) + (c?.shift ?? 0);
+    let l = dt ? shiftLayer(l0, dt) : l0;
+    if (c && (c.keys || c.still)) l = { ...l, anim: { ...l.anim, ...clipChannels(c, l.anim, scene, dt) } };
+    if (e?.window) l = { ...l, anim: { ...l.anim, show: windowShow(l.anim.show, e.window[0] + dt, e.window[1] + dt) } };
+    if (c?.window) l = { ...l, anim: { ...l.anim, show: windowShow(l.anim.show, c.window[0] + dt, c.window[1] + dt) } };
+    const children = l.children.map((c) => one(c, dt)).filter((c): c is SceneLayer => c !== null);
+    if (!e) return !dt && children.every((c, i) => c === l.children[i]) && children.length === l.children.length ? l : { ...l, children };
     const paint = l.paint && e.style ? { color: e.style.color ? undefined : l.paint.color, bg: e.style["background-color"] ? undefined : l.paint.bg } : l.paint;
     const styleAnim = l.styleAnim && e.style ? Object.fromEntries(Object.entries(l.styleAnim).filter(([k]) => !(k in e.style!))) : l.styleAnim;
     return {

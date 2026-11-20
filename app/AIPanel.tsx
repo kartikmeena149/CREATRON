@@ -8,8 +8,11 @@ import { outputDuration } from "../src/timeline.ts";
 import { markerContext } from "./markers.ts";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
 import { Icon } from "./icons.tsx";
+import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } from "./Dictation.tsx";
 import { isAudio, isDocument } from "./format.ts";
 import { MEDIA_DRAG } from "./Inspector.tsx";
+import { sceneClipBrief } from "../src/sceneClips.ts";
+import { useSelectedClip } from "./SceneClips.tsx";
 import { type AgentMessage, useEditor } from "./store.ts";
 import { AgentTurn } from "./AgentTurn.tsx";
 import { Orb } from "./Orb.tsx";
@@ -33,8 +36,20 @@ const QUICK: Quick[] = [
 export function AIPanel() {
   const { project, plan, messages, busy, status, commit, say, set, picked, selectedBroll, markers, removeMarker } = useEditor();
   const pickedBroll = selectedBroll ? plan.broll.find((b) => b.id === selectedBroll) : undefined;
-  const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source);
+  // A clip of an imported Claude edit, picked on its track.
+  const sel = useSelectedClip();
+  const target = describePick(picked, pickedBroll?.query ?? pickedBroll?.source, sel?.clip.name);
+  const sceneClip = sel ? sceneClipBrief(sel.m, sel.scene, sel.clip) : undefined;
   const [text, setText] = useState("");
+  const typing = useRef<HTMLTextAreaElement>(null);
+  const dictation = useDictation((said) => {
+    setText((t) => appendSpeech(t, said));
+    setOriginal(null);
+    requestAnimationFrame(() => {
+      const el = typing.current;
+      if (el) el.focus(), el.setSelectionRange(el.value.length, el.value.length);
+    });
+  });
   const [model, setModel] = useModelChoice();
   // Files attached to the next message (they're in the library too), and what Enhance replaced.
   const [attached, setAttached] = useState<string[]>([]);
@@ -82,7 +97,7 @@ export function AIPanel() {
   const answer = (a: string) => {
     if (!project) return;
     useEditor.getState().answerQuestion(a);
-    window.creatron.chatSend(project.path, a, useEditor.getState().plan, model, undefined, true).then((r) => !r.ok && say({ role: "error", text: r.error }));
+    window.creatron.chatSend(project.path, a, useEditor.getState().plan, model, undefined, true, useEditor.getState().library).then((r) => !r.ok && say({ role: "error", text: r.error }));
   };
   const stopClaude = () => {
     if (!project) return;
@@ -105,6 +120,15 @@ export function AIPanel() {
     const d1 = outputDuration(after);
     apply(before, after, q.says, `instant · ${d0.toFixed(1)}s → ${d1.toFixed(1)}s`);
   };
+
+  // "Make the video" from a storyboard: once its recording is open here, the full edit builds it.
+  const build = useHome((h) => h.build);
+  useEffect(() => {
+    if (!build || !project || project.path !== build.media || busy) return;
+    useHome.setState({ build: null });
+    say({ role: "user", text: `Make the video from the storyboard “${build.title}”` });
+    void window.creatron.planBuild(build.media, build.plan, build.model, useEditor.getState().library).then((r) => !r.ok && say({ role: "error", text: r.error }));
+  }, [build, project?.path]);
 
   // A request typed on the Dashboard: sent as soon as its video is open here.
   const pending = useHome((h) => h.pending);
@@ -130,10 +154,10 @@ export function AIPanel() {
       const words = project.analysis.words;
       const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
       const focus = target || sent.length || files.length
-        ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent, attachments: files.map((path) => ({ path })) }
+        ? { clips: target ? picked : [], broll: pickedBroll?.id, sceneClip, markers: sent, attachments: files.map((path) => ({ path })) }
         : undefined;
-      if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
-      const r = await window.creatron.chatSend(project.path, request, before, model, focus);
+      if (focus) set({ picked: [], selected: null, selectedBroll: null, selectedClip: null, markers: [], pointing: false });
+      const r = await window.creatron.chatSend(project.path, request, before, model, focus, false, useEditor.getState().library);
       if (!r.ok) say({ role: "error", text: signInProblem(r.error) ?? r.error });
       return;
     }
@@ -142,7 +166,7 @@ export function AIPanel() {
     const sent = markers.map((m) => ({ ...m, context: markerContext(before, words, m.time) }));
     const focus =
       target || sent.length || files.length
-        ? { clips: target ? picked : [], broll: pickedBroll?.id, markers: sent, attachments: files.map((path) => ({ path })) }
+        ? { clips: target ? picked : [], broll: pickedBroll?.id, sceneClip, markers: sent, attachments: files.map((path) => ({ path })) }
         : undefined;
     const r = await window.creatron.aiEdit(project.path, request, before, model || undefined, focus);
     set({ busy: false });
@@ -167,7 +191,7 @@ export function AIPanel() {
     const used = r.value.model !== model ? ` (${model.split("/").pop()} was busy)` : "";
     apply(before, r.value.plan, r.value.plan.notes || "Done.", `${r.value.model.split("/").pop()}${cost}${used}`);
     // Clip numbers can change after an edit, so the pick is cleared; markers were used up.
-    if (focus) set({ picked: [], selected: null, selectedBroll: null, markers: [], pointing: false });
+    if (focus) set({ picked: [], selected: null, selectedBroll: null, selectedClip: null, markers: [], pointing: false });
   };
 
   return (
@@ -259,11 +283,13 @@ export function AIPanel() {
         {target && (
           <div className="ai-target">
             <span>✎ {target}</span>
-            <button className="link" title="Edit the whole video instead" onClick={() => set({ picked: [], selected: null, selectedBroll: null })}>✕</button>
+            <button className="link" title="Edit the whole video instead" onClick={() => set({ picked: [], selected: null, selectedBroll: null, selectedClip: null })}>✕</button>
           </div>
         )}
         <textarea
+          ref={typing}
           value={text}
+          readOnly={dictation.listening}
           disabled={!project}
           placeholder={!project ? "Import a video first" : !plan.segments.length ? "The timeline is empty: drop your video back on it" : target ? `What should I do with ${target}?` : "Describe an edit, or ask for the whole finished video…"}
           onChange={(e) => (setText(e.target.value), setOriginal(null))}
@@ -280,7 +306,8 @@ export function AIPanel() {
             <button className="link" onClick={() => (setText(original), setOriginal(null))}>Undo</button>
           </div>
         )}
-        <div className="ai-box-foot">
+        <DictationNote d={dictation} />
+        {dictation.listening ? <DictationBar d={dictation} /> : <div className="ai-box-foot">
           <button
             className="icon-btn ai-tool"
             title="Attach files for the AI: a storyboard, script or notes to follow (xlsx, csv, docx, pdf, txt), or videos, music and sound effects to use"
@@ -298,16 +325,19 @@ export function AIPanel() {
           </button>
           <ModelPicker value={model} onChange={setModel} />
           {busy && !live && <span className="mini-spin" />}
-          {busy && live ? (
-            <button className="send stop" onClick={stopClaude} title="Stop Claude">
-              <i className="stop-square" />
-            </button>
-          ) : (
-            <button className="send" disabled={!text.trim() || busy || !project} onClick={() => send()} title="Send (Enter)">
-              <Icon name="arrowUp" size={16} />
-            </button>
-          )}
-        </div>
+          <div className="ai-actions">
+            <MicButton d={dictation} disabled={!project} className="mic-round" />
+            {busy && live ? (
+              <button className="send stop" onClick={stopClaude} title="Stop Claude">
+                <i className="stop-square" />
+              </button>
+            ) : (
+              <button className="send" disabled={!text.trim() || busy || !project} onClick={() => send()} title="Send (Enter)">
+                <Icon name="arrowUp" size={16} />
+              </button>
+            )}
+          </div>
+        </div>}
         </div>
       </div>
     </aside>
@@ -322,10 +352,11 @@ function freeResetTime(): string {
 }
 
 /** "Clip 2", "Clips 1, 3", "B-roll: watering plants" — what the next request will change. */
-function describePick(clips: number[], broll?: string): string {
+function describePick(clips: number[], broll?: string, sceneClip?: string): string {
   const parts = [];
   if (clips.length) parts.push(`${clips.length > 1 ? "Clips" : "Clip"} ${clips.map((i) => i + 1).join(", ")}`);
   if (broll) parts.push(`B-roll: ${broll}`);
+  if (sceneClip) parts.push(sceneClip);
   return parts.join(" + ");
 }
 

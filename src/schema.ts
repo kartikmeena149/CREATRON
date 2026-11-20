@@ -4,6 +4,8 @@
 import { z } from "zod";
 import { TEST_FONTS } from "./fonts.ts";
 import { LayerEdit } from "./scene.ts";
+import { AUDIO_KEYS, BROLL_KEYS, SEGMENT_KEYS, keysFor } from "./keyframes.ts";
+import { Transition } from "./transitions.ts";
 
 export const Segment = z
   .object({
@@ -31,6 +33,8 @@ export const Segment = z
       .boolean()
       .optional()
       .describe("false = this clip's sound was deleted (silent there, the picture stays). Muting is volume 0 instead"),
+    transition: Transition.optional().describe("A transition INTO this clip from the one before it, centred on the cut (ignored on the first clip and after a gap)"),
+    keys: keysFor(SEGMENT_KEYS, "the punch-in zoom (1-2) and volume (0-2); t is seconds into the clip after its speed"),
   })
   .refine((s) => s.end > s.start, { message: "end must be after start" });
 
@@ -93,6 +97,7 @@ export const Voiceover = z.object({
   muted: z.boolean().optional().describe("Switched off by the user; keep as it is"),
   fadeIn: z.number().min(0).max(10).optional().describe("Seconds the sound fades in at its start"),
   fadeOut: z.number().min(0).max(10).optional().describe("Seconds the sound fades out at its end"),
+  keys: keysFor(AUDIO_KEYS, "its level in dB (-24 to 12), e.g. music that dips and comes back"),
 });
 export type Voiceover = z.infer<typeof Voiceover>;
 
@@ -123,6 +128,8 @@ export const Broll = z.object({
   x: z.number().min(-1.5).max(1.5).optional().describe("Shift of its middle from the frame's middle, as a fraction of the frame width"),
   y: z.number().min(-1.5).max(1.5).optional().describe("Shift of its middle from the frame's middle, as a fraction of the frame height"),
   rotate: z.number().min(-180).max(180).optional().describe("Turned this many degrees, clockwise"),
+  opacity: z.number().min(0).max(1).optional().describe("How solid it is: 1 (or absent) = solid, 0.5 = half see-through"),
+  keys: keysFor(BROLL_KEYS, "its place (x, y), size (scale), turn (rotate, degrees) and opacity (0-1)"),
 });
 export type Broll = z.infer<typeof Broll>;
 
@@ -134,11 +141,13 @@ export const Motion = z.object({
   id: z.string().default(""),
   track: z.number().int().min(1).default(1).describe("Text track it sits on: 1, 2… Higher tracks draw on top"),
   template: z
-    .enum(["title", "lower-third", "custom", "scene"])
+    .enum(["title", "lower-third", "custom", "scene", "effect"])
     .describe(
       "title = big centered text that pops in; lower-third = name/label bar that slides in near the bottom; custom = an animation written for this project (component); " +
-        "scene = a Claude edit the user imported (its layers and keyframes live in the scene file; never create one)",
+        "scene = a Claude edit the user imported (its layers and keyframes live in the scene file; never create one); " +
+        "effect = a look laid over everything under it for its time (set `effect`): flash, dip, blinds (transitions, put them on a cut), shade, vignette, leak, grain, scanlines, letterbox",
     ),
+  effect: z.string().optional().describe("effect only: flash | dip | blinds | shade | vignette | leak | grain | scanlines | letterbox. props.intensity (0-2, 1 = as designed) and color tune it"),
   component: z
     .string()
     .regex(/^[A-Z][A-Za-z0-9]*$/)
@@ -155,7 +164,7 @@ export const Motion = z.object({
   subtext: z.string().max(80).default("").describe("Optional smaller second line"),
   atSource: z.number().min(0).optional().describe("Transcript second where it should appear (use this; the app converts it)"),
   at: z.number().min(0).default(0).describe("Start on the edited timeline, seconds. Set by the app from atSource"),
-  duration: z.number().min(0.5).max(3600).default(3).describe("How long it shows, seconds (2-4 is typical for text; a progress bar can run the whole video)"),
+  duration: z.number().min(0.1).max(3600).default(3).describe("How long it shows, seconds (2-4 is typical for text; a progress bar can run the whole video; a flash 0.3-0.5)"),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#facc15").describe("Accent color"),
   behind: z.boolean().optional().describe("Drawn behind the person in the video (text-behind-subject: big words standing behind them). Only over the main video, not over B-roll"),
   hidden: z.boolean().optional().describe("Switched off by the user; keep as it is"),
@@ -265,6 +274,21 @@ export const EditPlan = z.object({
   voiceovers: z.array(Voiceover).default([]),
   broll: z.array(Broll).default([]).describe("Clips over the main video. Only ids returned by search_broll or search_web_video."),
   motion: z.array(Motion).default([]).describe("Animated titles and lower thirds on the Text tracks"),
+  // Transitions laid over a cut (a flash, a dip, blinds…): they belong to the cut, not to a track,
+  // so they work on any cut, the main track's or a shot change inside a Claude edit.
+  cutEffects: z
+    .array(
+      z.object({
+        id: z.string(),
+        effect: z.string().describe('A transition effect: "flash", "dip", "blinds", "leak", or "lib:<id>" from the effects library'),
+        at: z.number().min(0).describe("The cut, seconds on the edited timeline"),
+        duration: z.number().min(0.1).max(10).describe("Seconds it runs (a flash 0.3-0.5, a dip 0.5-1)"),
+        color: z.string().optional(),
+        intensity: z.number().min(0).max(2).optional().describe("1 = as designed"),
+      }),
+    )
+    .default([])
+    .describe("Transitions over cuts. Put one on a cut by its time (cuts are where main-track clips meet, or where a Claude edit's shots change)"),
   // Each track's name / mute / hide, set by the user in the timeline. Tracks themselves exist while
   // clips sit on them. Keys: "video:1" (the main video), "video:2"…, "text:1"…, "voice:1"…, "music:1"…, "sfx:1"….
   tracks: z

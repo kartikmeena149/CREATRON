@@ -86,8 +86,7 @@ function clipItems(ref: act.ClipRef, item: Item, sep: (key: string) => React.Rea
   const list: React.ReactNode[] = [];
   // Editing the text itself comes first for text clips.
   if (ref.kind === "motion" && act.textStyle(ref) === "scene") {
-    list.push(item("layers", "Open layers", () => s.set({ openScene: ref.id, selectedLayer: null, sceneKey: null, leftView: "text" })));
-    list.push(sep("text"));
+    // Its shots, titles and graphics are clips on their own tracks: this clip is the edit as a whole.
   } else if (ref.kind === "motion") {
     list.push(item("type", "Edit text", () => s.set({ leftView: "text" })));
     if (act.textStyle(ref) !== "custom") {

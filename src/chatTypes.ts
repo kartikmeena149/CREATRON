@@ -1,6 +1,7 @@
 // What the live chat (src/chat.ts) streams to the window, and reading Claude's question out of its
 // reply. Pure, no Node or browser APIs: the app imports it too.
 import type { EditPlan } from "./schema.ts";
+import type { Storyboard, Verdict } from "./storyboard.ts";
 
 export type StepIcon = "read" | "edit" | "code" | "look" | "search" | "think" | "check" | "fail";
 export type Step = { id: string; icon: StepIcon; label: string; running: string; status: "running" | "done" | "failed"; ms?: number };
@@ -10,7 +11,8 @@ export type Question = { question: string; detail?: string; options: { label: st
  * Claude handing a request to the full edit (src/fulledit.ts): a whole finished video from the raw
  * footage (`brief`), or a change to the finished video it made before (`change`).
  */
-export type FullEditAsk = { brief?: string; change?: string; reference?: string };
+/** plan: build from a storyboard approved in the Storyboard Creator (its folder). */
+export type FullEditAsk = { brief?: string; change?: string; reference?: string; plan?: string };
 /** A finished full edit: the open project folder, the part the timeline imports, the exported video. */
 export type FullEditResult = { dir: string; project: string; final: string; notes: string; version: number; url?: string };
 /** Where a running full edit is: its step, how far along, and the time left. */
@@ -21,6 +23,8 @@ export type ChatEvent =
   | { type: "handoff"; ask: FullEditAsk }
   | { type: "job"; progress: FullEditProgress }
   | { type: "result"; result: FullEditResult }
+  /** The full edit's storyboard, waiting for the user's OK (round 2+ after changes). video: the main video it belongs to. */
+  | { type: "storyboard"; board: Storyboard; dir: string; round: number; video: string; drafts?: Storyboard[]; said?: Verdict }
   | { type: "text"; delta: string }
   | { type: "step"; step: Step }
   | { type: "plan"; plan: EditPlan }
@@ -82,4 +86,18 @@ export type Connections = {
   openrouter: boolean;
   enabled: Record<AgentId, boolean>;
   install: Record<AgentId, string>;
+};
+
+/** The Storyboard creator's events (a storyboard from a script), streamed to the window as "plan-event". */
+export type PlanEvent =
+  | { type: "log"; text: string; kind: "tool" | "note" | "info" }
+  | { type: "progress"; stage: string; fraction: number; elapsedMs: number; remainingMs: number }
+  | { type: "storyboard"; board: Storyboard; dir: string; round: number; video: string; drafts?: Storyboard[]; said?: Verdict }
+  | { type: "done"; dir: string }
+  | { type: "error"; error: string };
+
+/** A storyboard made from a script, as the creator's list shows it. */
+export type SavedPlan = {
+  dir: string; title: string; format: Storyboard["format"]; shots: number; seconds: number; updated: number;
+  approved: boolean; pdf?: string; open: boolean; board: Storyboard;
 };

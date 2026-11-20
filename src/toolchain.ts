@@ -15,8 +15,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 
 const ROOT = process.env.CREATRON_ROOT || resolve(import.meta.dirname, "..");
 
-export type ToolName = "ffmpeg" | "ffprobe" | "whisper" | "remotion" | "hyperframes" | "yt-dlp" | "earshot" | "swiftc";
-export const TOOL_NAMES: ToolName[] = ["ffmpeg", "ffprobe", "whisper", "remotion", "hyperframes", "yt-dlp", "earshot", "swiftc"];
+export type ToolName = "ffmpeg" | "ffprobe" | "whisper" | "remotion" | "hyperframes" | "yt-dlp" | "earshot" | "swiftc" | "three";
+export const TOOL_NAMES: ToolName[] = ["ffmpeg", "ffprobe", "whisper", "remotion", "hyperframes", "yt-dlp", "earshot", "swiftc", "three"];
 
 /** How to start a tool: the program, arguments that go first, and extra environment. */
 export type Found = {
@@ -95,6 +95,26 @@ function hyperframesCli(): Found | undefined {
   return undefined;
 }
 
+/**
+ * Chrome to draw the 3D kit's three.js scenes in: the one puppeteer downloaded (GPU), then its
+ * headless shell, then Remotion's. All need the three and puppeteer packages in Creatro.
+ */
+function threeChromes(): (Found | undefined)[] {
+  const packages = ["three", "puppeteer"].every((m) => existsSync(join(ROOT, "node_modules", m, "package.json")));
+  if (!packages) return [];
+  const newest = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((d) => !d.startsWith(".")).sort().reverse().map((d) => join(dir, d)) : []);
+  const cache = process.env.PUPPETEER_CACHE_DIR || join(homedir(), ".cache", "puppeteer");
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const chrome = newest(join(cache, "chrome")).map((d) => join(d, `chrome-mac-${arch}`, "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing")).find(existsSync);
+  const shell = newest(join(cache, "chrome-headless-shell")).map((d) => join(d, `chrome-headless-shell-mac-${arch}`, "chrome-headless-shell")).find(existsSync);
+  const remotion = join(ROOT, "node_modules", ".remotion", "chrome-headless-shell", `mac-${arch}`, `chrome-headless-shell-mac-${arch}`, "chrome-headless-shell");
+  return [
+    chrome ? { cmd: chrome, pre: [], via: "Chrome for Testing (puppeteer), on the GPU", backup: false } : undefined,
+    shell ? { cmd: shell, pre: [], via: "puppeteer's headless Chrome", backup: true } : undefined,
+    existsSync(remotion) ? { cmd: remotion, pre: [], via: "Remotion's headless Chrome", backup: true } : undefined,
+  ];
+}
+
 function candidates(tool: ToolName): (Found | undefined)[] {
   const onMac = (name: string, via = "on this Mac"): Found | undefined => {
     const cmd = which(name);
@@ -123,6 +143,8 @@ function candidates(tool: ToolName): (Found | undefined)[] {
     }
     case "swiftc":
       return [onMac("swiftc", "Xcode tools")];
+    case "three":
+      return threeChromes();
   }
 }
 
@@ -155,6 +177,7 @@ export const FALLBACK: Record<ToolName, { job: string; backup: string; without: 
   "yt-dlp": { job: "download web videos and Creative Commons music", backup: "stock clips (Pixabay) and Wikimedia files", without: "no web videos: stock clips and the files you add" },
   earshot: { job: "sound-effect bank and listening checks", backup: "sound effects made with ffmpeg, loudness from ffmpeg's meters", without: "simple ffmpeg sound effects" },
   swiftc: { job: "cut the speaker out of the background", backup: "none", without: "no cutout: the speaker is shown as a card or split screen" },
+  three: { job: "cinematic 3D shots made in code (three.js, the 3d-animator skill)", backup: "a headless Chrome (slower, maybe without the GPU)", without: "no code-made 3D: those shots are built as Remotion or HyperFrames layers, stock B-roll or an illustration" },
 };
 
 /** Thrown when a tool is needed and neither it nor a backup works. One plain line. */
@@ -176,7 +199,7 @@ export function need(tool: ToolName): Found {
 /** The tool a command name belongs to, for run() ("whisper-cli" → whisper). */
 export function toolOf(cmd: string): ToolName | undefined {
   if (cmd === "whisper-cli") return "whisper";
-  return (TOOL_NAMES as string[]).includes(cmd) && cmd !== "remotion" && cmd !== "hyperframes" && cmd !== "earshot" ? (cmd as ToolName) : undefined;
+  return (TOOL_NAMES as string[]).includes(cmd) && cmd !== "remotion" && cmd !== "hyperframes" && cmd !== "earshot" && cmd !== "three" ? (cmd as ToolName) : undefined;
 }
 
 export type Health = { tool: ToolName; ok: boolean; backup: boolean; using: string; note: string };
@@ -252,6 +275,11 @@ export function routing(list = health()): { job: string; using: string; fallback
     pick("sound effects", [
       [ok("earshot"), "earshot's sound bank"],
       [true, "simple sound effects made with ffmpeg"],
+    ]),
+    pick("3D shots in code", [
+      [ok("three") && !backup("three"), "three.js kit, drawn in Chrome on the GPU"],
+      [ok("three"), "three.js kit in a headless Chrome (slower)"],
+      [true, "no code-made 3D: layers, B-roll or illustration instead"],
     ]),
     pick("speaker cutout", [
       [ok("swiftc"), "Apple Vision (tools/person-mask.swift)"],

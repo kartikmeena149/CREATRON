@@ -3,7 +3,7 @@ import type { Detail, Scene } from "../src/scene.ts";
 import type { LinkInfo } from "../src/webvideo.ts";
 import type { Sfx } from "../src/sfx.ts";
 import type { ChatEvent } from "../src/chat.ts";
-import type { AgentId, Connections } from "../src/chatTypes.ts";
+import type { AgentId, Connections, PlanEvent, SavedPlan } from "../src/chatTypes.ts";
 import type { ExportOptions } from "../src/exportOptions.ts";
 
 /** The Auto Edit job the app is running or last ran (kept by the main process). */
@@ -40,7 +40,33 @@ declare global {
       sceneBase(file: string): Promise<Result<string>>;
       /** Creatro's font library (fonts edits brought in), with a URL for each file. */
       fontLibrary(): Promise<{ family: string; weight: string; style: string; unicodeRange?: string; file: string; url: string }[]>;
-      chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean): Promise<Result<void>>;
+      /** The effects taken out of imported Claude edits. */
+      effectLibrary(): Promise<import("../src/sceneEffects.ts").EffectPreset[]>;
+      /** Adds a Claude edit's effects to the library; the names of the new ones. */
+      extractEffects(file: string): Promise<Result<string[]>>;
+      chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean, library?: string[]): Promise<Result<void>>;
+      storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string>; only?: string[] }): Promise<boolean>;
+      planStart(req: { title?: string; script: string; direction?: string; format: "9:16" | "16:9" | "1:1" | "4:5"; style?: "auto" | "explainer" | "editorial" | "3d"; assets: string[]; model: string }): Promise<Result<{ key: string; dir: string }>>;
+      boardAddFile(dir: string, file: string): Promise<Result<string>>;
+      findPicture(dir: string, name: string): Promise<Result<{ file: string; credit: string; cutout: boolean }>>;
+      /** Each step of finding a picture, as it happens ("Searching the web…"). */
+      onPictureProgress(fn: (p: { name: string; step: string }) => void): () => void;
+      drawThing(name: string, model?: string): Promise<Result<{ d: string; shade?: number }[]>>;
+      planMedia(dir: string): Promise<Result<{ path: string; name: string; kind: "video" | "audio"; seconds: number }[]>>;
+      planBuild(path: string, plan: string, model: string, library?: string[]): Promise<Result<void>>;
+      planStop(): Promise<void>;
+      planOpen(dir: string, model: string): Promise<Result<{ key: string; dir: string }>>;
+      plansList(): Promise<SavedPlan[]>;
+      planRename(dir: string, title: string): Promise<Result<void>>;
+      planDelete(dir: string): Promise<Result<void>>;
+      onPlanEvent(fn: (e: { key: string; event: PlanEvent }) => void): () => void;
+      readScript(path: string): Promise<Result<string>>;
+      storyboardWaiting(video: string): Promise<boolean>;
+      storyboardPdf(dir: string, html: string, name: string): Promise<Result<string>>;
+      frameAt(file: string, seconds: number, width?: number): Promise<string | null>;
+      micAccess(): Promise<"granted" | "denied" | "restricted" | "not-determined" | "unknown">;
+      openMicSettings(): Promise<void>;
+      dictate(wav: Uint8Array): Promise<Result<string>>;
       chatStop(path: string): Promise<void>;
       onChatEvent(fn: (e: { path: string; event: ChatEvent }) => void): () => void;
       models(): Promise<Result<{ models: ModelInfo[]; credits: number | null; recommended: string }>>;
@@ -50,6 +76,7 @@ declare global {
       exportDir(): Promise<string>;
       pickFolder(start?: string): Promise<string | undefined>;
       reveal(path: string): Promise<void>;
+      projectAssets(video: string): Promise<{ dir: string; files: { path: string; folder: string; at: number }[] }>;
       fileThumbs(path: string): Promise<Result<Thumbs>>;
       trashMedia(path: string): Promise<Result<void>>;
       madeByCreatron(path: string): Promise<boolean>;

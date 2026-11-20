@@ -17,6 +17,7 @@ import { resolveSounds } from "./sfx.ts";
 import { outputSize } from "./frame.ts";
 import { type ChatEvent, type Question, type Step, splitAsk, splitFullEdit } from "./chatTypes.ts";
 import { fullEditInfo } from "./fulledit.ts";
+import { changedMoments, lookFrames, requestedMoments } from "./look.ts";
 
 export type { ChatEvent } from "./chatTypes.ts";
 
@@ -31,6 +32,11 @@ no offers of more help.
 Be quick: the transcript and the exact word times (words.md) are in the messages, so don't re-read them. Read
 plan.json once, then edit it.
 Make all the changes in as few edits as you can. Don't over-think small requests.
+
+## Seeing your edit
+After you change the timeline, Creatro renders frames of the edited video where you changed it (exactly as it
+will export) and shows them to you once: look, and fix anything that looks wrong. To see other moments, write
+look.json in this folder, {"times": [seconds on the edited timeline]} (up to 6), before you end your turn.
 
 ## Asking the user
 When a real choice is the user's (a style or look, which of a few directions, anything they'd want to decide),
@@ -85,6 +91,8 @@ type Turn = {
   text: string;
   changed: boolean;
   fixes: number;
+  /** Times the AI was shown frames of its edit this request (once for the change, once more if it asks). */
+  looks: number;
   blocks: Map<number, { kind: string; started: number; tool?: { id: string; name: string; json: string } }>;
   steps: Map<string, Step>;
   resolve: () => void;
@@ -134,7 +142,7 @@ export async function chat(
 
   emit({ type: "start" });
   await new Promise<void>((resolve) => {
-    s!.turn = { analysis, current, focus: opts.focus, text: "", changed: false, fixes: 0, blocks: new Map(), steps: new Map(), resolve };
+    s!.turn = { analysis, current, focus: opts.focus, text: "", changed: false, fixes: 0, looks: 0, blocks: new Map(), steps: new Map(), resolve };
     s!.send(content);
   });
 }
@@ -402,6 +410,34 @@ async function finish(s: Session, dir: string, result: any) {
       } catch (e) {
         final = { ...final, voiceovers: final.voiceovers.filter((v) => !/^(sfx|music|earshot):/.test(v.file)) };
         s.emit({ type: "text", delta: `\n\nCouldn't get the sounds: ${e instanceof Error ? e.message : e}` });
+      }
+    }
+    // Looking at it: frames of the edited video where it changed (and any moments it asked for in
+    // look.json), drawn by the export, shown to the AI to fix what looks wrong. The user's question
+    // to answer, if any, waits until it's been seen.
+    if (final && t.looks < 2) {
+      const asked = requestedMoments(dir, final);
+      const moments = t.looks === 0 ? [...changedMoments(t.current, final, t.analysis), ...asked] : asked;
+      if (moments.length) {
+        t.looks++;
+        const id = `look-${Date.now()}`;
+        step(s, { id, icon: "look", label: "Looked at the result", running: "Rendering frames to look at", status: "running" });
+        try {
+          writeFileSync(join(dir, "plan.json"), JSON.stringify(final, null, 2)); // with the B-roll and sounds it found
+          const frames = await lookFrames(dir, t.analysis, final, moments.slice(0, 6));
+          step(s, { id, icon: "look", label: `Rendered ${frames.length} frame${frames.length === 1 ? "" : "s"} of the result`, running: "", status: "done" });
+          s.send([
+            "Here is how the edited video looks now, drawn exactly as it will export (Read each image):",
+            ...frames.map((f) => `- ${f.file} at ${f.t.toFixed(2)}s: ${f.what}`),
+            "Look closely: text cut off or hard to read, things overlapping, wrong place or timing, not what I asked for.",
+            "If something is wrong, fix it in plan.json. Then end with one short sentence starting \"Checked:\" saying it looks right (or what you fixed).",
+            "To see other moments, write look.json {\"times\": [seconds]} before ending.",
+          ].join("\n"));
+          return;
+        } catch (e) {
+          step(s, { id, icon: "fail", label: "Couldn't render frames to look at", running: "", status: "failed" });
+          console.error("look:", e instanceof Error ? e.message : e);
+        }
       }
     }
     s.emit({ type: "done", plan: final, question, changed: Boolean(final) });

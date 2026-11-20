@@ -52,7 +52,11 @@ Editing rules:
 - In notes, tell the user in one or two plain sentences what you did.`;
 
 /** What the user picked on the timeline: segment indexes, and maybe one B-roll id. */
-export type Focus = { clips: number[]; broll?: string; markers?: Marker[]; attachments?: Attachment[] };
+export type Focus = {
+  clips: number[]; broll?: string; markers?: Marker[]; attachments?: Attachment[];
+  /** A clip of an imported Claude edit (a shot, title, graphic), described for the model by the app (sceneClipBrief). */
+  sceneClip?: string;
+};
 
 /** A file the user attached to the request (it's in the project library): a video or a sound. */
 /** A file attached to a request: media to use in the edit, or a document to follow (its text). */
@@ -256,6 +260,7 @@ export function describeFocus(plan: EditPlan, focus: Focus): string {
     });
   const b = focus.broll ? plan.broll.find((x) => x.id === focus.broll) : undefined;
   if (b) lines.push(`- B-roll id "${b.id}" (${b.query ?? b.source}) at ${b.at.toFixed(2)}s for ${b.duration.toFixed(2)}s`);
+  if (focus.sceneClip) lines.push(focus.sceneClip);
   const parts = [];
   if (focus.attachments?.length)
     parts.push(

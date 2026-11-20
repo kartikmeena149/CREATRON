@@ -15,8 +15,17 @@ import { PositionSize } from "./PositionSize.tsx";
 import { openMediaMenu } from "./ClipMenu.tsx";
 import { useEditor } from "./store.ts";
 import { useTabs } from "./tabs.ts";
+import { EaseRow, KeyButton } from "./Keyframes.tsx";
+import { SceneClipPanel } from "./SceneClipPanel.tsx";
+import { TextClipPanel } from "./TextClipPanel.tsx";
+import { EffectsPanel, pickCut } from "./EffectsPanel.tsx";
+import { useSelectedClip } from "./SceneClips.tsx";
+import { type Keys, valueAt } from "../src/keyframes.ts";
+import { clipStarts } from "../src/timeline.ts";
+import { TRANSITION_TYPES } from "../src/transitions.ts";
+import { maxTransition, setTransition } from "./TransitionPicker.tsx";
 
-const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice Studio", sfx: "Sound effects" };
+const TITLES = { media: "Library", clip: "Clip & frame", audio: "Audio", captions: "Captions", text: "Text", voice: "Voice Studio", sfx: "Sound effects", effects: "Effects" };
 
 export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; onLink: (kind: "video" | "audio") => void; onOpenMain: (path: string) => void }) {
   const { project, plan, selected, selectedCue, selectedMotion, leftView: view, set, commit, checkpoint, live, updateSegment } = useEditor();
@@ -24,9 +33,19 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
   // Selecting something on the timeline opens the page that edits it.
   useEffect(() => void (selected !== null && set({ leftView: "clip" })), [selected]);
   useEffect(() => void (selectedCue !== null && set({ leftView: "captions" })), [selectedCue]);
-  useEffect(() => void (selectedMotion !== null && set({ leftView: "text" })), [selectedMotion]);
+  // An effect clip opens the Effects section; a title the Text section.
+  const motionIsEffect = useEditor((s) => s.plan.motion.find((m) => m.id === s.selectedMotion)?.template === "effect");
+  useEffect(() => void (selectedMotion !== null && set({ leftView: motionIsEffect ? "effects" : "text" })), [selectedMotion]);
   const selectedVo = useEditor((s) => s.selectedVo);
   useEffect(() => void (selectedVo !== null && set({ leftView: "audio" })), [selectedVo]);
+  const selectedBroll = useEditor((s) => s.selectedBroll);
+  useEffect(() => void (selectedBroll !== null && set({ leftView: "clip" })), [selectedBroll]);
+  const selectedClip = useEditor((s) => s.selectedClip);
+  // A title of a Claude edit opens the Text section; its other clips open Clip & frame.
+  const picked = useSelectedClip();
+  const pickedText = picked?.clip.kind === "text";
+  useEffect(() => void (selectedClip !== null && set({ leftView: pickedText ? "text" : "clip" })), [selectedClip?.scene, selectedClip?.clip]);
+  const time = useEditor((s) => s.time);
 
   // More than one clip selected: one panel for all of them.
   const group = useEditor((s) => s.picked.length + s.pickedIds.length);
@@ -52,13 +71,18 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
   if (!project) return <aside className="panel inspector">{head}<p className="hint pad">Import a video first.</p></aside>;
 
   const seg = selected !== null ? plan.segments[selected] : undefined;
+  // The playhead, in seconds into the selected clip (where its keyframes are set).
+  const segT = seg ? time - clipStarts(plan)[selected!] : 0;
+  const segKeys = (keys: Keys | undefined) => updateSegment(selected!, { keys });
   const setPlan = (patch: Partial<EditPlan>) => commit({ ...plan, ...patch });
   const liveAudio = (patch: Partial<EditPlan["audio"]>) => live({ ...plan, audio: { ...plan.audio, ...patch } });
 
   return (
     <aside className="panel inspector">
       {head}
-      {view === "text" && <>
+      {view === "effects" && <EffectsPanel />}
+      {view === "text" && pickedText && <TextClipPanel />}
+      {view === "text" && !pickedText && <>
         <MotionEditor />
         {!plan.motion.find((m) => m.id === selectedMotion) && (
           <section>
@@ -68,8 +92,10 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
         )}
       </>}
 
-      {view === "clip" && <>
-      <section>
+      {view === "clip" && selectedClip && <SceneClipPanel />}
+      {view === "clip" && !selectedClip && selectedBroll && <BrollClip />}
+      {view === "clip" && !selectedClip && !selectedBroll && <>
+      {<section>
         <h3>Clip {seg ? selected! + 1 : ""}</h3>
         {seg ? (
           <>
@@ -79,15 +105,30 @@ export function Inspector({ onOpen, onLink, onOpenMain }: { onOpen: () => void; 
             </div>
             <Slider label="Speed" unit="×" min={0.5} max={2} step={0.05} value={seg.speed}
               onStart={checkpoint} onChange={(v) => updateSegment(selected!, { speed: v }, false)} />
-            <Slider label="Punch-in zoom" unit="%" min={1} max={2} step={0.01} value={seg.zoom} display={(v) => Math.round(v * 100)}
+            <Slider label="Punch-in zoom" unit="%" min={1} max={2} step={0.01} value={valueAt(seg.keys?.zoom, segT, seg.zoom)} display={(v) => Math.round(v * 100)}
+              keyBtn={<KeyButton keys={seg.keys} prop="zoom" t={segT} still={seg.zoom} onChange={segKeys} />}
               onStart={checkpoint} onChange={(v) => updateSegment(selected!, { zoom: v }, false)} />
-            <Slider label="Volume" unit="%" min={0} max={2} step={0.01} value={seg.volume ?? 1} display={(v) => Math.round(v * 100)}
+            <Slider label="Volume" unit="%" min={0} max={2} step={0.01} value={valueAt(seg.keys?.volume, segT, seg.volume ?? 1)} display={(v) => Math.round(v * 100)}
+              keyBtn={<KeyButton keys={seg.keys} prop="volume" t={segT} still={seg.volume ?? 1} onChange={segKeys} />}
               onStart={checkpoint} onChange={(v) => updateSegment(selected!, { volume: v }, false)} />
+            <EaseRow keys={seg.keys} t={segT} onChange={segKeys} />
+            {selected! > 0 && !seg.gap && (
+              <div className="row tr-row">
+                <div>
+                  <div>Transition in</div>
+                  <div className="hint">{seg.transition ? `${TRANSITION_TYPES[seg.transition.type].label} · ${Math.min(seg.transition.duration, maxTransition(selected!)).toFixed(1)}s` : "Straight cut"}</div>
+                </div>
+                <span>
+                  {seg.transition && <button className="link-btn" onClick={() => setTransition(selected!, null)}>Remove</button>}
+                  <button className="lib-add" onClick={() => pickCut(selected!)}>{seg.transition ? "Change" : "Add"}</button>
+                </span>
+              </div>
+            )}
           </>
         ) : (
           <p className="hint">Click a clip on the timeline to adjust its speed, zoom and volume. ⇧-click more clips, then tell the AI what to do with them.</p>
         )}
-      </section>
+      </section>}
 
       <section>
         <h3>Frame</h3>
@@ -150,7 +191,65 @@ function Library({ onAdd, onLink, onOpenMain }: { onAdd: () => void; onLink: () 
         {shown.map((p) => <MediaCard key={p} path={p} onOpenMain={onOpenMain} />)}
       </div>
       {library.length > 0 && <p className="hint pad">Drag videos, photos, music or sound effects onto any track. Double-click a video to open it as the main video in a new tab.</p>}
+      <AiAssets query={query} onOpenMain={onOpenMain} />
     </>
+  );
+}
+
+// The AI project's assets/ subfolders, in this order, with a plain name.
+const ASSET_GROUPS: [string, string][] = [["broll", "B-roll"], ["img", "Images"], ["images", "Images"], ["audio", "Music"], ["sfx", "Sound effects"], ["cutouts", "Cutouts"]];
+
+/** Everything the AI has downloaded or made for this video, live: it fills in while an edit is still running. */
+function AiAssets({ query, onOpenMain }: { query: string; onOpenMain: (path: string) => void }) {
+  const video = useEditor((s) => s.project?.path);
+  const [assets, setAssets] = useState<{ dir: string; files: { path: string; folder: string; at: number }[] }>();
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    setAssets(undefined);
+    if (!video) return;
+    let alive = true;
+    const look = () => window.creatron.projectAssets(video).then((a) => alive && setAssets(a)).catch(() => {});
+    look();
+    const timer = setInterval(look, 2000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [video]);
+  if (!assets?.files.length) return null;
+  const q = query.trim().toLowerCase();
+  const shown = assets.files.filter((f) => baseName(f.path).toLowerCase().includes(q));
+  const names = new Map(ASSET_GROUPS);
+  const order = [...new Set([...ASSET_GROUPS.map(([k]) => k), ...shown.map((f) => f.folder)])];
+  const groups = order
+    .map((k) => ({ key: k, label: names.get(k) ?? k, files: shown.filter((f) => f.folder === k) }))
+    .filter((g) => g.files.length);
+  return (
+    <div className={`ai-assets ${open ? "" : "closed"}`}>
+      <div className="ai-assets-head">
+        <button className="ai-assets-toggle" onClick={() => setOpen(!open)} title={open ? "Hide" : "Show"}>
+          <Icon name="chevron" size={12} />
+          <Icon name="folder" size={14} />
+          <span>Assets</span>
+          <span className="dim small">{assets.files.length}</span>
+        </button>
+        <button className="icon-btn" title="Show the assets folder in Finder" onClick={() => window.creatron.reveal(assets.dir)}><Icon name="expand" size={13} /></button>
+      </div>
+      {open && (
+        <>
+          <p className="hint pad">What the AI downloaded and made for this video. It fills in while the edit runs; drag any of it onto the timeline.</p>
+          {!groups.length && <p className="hint pad">No assets match “{query}”.</p>}
+          {groups.map((g) => (
+            <div key={g.key}>
+              <div className="ai-assets-group">{g.label}<span className="dim small">{g.files.length}</span></div>
+              <div className="media-grid">
+                {g.files.map((f) => <MediaCard key={f.path} path={f.path} onOpenMain={onOpenMain} />)}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -235,7 +334,7 @@ function GroupPanel() {
 
 /** The selected music, sound effect or voiceover clip: level and fades. */
 function AudioClip() {
-  const { plan, selectedVo, checkpoint, updateVoiceover } = useEditor();
+  const { plan, selectedVo, checkpoint, updateVoiceover, time } = useEditor();
   const v = plan.voiceovers.find((x) => x.id === selectedVo);
   if (!v) return null;
   const kind = { voice: "Voiceover", music: "Music", sfx: "Sound effect" }[v.kind ?? "voice"];
@@ -247,12 +346,44 @@ function AudioClip() {
       <Row label="Mute">
         <Toggle value={Boolean(v.muted)} onChange={(muted) => updateVoiceover(v.id, { muted })} />
       </Row>
-      <Slider label="Volume" unit=" dB" min={-24} max={12} step={0.5} value={v.volumeDb}
+      <Slider label="Volume" unit=" dB" min={-24} max={12} step={0.5} value={valueAt(v.keys?.volumeDb, time - v.at, v.volumeDb)}
+        keyBtn={<KeyButton keys={v.keys} prop="volumeDb" t={time - v.at} still={v.volumeDb} onChange={(keys) => updateVoiceover(v.id, { keys })} />}
         onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { volumeDb: x }, false)} />
+      <EaseRow keys={v.keys} t={time - v.at} onChange={(keys) => updateVoiceover(v.id, { keys })} />
       <Slider label="Fade in" min={0} max={max} step={0.1} value={Math.min(v.fadeIn ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
         onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeIn: x }, false)} />
       <Slider label="Fade out" min={0} max={max} step={0.1} value={Math.min(v.fadeOut ?? 0, max)} display={(x) => (x ? `${x.toFixed(1)}s` : "off")}
         onStart={checkpoint} onChange={(x) => updateVoiceover(v.id, { fadeOut: x }, false)} />
+    </section>
+  );
+}
+
+/** The selected photo or video on an upper track: place, size, turn and opacity, each one animatable. */
+function BrollClip() {
+  const { plan, selectedBroll, checkpoint, updateBroll, time } = useEditor();
+  const b = plan.broll.find((x) => x.id === selectedBroll);
+  if (!b) return null;
+  const t = time - b.at;
+  const setKeys = (keys: Keys | undefined) => updateBroll(b.id, { keys });
+  const field = (prop: "x" | "y" | "scale" | "rotate" | "opacity", label: string, min: number, max: number, step: number, still: number, unit: string, show: (v: number) => number) => (
+    <Slider label={label} unit={unit} min={min} max={max} step={step} value={valueAt(b.keys?.[prop], t, still)} display={show}
+      keyBtn={<KeyButton keys={b.keys} prop={prop} t={t} still={still} onChange={setKeys} />}
+      onStart={checkpoint} onChange={(v) => updateBroll(b.id, { [prop]: v }, false)} />
+  );
+  const inside = t >= 0 && t <= b.duration;
+  return (
+    <section>
+      <h3>{b.file && isImage(b.file) ? "Photo" : "Video"} on track {b.track ?? 2}<span className="dim small">{b.duration.toFixed(1)}s</span></h3>
+      <div className="file-name" title={b.file}>{b.query ?? b.file?.split("/").pop()}</div>
+      {field("scale", "Size", 0.05, 3, 0.01, b.scale ?? 1, "%", (v) => Math.round(v * 100))}
+      {field("x", "Left / right", -1.5, 1.5, 0.005, b.x ?? 0, "%", (v) => Math.round(v * 100))}
+      {field("y", "Up / down", -1.5, 1.5, 0.005, b.y ?? 0, "%", (v) => Math.round(v * 100))}
+      {field("rotate", "Turn", -180, 180, 1, b.rotate ?? 0, "°", (v) => Math.round(v))}
+      {field("opacity", "Opacity", 0, 1, 0.01, b.opacity ?? 1, "%", (v) => Math.round(v * 100))}
+      <EaseRow keys={b.keys} t={t} onChange={setKeys} />
+      <p className="hint">{inside
+        ? "Click a diamond to animate that value: it gets a keyframe here. Move the playhead, change the value, and it moves between them."
+        : "Move the playhead over this clip to set keyframes on it."}</p>
     </section>
   );
 }
@@ -296,8 +427,8 @@ function MediaCard({ path, onOpenMain }: { path: string; onOpenMain: (path: stri
 
 const baseName = (p: string) => p.split("/").pop() ?? p;
 
-function Slider(p: {
-  label: string; min: number; max: number; step: number; value: number; unit?: string;
+export function Slider(p: {
+  label: string; min: number; max: number; step: number; value: number; unit?: string; keyBtn?: React.ReactNode;
   display?: (v: number) => string | number; onStart: () => void; onChange: (v: number) => void;
 }) {
   const shown = p.display ? p.display(p.value) : Number(p.value.toFixed(2));
@@ -305,7 +436,7 @@ function Slider(p: {
     <label className="slider">
       <span className="slider-head">
         <span>{p.label}</span>
-        <span className="value">{shown}{p.unit ?? ""}</span>
+        <span className="value">{p.keyBtn}{shown}{p.unit ?? ""}</span>
       </span>
       <input type="range" min={p.min} max={p.max} step={p.step} value={p.value}
         onPointerDown={p.onStart} onChange={(e) => p.onChange(Number(e.target.value))} />
@@ -323,11 +454,11 @@ function Segmented({ value, options, onChange }: { value: string; options: [stri
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return <button className={`toggle ${value ? "on" : ""}`} role="switch" aria-checked={value} onClick={() => onChange(!value)}><i /></button>;
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="row">
       <div>

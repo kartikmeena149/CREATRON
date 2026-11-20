@@ -5,7 +5,13 @@ import { create } from "zustand";
 import { wholeVideo } from "../src/autocut.ts";
 import { type Analysis, type Broll, type Caption, type CaptionLook, DEFAULT_CAPTIONS, type EditPlan, type Motion, type Segment, type Voiceover } from "../src/schema.ts";
 import { captionLook, captionsOf, clipLength, clipStarts, editDuration, outputDuration, toSourceTime } from "../src/timeline.ts";
-import { compactTracks, freeTrack, spanFree, userClip } from "../src/tracks.ts";
+import { compactTracks, freeTrack, isEffectsTrack, spanFree, userClip } from "../src/tracks.ts";
+import { effectDef, registerPresets } from "../motion/Effects.tsx";
+import type { EffectPreset } from "../src/sceneEffects.ts";
+import { nearestCut } from "./cuts.ts";
+import type { Storyboard, Verdict } from "../src/storyboard.ts";
+import { useFx } from "./fxState.ts";
+import { AUDIO_KEYS, BROLL_KEYS, SEGMENT_KEYS, routeToKeys, shiftKeys } from "../src/keyframes.ts";
 import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
 import { loadFont } from "../motion/Overlay.tsx";
 import type { ChatEvent, FullEditProgress, FullEditResult, Question, Step } from "../src/chatTypes.ts";
@@ -13,7 +19,7 @@ import type { ChatEvent, FullEditProgress, FullEditResult, Question, Step } from
 export type Thumbs = { url: string; cols: number; frameW: number; frameH: number; interval: number; count: number };
 /** A generated voiceover; voiceId and speed say how it was made (older takes don't have them). */
 export type VoiceTake = { file: string; duration: number; text: string; voice: string; at: number; language?: string; voiceId?: string; speed?: number };
-export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice" | "sfx";
+export type LeftView = "media" | "clip" | "text" | "captions" | "audio" | "voice" | "sfx" | "effects";
 export type Wave = { rate: number; peaks: number[] };
 export type Project = { path: string; analysis: Analysis; videoUrl: string; thumbs: Thumbs; wave: Wave };
 
@@ -44,7 +50,49 @@ export type AgentMessage = {
   job?: FullEditProgress & { at: number };
   /** The finished full edit this turn made. */
   result?: FullEditResult;
+  /** This turn's full edit drew a storyboard (round n): the card that opens it. */
+  board?: number;
 };
+
+/** The storyboard of a full edit: what Claude drew, the user's edited copy, and where it stands. */
+export type BoardState = {
+  video: string;
+  dir: string;
+  round: number;
+  draft: Storyboard;
+  status: "waiting" | "redrawing" | "approved" | "closed";
+  /** Made by the Storyboard creator from a script: no recording behind it (video is its job's key). */
+  plan?: boolean;
+  /** Every draft Claude made, oldest first, and the one shown: Undo and Redo step through them. */
+  versions?: Storyboard[];
+  at?: number;
+  /** While redrawing: the shots being redrawn (none = the whole storyboard). */
+  only?: string[];
+  /** After a redraw: what Claude changed, and what it couldn't make and why; `saidFor` = the shots it was about. */
+  said?: Verdict;
+  saidFor?: string[];
+  /** Why it stopped waiting, when it wasn't the user (Claude's usage limit, a failed run). */
+  error?: string;
+};
+
+/**
+ * The board state for a new draft from Claude: the newest of its drafts, shown. After a redraw of
+ * picked shots, every other shot is the user's own as they left it (drawings and notes still on it),
+ * and a picked shot Claude couldn't change keeps the user's drawing, to try another way.
+ */
+export function boardFromEvent(
+  e: { board: Storyboard; dir: string; round: number; video: string; drafts?: Storyboard[]; said?: Verdict }, plan?: boolean, prev?: BoardState | null,
+): BoardState {
+  const versions = e.drafts?.length ? e.drafts : [e.board];
+  const sent = prev?.status === "redrawing" && prev.dir === e.dir ? prev : undefined;
+  let draft = e.board;
+  if (sent?.only?.length) {
+    const mine = new Map(sent.draft.shots.map((s) => [s.id, s]));
+    const keepMine = (id: string) => !sent.only!.includes(id) || (e.said?.declined && !e.said.changed);
+    draft = { ...draft, shots: draft.shots.map((s) => (keepMine(s.id) && mine.has(s.id) ? mine.get(s.id)! : s)) };
+  }
+  return { video: e.video, dir: e.dir, round: e.round, draft, status: "waiting", plan, versions, at: versions.length - 1, said: e.said, saidFor: sent ? sent.only ?? [] : undefined };
+}
 
 type State = {
   project?: Project;
@@ -143,26 +191,38 @@ type State = {
   selectMotion(id: string | null): void;
   /** New text item at the playhead, 3 s long. */
   addMotion(template: Motion["template"], track?: number): void;
+  /**
+   * Adds an effect at `at` (default: the playhead) on an effects track with room, a new one when
+   * there's none. Transition effects (flash, dip, blinds) are centred on the nearest cut within a
+   * second and a half. Returns its id.
+   */
+  addEffect(effect: string, at?: number, opts?: { track?: number }): string;
+  /** Changes a transition laid over a cut (one undo step unless record is false). */
+  updateCutEffect(id: string, patch: Partial<EditPlan["cutEffects"][number]>, record?: boolean): void;
+  removeCutEffect(id: string): void;
   updateMotion(id: string, patch: Partial<Motion>, record?: boolean): void;
   deleteMotion(id: string): void;
   /** Imported Claude edits by scene.json path (loaded once, never changed: edits live in the plan). */
   scenes: Record<string, Scene>;
-  /** The scene clip whose layers the timeline shows instead of the tracks (by motion id). */
-  openScene: string | null;
-  /** The layer picked in the open scene (by layer id). */
-  selectedLayer: string | null;
   /** Families in Creatro's font library (fonts edits brought in), loaded into the page. */
   libraryFonts: string[];
   /** Loads the font library into the page (again after an import added fonts). */
   loadFontLibrary(): Promise<void>;
+  /** Effects taken out of imported Claude edits (work/effects). */
+  effectLibrary: EffectPreset[];
+  loadEffectLibrary(): Promise<void>;
   /** A Claude edit waiting in the import dialog (its folder or .html). */
   sceneImport: string | null;
-  /** The keyframe picked in the open scene: one property's (channel), or all of a layer's at time t (scene seconds). */
-  sceneKey: { layer: string; channel: string | null; t: number } | null;
+  /** The full edit's storyboard (the sheet shows it while boardOpen). */
+  board: BoardState | null;
+  boardOpen: boolean;
   /** Puts an imported edit on a Text track at `at` (default: the playhead), its sounds on SFX tracks, one undo step. Returns the clip's id. */
   addScene(file: string, scene: Scene, at?: number, opts?: { withoutVoice?: boolean }): string;
   /** Changes one layer of a scene clip: `fn` gets its current changes and returns the new ones. */
   editLayer(motionId: string, layerId: string, fn: (e: LayerEdit) => LayerEdit, record?: boolean): void;
+  /** A clip inside an imported Claude edit (a shot, title, graphic): its scene clip and its id. */
+  selectedClip: { scene: string; clip: string } | null;
+  selectClip(sel: { scene: string; clip: string } | null): void;
   /** Selected voiceover clip on A2 (by id). */
   selectedVo: string | null;
   selectVo(id: string | null): void;
@@ -184,6 +244,7 @@ const placeholder: EditPlan = {
   version: 1,
   segments: [{ start: 0, end: 1, speed: 1, zoom: 1, volume: 1 }],
   aspect: "source",
+  cutEffects: [],
   transform: { scale: 1, x: 0, y: 0, rotate: 0 },
   captions: { ...DEFAULT_CAPTIONS },
   audio: { denoise: false, clarity: 0, normalize: true, volumeDb: 0, duckDb: -14 },
@@ -222,7 +283,7 @@ export const useEditor = create<State>((set, get) => ({
   pickedIds: [],
   setSelection: (segments, ids) => {
     const s = get();
-    if (segments.length + ids.length === 0) return set({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, selectedCue: null });
+    if (segments.length + ids.length === 0) return set({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedClip: null, selectedVo: null, selectedCue: null });
     if (segments.length + ids.length === 1) {
       set({ pickedIds: [] });
       if (segments.length) return s.select(segments[0]);
@@ -231,7 +292,7 @@ export const useEditor = create<State>((set, get) => ({
       if (s.plan.motion.some((m) => m.id === id)) return s.selectMotion(id);
       return s.selectVo(id);
     }
-    set({ picked: [...segments].sort((a, b) => a - b), pickedIds: ids, selected: null, selectedBroll: null, selectedMotion: null, selectedVo: null, selectedCue: null });
+    set({ picked: [...segments].sort((a, b) => a - b), pickedIds: ids, selected: null, selectedBroll: null, selectedMotion: null, selectedClip: null, selectedVo: null, selectedCue: null });
   },
   toggleInSelection: (ref) => {
     const { segments, ids } = selectionOf(get());
@@ -250,7 +311,7 @@ export const useEditor = create<State>((set, get) => ({
       motion: s.plan.motion.filter((m) => !gone.has(m.id)),
       voiceovers: s.plan.voiceovers.filter((v) => !gone.has(v.id)),
     });
-    set((st) => ({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedVo: null, time: Math.min(st.time, editDuration(st.plan)) }));
+    set((st) => ({ selected: null, picked: [], pickedIds: [], selectedBroll: null, selectedMotion: null, selectedClip: null, selectedVo: null, time: Math.min(st.time, editDuration(st.plan)) }));
   },
   time: 0,
   playing: false,
@@ -270,29 +331,30 @@ export const useEditor = create<State>((set, get) => ({
     set((s) => {
       const prev = s.past.at(-1);
       if (!prev) return s;
-      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
+      return { plan: prev, past: s.past.slice(0, -1), future: [s.plan, ...s.future], selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null, selectedClip: null };
     }),
   redo: () =>
     set((s) => {
       const next = s.future[0];
       if (!next) return s;
-      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
+      return { plan: next, past: [...s.past, s.plan], future: s.future.slice(1), selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null, selectedClip: null };
     }),
   selectedPart: "picture",
   select: (selected, part = "picture") =>
-    set(selected === null ? { selected, picked: [], pickedIds: [] } : { selected, selectedPart: part, picked: [selected], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
+    set(selected === null ? { selected, picked: [], pickedIds: [] } : { selected, selectedPart: part, picked: [selected], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null, selectedClip: null }),
   togglePick: (i) =>
     set((s) => {
       const picked = s.picked.includes(i) ? s.picked.filter((n) => n !== i) : [...s.picked, i].sort((a, b) => a - b);
-      return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null };
+      return { picked, selected: picked.length ? (picked.includes(i) ? i : picked.at(-1)!) : null, selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null, selectedClip: null };
     }),
   seek: (t) => set((s) => ({ time: Math.max(0, Math.min(t, editDuration(s.plan))) })),
   setPlaying: (playing) => set({ playing }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(2, Math.min(400, pxPerSec)) }),
 
   updateSegment: (i, patch, record = true) => {
-    const { plan } = get();
-    const segments = plan.segments.map((s, n) => (n === i ? { ...s, ...patch } : s));
+    const { plan, time } = get();
+    const at = clipStarts(plan)[i] ?? 0;
+    const segments = plan.segments.map((s, n) => (n === i ? { ...s, ...routeToKeys(s, patch, SEGMENT_KEYS, time - at, clipLength(s)) } : s));
     (record ? get().commit : get().live)({ ...plan, segments });
   },
 
@@ -305,8 +367,10 @@ export const useEditor = create<State>((set, get) => ({
     const at = s.start + (time - offset) * s.speed;
     if (at - s.start < 0.1 || s.end - at < 0.1) return;
     const segments = [...plan.segments];
-    const { gap: _, ...rest } = s;
-    segments.splice(index, 1, { ...s, end: at }, { ...rest, start: at });
+    // The second half starts with no gap and no transition (those belong before the first half);
+    // its keyframes move with the picture.
+    const { gap: _, transition: __, ...rest } = s;
+    segments.splice(index, 1, { ...s, end: at }, { ...rest, start: at, keys: shiftKeys(s.keys, -(time - offset)) });
     get().commit({ ...plan, segments });
     set({ selected: index + 1, picked: [index + 1] });
   },
@@ -339,7 +403,7 @@ export const useEditor = create<State>((set, get) => ({
   voiceDraft: { text: "", speed: 1.067, voiceId: "kartik", language: "english" },
   library: [],
   addToLibrary: (path) => set((s) => (s.library.includes(path) ? s : { library: [...s.library, path] })),
-  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], pickedIds: [], selectedVo: null, selectedBroll: null, selectedMotion: null }),
+  selectCue: (selectedCue) => set(selectedCue === null ? { selectedCue } : { selectedCue, selected: null, picked: [], pickedIds: [], selectedVo: null, selectedBroll: null, selectedMotion: null, selectedClip: null }),
 
   setCaptionStyle: (patch, record = true) => {
     const { plan } = get();
@@ -416,10 +480,10 @@ export const useEditor = create<State>((set, get) => ({
 
   selectedBroll: null,
   selectBroll: (selectedBroll) =>
-    set(selectedBroll === null ? { selectedBroll, pickedIds: [] } : { selectedBroll, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedMotion: null }),
+    set(selectedBroll === null ? { selectedBroll, pickedIds: [] } : { selectedBroll, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedMotion: null, selectedClip: null }),
   updateBroll: (id, patch, record = true) => {
-    const { plan } = get();
-    const broll = plan.broll.map((b) => (b.id === id ? { ...b, ...patch } : b));
+    const { plan, time } = get();
+    const broll = plan.broll.map((b) => (b.id === id ? { ...b, ...routeToKeys(b, patch, BROLL_KEYS, time - b.at, b.duration) } : b));
     (record ? get().commit : get().live)({ ...plan, broll });
   },
   addBroll: (b) => {
@@ -448,9 +512,47 @@ export const useEditor = create<State>((set, get) => ({
   addMarker: (m) => set((s) => ({ markers: [...s.markers, { ...m, n: Math.max(0, ...s.markers.map((x) => x.n)) + 1 }] })),
   removeMarker: (n) => set((s) => ({ markers: s.markers.filter((m) => m.n !== n) })),
 
-  selectedMotion: null,
+  selectedMotion: null, selectedClip: null,
   selectMotion: (selectedMotion) =>
-    set(selectedMotion === null ? { selectedMotion, selectedLayer: null, pickedIds: [] } : { selectedMotion, selectedLayer: null, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null }),
+    set(selectedMotion === null ? { selectedMotion, pickedIds: [] } : { selectedMotion, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedClip: null }),
+  addEffect: (effect, at0, opts) => {
+    const { plan, time } = get();
+    const def = effectDef(effect);
+    if (!def) return "";
+    const duration = def.duration;
+    let at = Math.max(0, at0 ?? time);
+    // A transition goes on the nearest cut (within a second and a half), as a mark on that cut:
+    // no clip, no track. One cut holds one of them; a new one replaces it.
+    if (def.category === "transition") {
+      const near = nearestCut(plan, get().scenes, at);
+      const cut = near !== undefined && Math.abs(near - at) <= 1.5 ? near : at;
+      const id = `c${Math.random().toString(36).slice(2, 10)}`;
+      const others = (plan.cutEffects ?? []).filter((c) => Math.abs(c.at - cut) > 0.02);
+      get().commit({ ...plan, cutEffects: [...others, { id, effect, at: Math.round(cut * 1000) / 1000, duration, ...(def.color ? { color: def.color } : {}), intensity: 1 }] });
+      useFx.setState({ cutFx: id, cut: null, tab: "transitions" });
+      set({ selectedMotion: null, selectedClip: null, leftView: "effects" });
+      return id;
+    }
+    // An effects track with room there (one that holds only effects), else a new one on top.
+    const fxTracks = [...new Set(plan.motion.map((m) => m.track ?? 1))].filter((t) => isEffectsTrack(plan, t)).sort((a, b) => a - b);
+    const free = (t: number) => plan.motion.filter((m) => (m.track ?? 1) === t).every((m) => at + duration <= m.at + 1e-3 || at >= m.at + m.duration - 1e-3);
+    const track = opts?.track !== undefined && isEffectsTrack(plan, opts.track) && free(opts.track) ? opts.track
+      : fxTracks.find(free) ?? Math.max(0, ...plan.motion.map((m) => m.track ?? 1)) + 1;
+    const id = `m${Math.random().toString(36).slice(2, 10)}`;
+    const item: Motion = { id, track, template: "effect", effect, props: { intensity: 1 }, at, duration, color: def.color ?? "#000000", text: def.name, subtext: "" };
+    get().commit({ ...plan, motion: [...plan.motion, item] });
+    set({ selectedMotion: id, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedClip: null, leftView: "effects" });
+    return id;
+  },
+  updateCutEffect: (id, patch, record = true) => {
+    const { plan } = get();
+    (record ? get().commit : get().live)({ ...plan, cutEffects: (plan.cutEffects ?? []).map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  },
+  removeCutEffect: (id) => {
+    const { plan } = get();
+    get().commit({ ...plan, cutEffects: (plan.cutEffects ?? []).filter((c) => c.id !== id) });
+    useFx.setState({ cutFx: null });
+  },
   addMotion: (template, track) => {
     const { plan, time } = get();
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
@@ -473,23 +575,28 @@ export const useEditor = create<State>((set, get) => ({
     (record ? get().commit : get().live)({ ...plan, motion, voiceovers });
   },
   deleteMotion: (id) => {
-    const { plan, openScene } = get();
+    const { plan, selectedClip } = get();
     const gone = plan.motion.find((m) => m.id === id)?.template === "scene";
     get().commit({ ...plan, motion: plan.motion.filter((m) => m.id !== id), voiceovers: gone ? plan.voiceovers.filter((v) => !v.id.startsWith(`${id}-a`)) : plan.voiceovers });
-    set({ selectedMotion: null, ...(openScene === id ? { openScene: null, selectedLayer: null } : {}) });
+    set({ selectedMotion: null, ...(selectedClip?.scene === id ? { selectedClip: null } : {}) });
   },
 
   scenes: {},
-  openScene: null,
-  selectedLayer: null,
   sceneImport: null,
+  board: null,
+  boardOpen: false,
   libraryFonts: [],
+  effectLibrary: [],
+  loadEffectLibrary: async () => {
+    const list = await window.creatron.effectLibrary();
+    registerPresets(list);
+    set({ effectLibrary: list });
+  },
   loadFontLibrary: async () => {
     const list = await window.creatron.fontLibrary();
     await Promise.all(list.map(loadFont));
     set({ libraryFonts: [...new Set(list.map((f) => f.family))].sort() });
   },
-  sceneKey: null,
   addScene: (file, scene, at, opts) => {
     const { plan, time } = get();
     const id = `m${Math.random().toString(36).slice(2, 10)}`;
@@ -513,9 +620,13 @@ export const useEditor = create<State>((set, get) => ({
     });
     set((s) => ({ scenes: { ...s.scenes, [file]: scene } }));
     get().commit(next);
+    // Its flashes, wipes and looks join the effects library (the ones the library doesn't have).
+    void window.creatron.extractEffects(file).then(() => get().loadEffectLibrary());
     set({ selectedMotion: id, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null });
     return id;
   },
+  selectClip: (selectedClip) =>
+    set(selectedClip === null ? { selectedClip } : { selectedClip, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedVo: null, selectedBroll: null, selectedMotion: null }),
   editLayer: (motionId, layerId, fn, record = true) => {
     const { plan } = get();
     const motion = plan.motion.map((m) => {
@@ -530,7 +641,7 @@ export const useEditor = create<State>((set, get) => ({
   },
 
   selectedVo: null,
-  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo, pickedIds: [] } : { selectedVo, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedBroll: null, selectedMotion: null }),
+  selectVo: (selectedVo) => set(selectedVo === null ? { selectedVo, pickedIds: [] } : { selectedVo, selected: null, picked: [], pickedIds: [], selectedCue: null, selectedBroll: null, selectedMotion: null, selectedClip: null }),
 
   addVoiceover: (v) => {
     const { plan, time } = get();
@@ -552,8 +663,8 @@ export const useEditor = create<State>((set, get) => ({
   },
 
   updateVoiceover: (id, patch, record = true) => {
-    const { plan } = get();
-    const voiceovers = plan.voiceovers.map((v) => (v.id === id ? { ...v, ...patch } : v));
+    const { plan, time } = get();
+    const voiceovers = plan.voiceovers.map((v) => (v.id === id ? { ...v, ...routeToKeys(v, patch, AUDIO_KEYS, time - v.at, v.duration) } : v));
     (record ? get().commit : get().live)({ ...plan, voiceovers });
   },
 
@@ -589,6 +700,10 @@ export const useEditor = create<State>((set, get) => ({
     } else if (e.type === "result") {
       m.result = e.result;
       m.job = undefined;
+      if (s.board?.status === "waiting" || s.board?.status === "redrawing") set({ board: { ...s.board, status: "closed" } });
+    } else if (e.type === "storyboard") {
+      m.board = e.round;
+      set({ board: boardFromEvent(e, false, s.board), boardOpen: true });
     } else if (e.type === "plan") {
       // The first change of a turn is one undo step; after that the timeline follows Claude live.
       if (!m.before) (m.before = s.plan), get().checkpoint();
@@ -596,7 +711,10 @@ export const useEditor = create<State>((set, get) => ({
     } else if (e.type === "done") {
       if (e.plan) get().live(e.plan);
       Object.assign(m, { status: e.question ? "waiting" : "done", question: e.question, ended: Date.now(), after: m.before ? get().plan : undefined });
-    } else if (e.type === "error") Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
+    } else if (e.type === "error") {
+      Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
+      if (s.board && s.board.status !== "approved") set({ board: { ...s.board, status: "closed", error: e.error } });
+    }
     msgs[i] = m;
     set({ messages: msgs, busy: e.type === "done" || e.type === "error" ? false : s.busy });
   },

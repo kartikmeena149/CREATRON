@@ -1,12 +1,20 @@
 import "./env.ts";
-import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
-import { existsSync, statSync } from "node:fs";
+import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "electron";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { type StoryboardReview, autoEditDir, cancelAutoEdit, planDir, planStoryboard, readPlanInfo, renamePlan, reopenPlan } from "../src/autoedit.ts";
+import { STYLES, type Style, Storyboard, scenesOf } from "../src/storyboard.ts";
+import { withDrawings } from "../src/storyboardFiles.ts";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
 import { isDocument, readDocument } from "../src/documents.ts";
 import { type ChatEvent, chat, stop as stopChat } from "../src/chat.ts";
 import { analyze } from "../src/analyze.ts";
 import { runFullEdit, stopFullEdit } from "../src/fulledit.ts";
+// Imported here, not lazily: a lazy import would split src/tools.ts into a chunk that runs before
+// env.ts sets CREATRON_ROOT, and the app would look for its folders in the wrong place.
+import { askClaude } from "../src/claudecli.ts";
+import { drawPrompt, parseDrawing } from "../src/sketchLibrary.ts";
+import { findPicture } from "../src/pictures.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
 import { type AgentId, INSTALL_COMMAND, agentState, cancel, enabled, install, openRouterKey, setEnabled, setOpenRouterKey, signIn, signOut } from "../src/agents.ts";
@@ -18,7 +26,8 @@ import type { ExportOptions } from "../src/exportOptions.ts";
 import { snapEdges } from "../src/snap.ts";
 import { fetchBroll, searchStock, stockAvailable } from "../src/stock.ts";
 import { type Sfx, downloadSfx, searchSfx } from "../src/sfx.ts";
-import { run } from "../src/tools.ts";
+import { ROOT, run } from "../src/tools.ts";
+import { dictate } from "../src/dictation.ts";
 import { personCutout } from "../src/person.ts";
 import { downloadAudio, downloadLink, linkInfo, searchWeb, ytdlpAvailable } from "../src/webvideo.ts";
 import {
@@ -36,6 +45,7 @@ import {
 import { importScene, loadScene, sceneBase, sceneEntry } from "./sceneImport.ts";
 import { remotionProject } from "./remotionBundle.ts";
 import { libraryFonts } from "../src/fontLibrary.ts";
+import { addEffectsFrom, libraryEffects } from "../src/effectLibrary.ts";
 import type { Detail } from "../src/scene.ts";
 import { fileThumbnails, handleMedia, mediaUrl, registerMediaScheme, thumbnails, waveform } from "./media.ts";
 
@@ -168,7 +178,7 @@ ipcMain.handle(
 /** The live chat with Claude (src/chat.ts): events stream to the window as "chat-event". */
 ipcMain.handle(
   "chat-send",
-  safe(async (path: string, message: string, current: EditPlan, model: string, focus?: Focus, answer?: boolean) => {
+  safe(async (path: string, message: string, current: EditPlan, model: string, focus?: Focus, answer?: boolean, library?: string[]) => {
     const analysis = await analyze(path, () => {});
     if (focus?.attachments?.length) focus.attachments = await Promise.all(focus.attachments.map((a) => describeAttachment(a.path)));
     let handoff: FullEditAsk | undefined;
@@ -182,7 +192,13 @@ ipcMain.handle(
     await chat(analysis, message, current, model, emit, { focus, answer });
     if (!handoff) return;
     try {
-      const result = await runFullEdit(path, handoff, model.replace(/^claude-code\//, ""), emit);
+      // Storyboard first: shown in the window, the edit waits for the answer (storyboard-answer below).
+      const review: StoryboardReview = (board, dir, round, drafts, said) =>
+        new Promise((resolve) => {
+          boardAnswers.set(path, { resolve, dir });
+          emit({ type: "storyboard", board, dir, round, video: path, drafts, said });
+        });
+      const result = await runFullEdit(path, handoff, model.replace(/^claude-code\//, ""), emit, { clips: library, review });
       emit({ type: "result", result: { ...result, url: `${mediaUrl(result.final)}&v=${Date.now()}` } });
       emit({ type: "text", delta: plainNotes(result.notes) || "Done." });
       emit({ type: "done", changed: false });
@@ -193,7 +209,271 @@ ipcMain.handle(
     }
   }),
 );
-ipcMain.handle("chat-stop", (_e, path: string) => (stopFullEdit(path), stopChat(path)));
+/**
+ * "Make the video" on a storyboard approved in the Storyboard Creator: the recording (the user's own
+ * footage, or the script spoken in a voice) is open in the editor; the full edit builds it from that
+ * storyboard and streams into its chat, like any full edit.
+ */
+ipcMain.handle(
+  "plan-build",
+  safe(async (path: string, plan: string, model: string, library?: string[]) => {
+    const emit = (event: ChatEvent) => send("chat-event", { path, event });
+    emit({ type: "start" });
+    const clips = [...(library ?? []), ...planMedia(plan).map((m) => m.path)].filter((c, i, all) => c !== path && all.indexOf(c) === i);
+    try {
+      const result = await runFullEdit(path, { plan, brief: "Make the video from the approved storyboard." }, model.replace(/^claude-code\//, ""), emit, { clips });
+      emit({ type: "result", result: { ...result, url: `${mediaUrl(result.final)}&v=${Date.now()}` } });
+      emit({ type: "text", delta: plainNotes(result.notes) || "Done." });
+      emit({ type: "done", changed: false });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      if (!/^Stopped/.test(error)) emit({ type: "error", error: `The video didn't finish: ${error}` });
+    }
+  }),
+);
+
+/**
+ * A picture the user added to a storyboard shot (Add → Your picture): copied into the storyboard's
+ * folder (assets/clips/), so the project keeps it and stays local. Returns its path there.
+ */
+ipcMain.handle(
+  "board-add-file",
+  safe(async (dir: string, file: string) => {
+    if (!existsSync(join(dir, "notes"))) throw new Error("That storyboard's folder isn't there any more.");
+    const into = join(dir, "assets", "clips");
+    mkdirSync(into, { recursive: true });
+    const base = file.split("/").pop()!.replace(/[^\w.-]+/g, "-") || "picture";
+    let name = base;
+    for (let n = 2; existsSync(join(into, name)); n++) name = base.replace(/(\.[^.]+)?$/, `-${n}$1`);
+    copyFileSync(file, join(into, name));
+    return `assets/clips/${name}`;
+  }),
+);
+
+/**
+ * "Something else" added to a storyboard shot: Claude draws it as a pencil sketch (strokes in a
+ * 300 x 300 box), which the drawing view then draws on, stroke by stroke, where the user put it.
+ */
+ipcMain.handle(
+  "draw-thing",
+  safe(async (name: string, model?: string) => {
+    const answer = await askClaude((model || "sonnet").replace(/^claude-code\//, ""), drawPrompt(name.trim().slice(0, 80)));
+    return parseDrawing(answer);
+  }),
+);
+
+/**
+ * A thing the user named on a storyboard shot, drawn from a real picture of it: Claude searches the web,
+ * each photo found is downloaded into the storyboard's folder and checked, and its subject cut out
+ * (src/pictures.ts). Each step is told to the app as it happens ("picture-progress").
+ */
+ipcMain.handle("find-picture", (e, dir: string, name: string) =>
+  safe(async () => {
+    if (!existsSync(join(dir, "notes"))) throw new Error("That storyboard's folder isn't there any more.");
+    return findPicture(dir, name, (step) => {
+      if (!e.sender.isDestroyed()) e.sender.send("picture-progress", { name, step });
+    });
+  })(e),
+);
+
+/** The files a storyboard from a script came with (its assets/clips/): pictures, footage and sound. */
+function planMedia(plan: string): { path: string; name: string }[] {
+  const dir = join(plan, "assets", "clips");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => ({ path: join(dir, f), name: f }));
+}
+/** Its footage and recordings (with sound), the ones a video can be built over. */
+ipcMain.handle(
+  "plan-media",
+  safe(async (plan: string) => {
+    const out: { path: string; name: string; kind: "video" | "audio"; seconds: number }[] = [];
+    for (const m of planMedia(plan)) {
+      if (!/\.(mov|mp4|m4v|mkv|webm|avi|mp3|wav|m4a|aac|aiff?|flac|ogg)$/i.test(m.name)) continue;
+      const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", m.path]).catch(() => ({ stdout: "{}" }));
+      const info = JSON.parse(stdout || "{}");
+      const types = (info.streams ?? []).map((s: { codec_type: string }) => s.codec_type);
+      if (!types.includes("audio")) continue; // a silent clip is B-roll, not a recording to build over
+      out.push({ path: m.path, name: m.name, kind: types.includes("video") ? "video" : "audio", seconds: Number(info.format?.duration) || 0 });
+    }
+    return out;
+  }),
+);
+
+ipcMain.handle("chat-stop", (_e, path: string) => (boardAnswers.delete(path), stopFullEdit(path), stopChat(path)));
+
+/** Storyboards waiting for the user, by video: their answer lets the full edit go on (or redraw). */
+const boardAnswers = new Map<string, { resolve: (answer: Awaited<ReturnType<StoryboardReview>>) => void; dir: string }>();
+ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string>; only?: string[] }) => {
+  const waiting = boardAnswers.get(video);
+  if (!waiting) return false;
+  const parsed = Storyboard.safeParse(answer.board);
+  if (!parsed.success) return false;
+  boardAnswers.delete(video);
+  const board = withDrawings(parsed.data, waiting.dir, answer.drawings ?? {});
+  const only = Array.isArray(answer.only) ? answer.only.filter((id): id is string => typeof id === "string") : undefined;
+  waiting.resolve(answer.approve ? { approve: true, board } : { approve: false, board, changes: answer.changes ?? "", only: only?.length ? only : undefined });
+  return true;
+});
+
+/**
+ * The Storyboard creator: a storyboard from a script (and the user's assets) before anything is
+ * filmed. Events stream to the window as "plan-event"; the board waits for its answer like a full
+ * edit's (storyboard-answer above), keyed "plan:<folder>".
+ */
+/** The storyboard being made or shown from the creator: its key, and whether Claude is working or it waits for the user. */
+let planning: { key: string; phase: "drafting" | "waiting"; close?: () => void; quiet?: boolean } | undefined;
+
+function runPlan(dir: string, job: (review: StoryboardReview, emit: (e: unknown) => void) => Promise<{ dir: string }>) {
+  const key = `plan:${dir}`;
+  if (planning?.phase === "drafting") throw new Error("Claude is still working on a storyboard: wait for it, or stop it first.");
+  // One waiting for an answer is simply put away (it stays saved), and goes quiet: the same
+  // storyboard may be opened again right now, and its old "stopped" mustn't reach the new one.
+  if (planning) (planning.quiet = true), planning.close?.();
+  const me: NonNullable<typeof planning> = { key, phase: "drafting" };
+  planning = me;
+  const emit = (event: unknown) => !me.quiet && send("plan-event", { key, event });
+  const review: StoryboardReview = (board, dir, round, drafts, said) =>
+    new Promise((resolve, reject) => {
+      me.phase = "waiting";
+      me.close = () => reject(new Error("Stopped."));
+      boardAnswers.set(key, { resolve: (a) => ((me.phase = "drafting"), (me.close = undefined), resolve(a)), dir });
+      emit({ type: "storyboard", board, dir, round, video: key, drafts, said });
+    });
+  void job(review, emit)
+    .then(({ dir }) => emit({ type: "done", dir }))
+    .catch((e) => emit({ type: "error", error: e instanceof Error ? e.message : String(e) }))
+    .finally(() => {
+      boardAnswers.delete(key);
+      if (planning === me) planning = undefined;
+    });
+  return { key, dir };
+}
+const planModel = (m: string) => (m.startsWith("claude-code/") ? m.slice("claude-code/".length) : "sonnet");
+
+ipcMain.handle("plan-start", safe(async (req: { title?: string; script: string; direction?: string; format: Storyboard["format"]; style?: Style; assets: string[]; model: string }) => {
+  if (!req.script.trim()) throw new Error("Write or paste the script first.");
+  const scenes = scenesOf(req.script).length;
+  if (scenes < 3) throw new Error(`The script has ${scenes} scene${scenes === 1 ? "" : "s"}: put each scene on its own line (at least 3).`);
+  const dir = planDir(req.title || req.script.split(/\s+/).slice(0, 6).join(" "));
+  const style = (STYLES as readonly string[]).includes(req.style ?? "") ? req.style : "auto";
+  return runPlan(dir, (review, emit) => planStoryboard({ ...req, style, model: planModel(req.model), review }, emit, dir));
+}));
+/** A saved storyboard opened again: drawing, Redraw and Approve, with Claude where it left off. */
+ipcMain.handle("plan-open", safe(async (dir: string, model: string) => {
+  if (!dir.startsWith(join(ROOT, "work", "storyboards"))) throw new Error("That isn't a storyboard from the Storyboard creator.");
+  return runPlan(dir, (review, emit) => reopenPlan(dir, planModel(readPlanInfo(dir).model ?? model), review, emit));
+}));
+ipcMain.handle("plan-stop", () => {
+  if (!planning) return;
+  boardAnswers.delete(planning.key);
+  if (planning.phase === "waiting") planning.close?.();
+  else cancelAutoEdit();
+});
+/** Only folders the creator made: work/storyboards/<one folder>. */
+const isPlanDir = (dir: string) => {
+  const root = join(ROOT, "work", "storyboards");
+  const rel = relative(root, resolve(dir));
+  return Boolean(rel) && !rel.startsWith("..") && !rel.includes("/") && existsSync(join(root, rel, "notes"));
+};
+ipcMain.handle("plan-rename", safe(async (dir: string, title: string) => {
+  if (!isPlanDir(dir)) throw new Error("That isn't a storyboard from the Storyboard Creator.");
+  if (!title.trim()) throw new Error("Give it a name.");
+  renamePlan(dir, title);
+}));
+/** A storyboard to the Trash (it can be put back from there). One that's open is put away first. */
+ipcMain.handle("plan-delete", safe(async (dir: string) => {
+  if (!isPlanDir(dir)) throw new Error("That isn't a storyboard from the Storyboard Creator.");
+  if (planning?.key === `plan:${dir}`) {
+    if (planning.phase === "drafting") throw new Error("Claude is working on this storyboard: stop it first.");
+    planning.quiet = true;
+    planning.close?.();
+    boardAnswers.delete(planning.key);
+  }
+  await shell.trashItem(dir);
+}));
+
+/** Every storyboard made from a script, newest first: what the creator's list shows. */
+ipcMain.handle("plans-list", () => {
+  const root = join(ROOT, "work", "storyboards");
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .map((name) => join(root, name))
+    .filter((dir) => existsSync(join(dir, "notes", "storyboard.json")))
+    .flatMap((dir) => {
+      const parsed = Storyboard.safeParse(JSON.parse(readFileSync(join(dir, "notes", "storyboard.json"), "utf8")));
+      if (!parsed.success) return [];
+      const board = parsed.data;
+      const info = readPlanInfo(dir);
+      const pdf = existsSync(join(dir, "Export")) ? readdirSync(join(dir, "Export")).find((f) => f.endsWith(".pdf")) : undefined;
+      const seconds = board.shots.reduce((a, x) => Math.max(a, x.to), 0);
+      return [{
+        dir, title: info.title || board.title, format: board.format, shots: board.shots.length, seconds,
+        updated: statSync(join(dir, "notes", "storyboard.json")).mtimeMs, approved: Boolean(info.approved),
+        pdf: pdf ? join(dir, "Export", pdf) : undefined, open: planning?.key === `plan:${dir}`, board,
+      }];
+    })
+    .sort((a, b) => b.updated - a.updated);
+});
+/** A script file (Word, PDF, text…) as plain text, for the Storyboard creator. */
+ipcMain.handle("read-script", safe(async (path: string) => (isDocument(path) ? readDocument(path) : readFileSync(path, "utf8"))));
+
+/** Whether a storyboard is waiting for this video's answer (after a reload of the window, say). */
+ipcMain.handle("storyboard-waiting", (_e, video: string) => boardAnswers.has(video));
+
+/**
+ * The mic for dictation: asks macOS once (the system's own prompt). "denied" means it was turned
+ * off in System Settings, which only the user can turn back on: the app says where.
+ */
+ipcMain.handle("mic-access", async () => {
+  if (process.platform !== "darwin") return "granted";
+  const now = systemPreferences.getMediaAccessStatus("microphone");
+  if (now === "granted" || now === "denied" || now === "restricted") return now;
+  return (await systemPreferences.askForMediaAccess("microphone")) ? "granted" : "denied";
+});
+ipcMain.handle("open-mic-settings", () => shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"));
+/** What was said into the mic (a 16 kHz mono WAV), as text: transcribed on this Mac. */
+ipcMain.handle("dictate", safe(async (wav: Uint8Array) => dictate(wav)));
+
+/** One frame of a video (or a picture) as a small JPEG data URL, for the storyboard's sketches. Null without a picture. */
+const frameCache = new Map<string, string | null>();
+let frameCount = 0;
+ipcMain.handle("frame-at", async (_e, file: string, seconds: number, width = 360) => {
+  const key = `${file}|${seconds.toFixed(2)}|${width}`;
+  if (frameCache.has(key)) return frameCache.get(key);
+  // Its own file: many frames load at once, and a shared name let them delete each other's.
+  const out = join(app.getPath("temp"), `creatro-frame-${process.pid}-${++frameCount}.jpg`);
+  let url: string | null = null;
+  try {
+    const still = /\.(png|jpe?g|webp|gif|avif)$/i.test(file);
+    await run("ffmpeg", ["-y", "-v", "error", ...(still ? [] : ["-ss", Math.max(0, seconds).toFixed(2)]), "-i", file, "-frames:v", "1", "-vf", `scale=${width}:-2`, "-q:v", "4", out]);
+    url = `data:image/jpeg;base64,${readFileSync(out).toString("base64")}`;
+    rmSync(out, { force: true });
+  } catch {
+    url = null; // audio only, or no such moment: the sketch draws without a picture
+  }
+  frameCache.set(key, url);
+  return url;
+});
+
+/** The storyboard as a PDF in the project's Export/ folder: the page HTML is made by the app. */
+ipcMain.handle("storyboard-pdf", safe(async (dir: string, html: string, name: string) => {
+  const page = new BrowserWindow({ show: false, width: 1400, height: 990, webPreferences: { offscreen: true } });
+  // From a file: with its sketches the page is several MB, past what a data: URL may hold.
+  const file = join(app.getPath("temp"), `creatro-storyboard-${process.pid}-${Date.now()}.html`);
+  writeFileSync(file, html);
+  try {
+    await page.loadFile(file);
+    await new Promise((r) => setTimeout(r, 400)); // fonts and images settle
+    const pdf = await page.webContents.printToPDF({ pageSize: "A4", landscape: true, printBackground: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+    const out = join(dir, "Export", `${name.replace(/[^\w .-]+/g, "").trim() || "Storyboard"} - Storyboard.pdf`);
+    mkdirSync(join(dir, "Export"), { recursive: true });
+    writeFileSync(out, pdf);
+    return out;
+  } finally {
+    page.destroy();
+    rmSync(file, { force: true });
+  }
+}));
 
 /** Claude's summary without markdown marks (**bold**, `code`, # headings, bullets). */
 const plainNotes = (s: string) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^#+\s*/gm, "").replace(/^\s*[-*] /gm, "• ").trim();
@@ -287,6 +567,9 @@ ipcMain.handle("import-scene", safe(async (path: string, detail: Detail) => impo
 ipcMain.handle("load-scene", safe(async (file: string) => loadScene(file)));
 ipcMain.handle("scene-base", safe(async (file: string) => sceneBase(file)));
 ipcMain.handle("font-library", () => libraryFonts().map((f) => ({ ...f, url: mediaUrl(f.file) })));
+ipcMain.handle("effect-library", () => libraryEffects());
+// A Claude edit's effects into the library (the ones it doesn't have yet).
+ipcMain.handle("extract-effects", safe(async (file: string) => addEffectsFrom(loadScene(file)).map((p) => p.name)));
 
 // The project's AI-written animations, compiled for the live preview.
 ipcMain.handle("custom-code", safe(async (path: string) => compileCustom(customDir(path))));
@@ -380,6 +663,8 @@ ipcMain.handle("pick-media", async (_e, kind: "video" | "any") => {
 });
 
 ipcMain.handle("reveal", (_e, path: string) => shell.showItemInFolder(path));
+/** What the AI has downloaded or made for this video so far (assets/ of its project), newest first. */
+ipcMain.handle("project-assets", (_e, video: string) => projectAssets(video));
 ipcMain.handle("open-file", (_e, path: string) => shell.openPath(path));
 ipcMain.handle("file-size", (_e, path: string) => (existsSync(path) ? statSync(path).size : 0));
 /** Where exports go until a folder is picked: the Mac's Movies folder ("videos" to Electron). */
@@ -399,6 +684,38 @@ function freeName(dir: string, name: string): string {
 
 // The frame strip for a video on an upper track (made once per file).
 ipcMain.handle("file-thumbs", safe(async (path: string) => fileThumbnails(path)));
+
+const ASSET_FILE = /\.(mp4|mov|m4v|webm|mkv|png|jpe?g|gif|webp|avif|svg|wav|mp3|m4a|aac|ogg|flac)$/i;
+
+/** Files under the AI project's assets/, one entry per file, with the folder it sits in. A file still
+ *  being written (empty, or changed in the last second) waits for the next look. */
+function projectAssets(video: string): { dir: string; files: { path: string; folder: string; at: number }[] } {
+  const dir = join(autoEditDir(video), "assets");
+  const files: { path: string; folder: string; at: number }[] = [];
+  const walk = (d: string) => {
+    let names: string[];
+    try {
+      names = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name.startsWith(".")) continue;
+      const path = join(d, name);
+      let st;
+      try {
+        st = statSync(path);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(path);
+      else if (ASSET_FILE.test(name) && st.size > 0 && Date.now() - st.mtimeMs > 1000)
+        files.push({ path, folder: relative(dir, d).split("/")[0] || "other", at: st.mtimeMs });
+    }
+  };
+  walk(dir);
+  return { dir, files: files.sort((a, b) => b.at - a.at) };
+}
 
 /** True for a file Creatro made itself (downloads, voiceovers, music in work/), never your own files. */
 const madeByCreatron = (path: string) => !relative(join(app.getAppPath(), "work"), resolve(path)).startsWith("..");

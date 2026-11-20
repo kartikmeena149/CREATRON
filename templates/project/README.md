@@ -4,12 +4,12 @@ An open Creatro project. Everything is on this Mac and stays editable: nothing i
 
 ```
 source/    the original recording, never changed
-assets/    broll/  audio/ (music, voiceover)  sfx/  cutouts/   one file each
+assets/    broll/  audio/ (music, voiceover)  sfx/  cutouts/  clips/ (your own)   one file each
 project/   the editable video
              timeline.json   cuts, captions, music, colours, sizes  (plain values)
              src/            the layers and looks (Remotion code)
 Export/    __NAME__.mp4  +  versions/  +  Thumbnails/__NAME__/
-notes/     transcript, brief and check frames (working files, safe to delete)
+notes/     storyboard.json (the approved plan), transcript, brief, check frames (working files)
 ```
 
 ## Re-export (one command)
@@ -48,4 +48,6 @@ Good to know
 - The video's length is the sum of the cuts. There is no length to keep in sync.
 - Captions follow their words: shorten or remove a cut and its captions move or disappear by themselves.
 - Looks and layers (backgrounds, B-roll cards, animations) are in `project/src/`. `Main.tsx` lists the layers back to front.
+- The storyboard you approved is `notes/storyboard.json`: every shot, its line, layout, camera move and sound.
+  Its PDF is in `Export/` when you made one. It is the plan, not the video: edits go in `timeline.json`.
 - Then run the render command again. Nothing else is needed.

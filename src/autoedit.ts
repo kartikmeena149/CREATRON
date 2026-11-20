@@ -9,13 +9,12 @@
 // Creatro prepares the folder (work/<video>/autoedit) from the project scaffold, adds the
 // transcript, an optional reference video's frames and a playbook, then runs Claude there.
 //
-// Fenced in: file tools only reach the folder (--restricted), and every command runs in Claude Code's
-// macOS sandbox, which can only write inside the folder, has no network and can't read .env or keys.
-// The one exception is Creatro's own tool belt (autoedit-tools.ts: render, stills), which Claude
-// can't edit and which only touches the folder; B-roll comes from the app itself (autoedit-broll.ts).
-// Anything else is refused (dontAsk), never asked.
+// Free: no sandbox and no permission checks. Claude has every tool, the internet, and the user's
+// skills and MCP servers, like Claude Code at a keyboard. Only .env and key files stay unreadable.
+// Its tool belt (autoedit-tools.ts) and the ffmpeg/ffprobe wrappers first on its PATH still send
+// tools through the wall, and validateProject still keeps the result an editable project.
 import { type ChildProcess, spawn } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, relative } from "node:path";
 import { ensureBrowser } from "@remotion/renderer";
@@ -23,11 +22,28 @@ import { analyze } from "./analyze.ts";
 import { startBroker } from "./autoedit-broll.ts";
 import { describe } from "./plan.ts";
 import { finalFile, projectName, projectPaths, scaffoldProject, validateProject } from "./project.ts";
+import { STYLE_INFO, type Style, type Storyboard, type Verdict, approvedPrompt, checkScenes, keepUnpicked, parseStoryboard, readVerdict, redrawPrompt, sayingTime, scenesOf, withoutArrowNotes } from "./storyboard.ts";
+import { saveDraft } from "./storyboardFiles.ts";
 import { chromeOutsideProtectedFolders } from "./remotion.ts";
 import { find, health, healthProblems, healthReport } from "./toolchain.ts";
 import { ROOT, round, run, workDir } from "./tools.ts";
 
-export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string };
+/**
+ * Shows the storyboard to the user and waits for their answer: approve (with their edits), or
+ * changes to redraw. Without one (the command line), the edit doesn't stop for a storyboard.
+ */
+/** The user's answer to a storyboard. A redraw's `only` = the shots they picked: nothing else changes. */
+export type StoryboardReview = (
+  board: Storyboard, dir: string, round: number, drafts: Storyboard[],
+  /** After a redraw: what Claude changed, and what it couldn't and why. */
+  said?: Verdict,
+) => Promise<{ approve: true; board: Storyboard } | { approve: false; board: Storyboard; changes: string; only?: string[] }>;
+/** clips: the user's own clips (the library), linked into assets/clips/ for Claude to use. */
+/**
+ * plan: a storyboard approved in the Storyboard Creator (its folder): the video is built from it,
+ * with no new storyboard, once the user has a recording (their footage, or the script spoken in a voice).
+ */
+export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string; clips?: string[]; review?: StoryboardReview; plan?: string };
 export type AutoEditMarker = { n: number; time: number; x: number; y: number };
 /** dir is the open project folder; project is the part to import into the timeline; final is the exported video. */
 export type AutoEditResult = { dir: string; project: string; final: string; session: string; notes: string; version: number };
@@ -42,15 +58,21 @@ export type AutoEditEvent =
 const STAGES: [string, number][] = [
   ["look", 0.05], ["cut", 0.06], ["plan", 0.06], ["broll", 0.13], ["build", 0.25], ["render", 0.12], ["check", 0.07], ["fix", 0.26],
 ];
+// The storyboard, before the edit: Claude looks and draws (the wait for the user isn't counted).
+const BOARD_STAGES: [string, number][] = [["board", 1]];
 // A fix: Claude changes things, renders, checks.
 const FIX_STAGES: [string, number][] = [["fix", 0.4], ["render", 0.45], ["check", 0.15]];
 
 const TOOLS = join(ROOT, "src", "autoedit-tools.ts");
+// How Claude names the tool belt in a command: its path, or the playbook's $T shortcut.
+const BELT = /(?:autoedit-tools\.ts|\$\{?T\}?)/;
 const HISTORY = join(ROOT, "work", "autoedit-history.json");
 const TIME_LIMIT = 75 * 60_000;
 
 let current: ChildProcess | undefined;
 let cancelled = false;
+/** Ends a wait for the user (the storyboard) when the edit is stopped. */
+let abortWait: ((e: Error) => void) | undefined;
 
 export const autoEditDir = (video: string) => join(workDir(video), "autoedit");
 /** The agent's latest session in this folder, written as soon as it starts (a failed edit can be continued). */
@@ -60,6 +82,105 @@ export const lastSessionFile = (dir: string) => join(projectPaths(dir).internal,
 export function cancelAutoEdit() {
   cancelled = true;
   current?.kill("SIGTERM");
+  abortWait?.(new Error("Stopped."));
+}
+
+/** Waits for the user, unless the edit is stopped first. */
+function waitForUser<T>(p: Promise<T>): Promise<T> {
+  return new Promise<T>((ok, fail) => {
+    abortWait = fail;
+    p.then(ok, fail);
+  }).finally(() => (abortWait = undefined));
+}
+
+export const storyboardFile = (dir: string) => join(projectPaths(dir).notes, "storyboard.json");
+
+/**
+ * A storyboard approved in the Storyboard Creator, brought into this edit's folder: the storyboard,
+ * the script and the user's direction, as the plan. Returns it (or throws when it can't be read).
+ */
+function fromPlan(dir: string, plan: string): Storyboard {
+  const from = projectPaths(plan).notes;
+  const text = existsSync(join(from, "storyboard.json")) ? readFileSync(join(from, "storyboard.json"), "utf8") : "";
+  const { board } = parseStoryboard(text);
+  if (!board) throw new Error("The approved storyboard can't be read any more (its folder moved or its file is broken).");
+  const notes = projectPaths(dir).notes;
+  writeFileSync(storyboardFile(dir), JSON.stringify(board, null, 1));
+  if (existsSync(join(from, "script.md"))) copyFileSync(join(from, "script.md"), join(notes, "script.md"));
+  if (existsSync(join(from, "brief.md"))) appendFileSync(join(notes, "brief.md"), `\n## From the Storyboard Creator\n\n${readFileSync(join(from, "brief.md"), "utf8").replace(/^# .*\n/, "")}`);
+  return board;
+}
+
+/** The storyboard's first turn for a recording: decide the edit from the footage and its transcript. */
+function fromRecording(dir: string): string {
+  return [
+    "Read notes/PLAYBOOK.md. This first turn is only the storyboard (section \"Storyboard first\"): call `stage board`, read the notes, look at a few frames, decide the whole edit and write notes/storyboard.json. The user's brief is in notes/brief.md.",
+    existsSync(join(dir, "assets", "clips")) ? "The user's own clips are in assets/clips/: look at them and use them where they fit." : "",
+    existsSync(join(projectPaths(dir).notes, "reference")) ? "A reference video's frames are in notes/reference/: its style is the look to copy." : "",
+    "Then stop and reply with the video's idea in one sentence. Don't cut, download or build anything yet: the user approves the storyboard first.",
+  ].filter(Boolean).join("\n");
+}
+
+/** The storyboard's first turn for a script: nothing is filmed yet, so the plan comes from the words and the user's assets. */
+function fromScript(dir: string): string {
+  const assets = existsSync(join(dir, "assets", "clips")) && readdirSync(join(dir, "assets", "clips")).length > 0;
+  return [
+    "Read notes/PLAYBOOK.md, section \"Storyboard first\". There is no recording yet: notes/script.md is the script as numbered scenes (what will be said, in order) and notes/brief.md is the user's direction. Call `stage board`, then plan the video as a storyboard in notes/storyboard.json, in the playbook's format, with these differences:",
+    "- Each numbered scene is exactly one shot, in the same order: scene 1 is shot `s1`, scene 2 is `s2`, and so on. No extra shots, none merged or split. `line` is that scene's words, exactly as written.",
+    "- `from`/`to` are where each shot falls in the finished video, in seconds from 0, back to back: each scene gets the time notes/script.md gives it (its words at a natural pace), a little more where the picture needs a beat to land.",
+    "- Nothing of the speaker is filmed yet: a shot of them talking is kind \"talking\" with no `source`; say in `why` how to frame it when they film it.",
+    assets
+      ? "- The user's own assets are in assets/clips/: look at each one (frames with ffmpeg) and use them where they fit, with `source` { \"file\": \"assets/clips/<name>\", \"at\": <seconds> }. Everything else is B-roll to find (`query`), title cards, graphics."
+      : "- The user gave no footage: every picture is B-roll to find (`query`), a title card, a graphic, or the speaker on camera.",
+    "- The style is in notes/brief.md (\"Style:\"): follow that skill, and set the storyboard's top-level \"style\" to the one you plan in (\"explainer\", \"editorial\" or \"3d\").",
+    "- Direct it like a director: a hook in the first 2 seconds, a reason to keep watching, a clear ending; motion (`enter`, `to`, `focus`) and sound on every shot that needs them.",
+    "Then stop and reply with the video's idea in one sentence. Don't download or build anything: this is the plan for a video not filmed yet.",
+  ].join("\n");
+}
+
+/**
+ * The storyboard step: Claude draws notes/storyboard.json, the user sees it and approves it or asks
+ * for changes (Claude redraws, same session), as many rounds as they like. Returns Claude's last turn
+ * and the approved storyboard, which is then the plan.
+ */
+async function storyboard(
+  dir: string, review: StoryboardReview, ask: (prompt: string, session?: string) => Promise<Turn>, info: (text: string) => void,
+  first = fromRecording(dir), check: (b: Storyboard) => string[] = () => [],
+  /** A storyboard drawn before (reopened later): shown as it is, no first turn. */
+  start?: { turn: Turn; board: Storyboard },
+): Promise<{ turn: Turn; board: Storyboard }> {
+  const file = storyboardFile(dir);
+  const read = async (turn: Turn): Promise<{ turn: Turn; board: Storyboard }> => {
+    for (let attempt = 0; ; attempt++) {
+      const parsed = existsSync(file) ? parseStoryboard(readFileSync(file, "utf8")) : { board: undefined, problems: ["notes/storyboard.json wasn't written"] };
+      const { board } = parsed;
+      const problems = [...parsed.problems, ...(board ? check(board) : [])];
+      if (board && (!problems.length || attempt > 0)) return { turn, board };
+      if (attempt > 0) throw new Error(`The storyboard couldn't be made: ${problems[0]}`);
+      info("Fixing the storyboard");
+      turn = await ask(["The storyboard isn't usable yet:", ...problems.map((p) => `- ${p}`), "Fix notes/storyboard.json (the format is in notes/PLAYBOOK.md, \"Storyboard first\") and stop. Don't build anything yet."].join("\n"), turn.session);
+    }
+  };
+  let { turn, board } = start ?? (await read(await ask(first)));
+  let said: Verdict | undefined;
+  for (let round = 1; ; round++) {
+    info("Storyboard ready: waiting for your OK");
+    // Every draft is kept (notes/storyboard-drafts/): the user can step back to an earlier one.
+    const answer = await waitForUser(review(board, dir, round, saveDraft(dir, board), said));
+    writeFileSync(file, JSON.stringify(answer.board, null, 2));
+    if (answer.approve) return { turn, board: answer.board };
+    const only = answer.only?.filter((id) => answer.board.shots.some((s) => s.id === id));
+    info(only?.length ? `Redrawing ${only.length === 1 ? "shot" : "shots"} ${only.join(", ")}` : "Redrawing the storyboard");
+    const asked = await ask(redrawPrompt(answer.board, answer.changes, only), turn.session);
+    said = readVerdict(asked.text);
+    ({ turn, board } = await read(asked));
+    // Only the picked shots change, whatever else Claude touched. Their notes and drawings are
+    // answered now: they go, so the next redraw doesn't do them again (other shots keep theirs).
+    if (only?.length) board = keepUnpicked(answer.board, board, only);
+    const answered = (id: string) => !only?.length || only.includes(id);
+    board = { ...board, shots: board.shots.map(({ drawing: _, ...shot }) => ({ ...shot, ask: answered(shot.id) ? undefined : withoutArrowNotes(shot.ask) })) };
+    writeFileSync(file, JSON.stringify(board, null, 2));
+  }
 }
 
 /** A whole edit from scratch. */
@@ -88,15 +209,40 @@ export async function autoEdit(req: AutoEditRequest, emit: (e: AutoEditEvent) =>
     appendFileSync(join(projectPaths(dir).notes, "TOOLS.md"), "\nBROKEN  remotion browser  -> build the video as a HyperFrames project (project/index.html) if hyperframes is OK above.\n");
   }
 
-  const estimate = new Estimate(STAGES, firstEstimate(analysis.duration), started, dir, emit);
+  let estimate = new Estimate(req.review ? BOARD_STAGES : STAGES, req.review ? 3 * 60_000 : firstEstimate(analysis.duration), started, dir, emit);
   const broker = await startBroker(dir);
   const ask = (prompt: string, session?: string) => claude(dir, req.model, prompt, session, emit, estimate, broker.url);
   try {
-    let turn = await ask([
-      "Read notes/PLAYBOOK.md and follow it to make the finished video as an editable project. The user's brief is in notes/brief.md.",
-      req.reference ? "A reference video's frames are in notes/reference/: copy its style." : "",
-    ].join("\n"));
-    turn = await ensureRendered(dir, turn, started, emit, ask);
+    let turn: Turn;
+    let building = started;
+    const planned = req.plan ? fromPlan(dir, req.plan) : undefined;
+    if (planned) {
+      // Approved in the Storyboard Creator: that storyboard is the plan, nothing is drawn again.
+      info("Building from your approved storyboard");
+      turn = await ask([
+        "Now make the finished video as an editable project, following notes/PLAYBOOK.md from step 1 (look).",
+        approvedPrompt(planned),
+        "This storyboard was planned from the script before anything was recorded (notes/script.md). Its shots' from/to are estimates on the finished video's clock, not times in the recording: find each shot's `line` in notes/transcript.md and use those SOURCE times for the cut and the shot. A shot's source \"assets/clips/<name>\" is the user's own file, linked in assets/clips/.",
+        planned.style ? `Style: ${STYLE_INFO[planned.style].brief}` : "",
+      ].filter(Boolean).join("\n"));
+    } else if (req.review) {
+      // Storyboard first: nothing is built until the user approves how the video will look.
+      const board = await storyboard(dir, req.review, ask, info);
+      estimate.stop();
+      building = Date.now(); // the time it took the user to approve isn't edit time
+      estimate = new Estimate(STAGES, firstEstimate(analysis.duration), building, dir, emit);
+      turn = await ask([
+        "Now make the finished video as an editable project, following notes/PLAYBOOK.md from step 1 (look).",
+        approvedPrompt(board.board),
+        req.reference ? "Copy the reference video's style (notes/reference/)." : "",
+      ].filter(Boolean).join("\n"), board.turn.session);
+    } else {
+      turn = await ask([
+        "Read notes/PLAYBOOK.md and follow it to make the finished video as an editable project. The user's brief is in notes/brief.md.",
+        req.reference ? "A reference video's frames are in notes/reference/: copy its style." : "",
+      ].join("\n"));
+    }
+    turn = await ensureRendered(dir, turn, building, emit, ask);
     // A first version is rarely the best one: one review round against a professional bar (and the reference).
     emit({ type: "log", text: "Reviewing the first version like a director", kind: "info" });
     const reviewStart = Date.now();
@@ -104,8 +250,145 @@ export async function autoEdit(req: AutoEditRequest, emit: (e: AutoEditEvent) =>
     turn = await ask(review(Boolean(req.reference)), turn.session);
     turn = await ensureRendered(dir, turn, reviewStart, emit, ask);
     const result = keepVersion(dir, turn);
-    saveHistory(analysis.duration, Date.now() - started, estimate.renderMs);
+    saveHistory(analysis.duration, Date.now() - building, estimate.renderMs);
     return result;
+  } finally {
+    estimate.stop();
+    broker.stop();
+  }
+}
+
+export type PlanRequest = {
+  /** The video's name, if the user gave one. */
+  title?: string;
+  /** What will be said, in order. */
+  script: string;
+  /** How they want it: style, mood, audience, length. */
+  direction?: string;
+  format: Storyboard["format"];
+  /** The house style they picked (STYLES); "auto" or none lets Claude choose. */
+  style?: Style;
+  /** Their own clips, photos and music, to use where they fit. */
+  assets: string[];
+  model: string;
+  review: StoryboardReview;
+};
+
+/** Where storyboards made from a script live: work/storyboards/<name>-<time>/. */
+export function planDir(title: string): string {
+  const slug = title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "storyboard";
+  return join(ROOT, "work", "storyboards", `${slug}-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`);
+}
+
+/**
+ * A storyboard from a script, before anything is filmed: the same storyboard step as a full edit
+ * (Claude draws it; the user draws on it, redraws and approves it), made from the words, the
+ * direction and the user's own assets. The folder keeps it all: notes/script.md, notes/brief.md,
+ * notes/storyboard.json, assets/clips/, and Export/ for its PDF.
+ */
+export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) => void, dir = planDir(req.title || req.script.split(/\s+/).slice(0, 6).join(" "))): Promise<{ dir: string; board: Storyboard }> {
+  cancelled = false;
+  const started = Date.now();
+  const info = (text: string) => emit({ type: "log", text, kind: "info" });
+  const tools = health(true);
+  for (const line of healthProblems(tools)) info(`Tools: ${line}`);
+  const p = projectPaths(dir);
+  for (const d of [p.notes, p.internal, p.exports]) mkdirSync(d, { recursive: true });
+  // One line, one scene: numbered, with the time it takes to say, so the storyboard is shot for scene.
+  const scenes = scenesOf(req.script);
+  let at = 0;
+  const numbered = scenes.map((line, i) => {
+    const d = Math.max(1.2, sayingTime(line));
+    const row = `${i + 1}. ${line}   (${round(at, 1)}-${round((at += d), 1)} s)`;
+    return row;
+  });
+  writeFileSync(join(p.notes, "script.md"), `# The script\n\nWhat will be said, one scene per line, in order. Nothing is filmed yet. The times are each line's speaking time at a natural pace.\n\n${numbered.join("\n")}\n`);
+  const style = STYLE_INFO[req.style ?? "auto"];
+  writeFileSync(join(p.notes, "brief.md"), `# What the user wants\n\n${req.title?.trim() ? `Title: ${req.title.trim()}\n` : ""}Format: ${req.format}\nStyle: ${style.brief}\n\n${req.direction?.trim() || "(no direction given: plan the strongest video for this script and format)"}\n`);
+  writeFileSync(join(p.notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
+  writeGuides(dir);
+  const assets = req.assets.filter((a) => existsSync(a));
+  if (assets.length) {
+    const into = join(dir, "assets", "clips");
+    mkdirSync(into, { recursive: true });
+    const used = new Set<string>();
+    for (const a of assets) {
+      let name = basename(a).replace(/[^\w.-]+/g, "-");
+      while (used.has(name)) name = `x-${name}`;
+      used.add(name);
+      linkOrCopy(a, join(into, name));
+    }
+  }
+  writeFileSync(join(p.internal, "agent-log.jsonl"), "");
+  writeShims(dir);
+  info(assets.length ? `Reading your script and ${assets.length} asset${assets.length > 1 ? "s" : ""}` : "Reading your script");
+  const estimate = new Estimate(BOARD_STAGES, 2 * 60_000, started, dir, emit);
+  const broker = await startBroker(dir);
+  const ask = (prompt: string, session?: string) => claude(dir, req.model, prompt, session, emit, estimate, broker.url);
+  try {
+    writePlanInfo(dir, { title: req.title?.trim() || "", format: req.format, style: req.style ?? "auto", scenes, model: req.model, created: new Date().toISOString() });
+    const { board } = await storyboard(dir, req.review, ask, info, fromScript(dir), (b) => checkScenes(b, scenes));
+    writePlanInfo(dir, { approved: new Date().toISOString() });
+    return { dir, board };
+  } finally {
+    estimate.stop();
+    broker.stop();
+  }
+}
+
+/** What Creatro keeps about a storyboard made from a script (.creatron/plan.json). */
+export type PlanInfo = { title: string; format: Storyboard["format"]; style?: Style; scenes: string[]; model: string; created: string; approved?: string };
+const planInfoFile = (dir: string) => join(projectPaths(dir).internal, "plan.json");
+export function readPlanInfo(dir: string): Partial<PlanInfo> {
+  try {
+    return JSON.parse(readFileSync(planInfoFile(dir), "utf8"));
+  } catch {
+    return {};
+  }
+}
+/** A new name for a storyboard from the creator (its folder keeps its name; the list shows this). */
+export function renamePlan(dir: string, title: string) {
+  writePlanInfo(dir, { title: title.trim().slice(0, 120) });
+}
+function writePlanInfo(dir: string, patch: Partial<PlanInfo>) {
+  writeFileSync(planInfoFile(dir), JSON.stringify({ ...readPlanInfo(dir), ...patch }, null, 1));
+}
+
+/**
+ * A storyboard from the Storyboard creator, opened again later: shown as it was saved, with drawing,
+ * Redraw and Approve. A redraw goes on in the same Claude session (it remembers the script and why it
+ * planned each shot); without one, Claude starts from the folder's notes.
+ */
+export async function reopenPlan(dir: string, model: string, review: StoryboardReview, emit: (e: AutoEditEvent) => void): Promise<{ dir: string; board: Storyboard }> {
+  cancelled = false;
+  const info = (text: string) => emit({ type: "log", text, kind: "info" });
+  const file = storyboardFile(dir);
+  const { board } = existsSync(file) ? parseStoryboard(readFileSync(file, "utf8")) : { board: undefined };
+  if (!board) throw new Error("This storyboard's file is missing or can't be read.");
+  const saved = existsSync(lastSessionFile(dir)) ? readFileSync(lastSessionFile(dir), "utf8").trim() : "";
+  const scenes = readPlanInfo(dir).scenes;
+  writeShims(dir);
+  // Like every AI job: which tools work now. And the playbook as it is today (the folder keeps the
+  // one from when it was made), so a redraw follows what Creatro knows now (title fonts, effects...).
+  const tools = health(true);
+  for (const line of healthProblems(tools)) info(`Tools: ${line}`);
+  const notes = projectPaths(dir).notes;
+  writeFileSync(join(notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
+  writeGuides(dir);
+  const estimate = new Estimate(BOARD_STAGES, 60_000, Date.now(), dir, emit);
+  const broker = await startBroker(dir);
+  let first = true;
+  const ask = (prompt: string, session?: string) => {
+    const intro = session || saved
+      ? first ? `notes/PLAYBOOK.md has been updated since you last read it: read its section "Storyboard first" again before you change anything.\n\n` : ""
+      : `Read notes/PLAYBOOK.md, section "Storyboard first", notes/script.md and notes/brief.md: you planned this storyboard earlier.\n\n`;
+    first = false;
+    return claude(dir, model, intro + prompt, session || saved || undefined, emit, estimate, broker.url);
+  };
+  try {
+    const r = await storyboard(dir, review, ask, info, "", scenes?.length ? (b) => checkScenes(b, scenes) : undefined, { turn: { text: "", session: saved }, board });
+    writePlanInfo(dir, { approved: new Date().toISOString() });
+    return { dir, board: r.board };
   } finally {
     estimate.stop();
     broker.stop();
@@ -125,6 +408,7 @@ export async function autoEditFix(
   const started = Date.now();
   const dir = autoEditDir(video);
   const final = finalFile(dir);
+  installSkills(dir);
   const pictures = markers.length ? await markerFrames(dir, final, markers) : [];
   const estimate = new Estimate(FIX_STAGES, fixEstimate(), started, dir, emit);
   estimate.stage("fix");
@@ -220,7 +504,20 @@ function prepare(dir: string, req: AutoEditRequest, analysis: Awaited<ReturnType
   if (!hasVideo) appendFileSync(join(notes, "brief.md"), "\nThe recording is AUDIO ONLY: build every picture yourself (B-roll, graphics, captions).\n");
   if (!analysis.words.length) appendFileSync(join(notes, "brief.md"), "\nThere is NO TRANSCRIPT (no speech, or the transcriber isn't working): cut on the pauses and type any captions yourself into project/timeline.json.\n");
   writeFileSync(join(notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${tools}\n\`\`\`\n\nBROKEN or FALLBACK lines: don't try that tool, use what the line says instead and carry on. Mention it in one sentence of your summary.\n`);
-  writeFileSync(join(notes, "PLAYBOOK.md"), playbook());
+  writeGuides(dir);
+  // The user's own clips (their library), linked in so the project stays local and complete.
+  const clips = (req.clips ?? []).filter((c) => c !== req.video && existsSync(c));
+  if (clips.length) {
+    const into = join(dir, "assets", "clips");
+    mkdirSync(into, { recursive: true });
+    const used = new Set<string>();
+    for (const c of clips) {
+      let name = basename(c).replace(/[^\w.-]+/g, "-");
+      while (used.has(name)) name = `x-${name}`;
+      used.add(name);
+      linkOrCopy(c, join(into, name));
+    }
+  }
   writeFileSync(join(internal, "agent-log.jsonl"), "");
   writeShims(dir);
 }
@@ -272,6 +569,29 @@ function linkOrCopy(from: string, to: string) {
   }
 }
 
+/**
+ * What Claude reads before it works: the playbook (notes/PLAYBOOK.md) and Creatro's own skills
+ * (skills/ -> .claude/skills/), written fresh before every job so a redraw or fix follows what
+ * Creatro knows today. The skills ship with Creatro, so any Claude it starts knows how Creatro
+ * storyboards and edits, even a fresh account with no skills of its own.
+ */
+function writeGuides(dir: string) {
+  writeFileSync(join(projectPaths(dir).notes, "PLAYBOOK.md"), playbook());
+  installSkills(dir);
+}
+/** Creatro's skills into the project's .claude/skills/, where Claude finds them. */
+function installSkills(dir: string) {
+  const from = join(ROOT, "skills");
+  if (!existsSync(from)) return;
+  const into = join(dir, ".claude", "skills");
+  mkdirSync(into, { recursive: true });
+  for (const e of readdirSync(from, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    rmSync(join(into, e.name), { recursive: true, force: true }); // the version shipped today, nothing stale
+    cpSync(join(from, e.name), join(into, e.name), { recursive: true });
+  }
+}
+
 function playbook(): string {
   const text = readFileSync(join(ROOT, "src", "autoedit-playbook.md"), "utf8");
   const earshot = find("earshot") ? `${find("earshot")!.cmd} -m earshot` : "earshot-not-installed";
@@ -316,38 +636,20 @@ function claude(
   const env = {
     HOME: homedir(), USER: process.env.USER ?? "", PATH: `${join(projectPaths(dir).internal, "bin")}:${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin`, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: tmpdir(),
     CREATRON_AUTOEDIT_DIR: dir, CREATRON_ROOT: ROOT, CREATRON_BROKER: broker,
-    NUMBA_CACHE_DIR: join(dir, ".cache", "numba"), // earshot's compiled DSP, cached where the sandbox may write
+    NUMBA_CACHE_DIR: join(dir, ".cache", "numba"), // earshot's compiled DSP, cached inside the folder
   };
-  const tools = `node ${TOOLS}`;
-  // Any command may run inside the sandbox (it can only write in this folder, has no network and
-  // can't read the secrets below); only the tool belt runs outside it, and only it is named here.
-  // The everyday commands are also named, because a chain like "ffmpeg ... && ffmpeg ..." isn't auto-allowed.
-  const everyday = ["ffmpeg", "ffprobe", "node", "cd", "ls", "cat", "head", "tail", "wc", "mkdir", "cp", "mv", "rm", "echo", "sort", "grep", "find", "du", "file", "python3", "sed", "awk", "jq"];
-  const allowed = [
-    "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", `Bash(${tools})`, `Bash(${tools} *)`,
-    ...everyday.flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]),
-    ...(find("earshot") ? [`Bash(${find("earshot")!.cmd} -m earshot *)`] : []),
-  ];
+  // Free, like Claude Code at a keyboard: no sandbox, every tool, the internet, your skills and MCP
+  // servers (HyperFrames, Remotion, earshot...), and no permission checks. The project rules still
+  // hold: validateProject checks the result and sends Claude back until it passes.
+  // Only the key files stay unreadable (deny rules apply even with permission checks off).
   const settings = {
     permissions: {
-      // Secrets stay unreadable even to sandboxed commands.
       deny: [`Read(/${join(ROOT, ".env")})`, `Read(/${join(homedir(), ".ssh")}/**)`, `Read(/${join(homedir(), ".aws")}/**)`, `Read(/${join(homedir(), ".claude.json")})`],
-    },
-    sandbox: {
-      enabled: true,
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      // Remotion's Chrome can't start inside the sandbox; only Creatro's own tool belt runs outside it.
-      excludedCommands: [tools, `${tools} *`],
-      network: { allowLocalBinding: true },
     },
   };
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",
-    "--restricted", "--tools", "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
-    "--allowedTools", ...allowed,
-    "--permission-mode", "dontAsk", "--permission-prompts", "none",
-    "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
+    "--dangerously-skip-permissions",
     "--settings", JSON.stringify(settings),
     ...(session ? ["--resume", session] : []),
   ];
@@ -387,7 +689,8 @@ function claude(
     const onBlock = (block: any) => {
       if (block.type === "text" && block.text?.trim()) emit({ type: "log", text: block.text.trim().slice(0, 400), kind: "note" });
       if (block.type !== "tool_use") return;
-      const stage = String(block.input?.command ?? "").match(/autoedit-tools\.ts stage (\w+)/)?.[1];
+      // The last `stage` in the command (Claude may chain several steps in one call).
+      const stage = [...String(block.input?.command ?? "").matchAll(new RegExp(`${BELT.source}\\s+stage\\s+(\\w+)`, "g"))].at(-1)?.[1];
       if (stage) return estimate.stage(stage);
       emit({ type: "log", text: describeTool(dir, block.name, block.input ?? {}), kind: "tool" });
     };
@@ -410,7 +713,7 @@ function describeTool(dir: string, name: string, input: any): string {
   const rel = (p: string) => (p ? relative(dir, p) || p : "");
   if (name === "Bash") {
     const cmd = String(input.command ?? "");
-    const tool = cmd.match(/autoedit-tools\.ts (\w+)(?: (\w+))?(.*)/);
+    const tool = cmd.match(new RegExp(`${BELT.source} (\\w+)(?: (\\w+))?(.*)`));
     if (tool) {
       const [, what, sub, rest] = tool;
       if (what === "render") return "Rendering the video";
@@ -515,13 +818,27 @@ function readHistory(): History {
 }
 
 /** Usual total time for a recording this long: from past runs when there are some. */
+// A few past runs are a hint, not the truth: one slow run must not set every guess. History is
+// trusted more as runs pile up, and the live pace (Estimate.tick) corrects the guess as steps pass.
 function firstEstimate(sourceSeconds: number): number {
-  const runs = readHistory().runs.slice(-6);
+  const usual = 8 * 60_000 + sourceSeconds * 4_000;
+  // Only finished runs (a render happened). Short clips are mostly fixed overhead, so their
+  // per-second time is spread over at least a minute of footage.
+  const runs = readHistory().runs.filter((r) => r.renderMs > 0).slice(-8);
+  let guess = usual;
   if (runs.length) {
-    const perSecond = runs.map((r) => (r.ms - 6 * 60_000) / Math.max(r.sourceSeconds, 10)).sort((a, b) => a - b)[Math.floor(runs.length / 2)];
-    return Math.min(Math.max(6 * 60_000 + perSecond * sourceSeconds, 8 * 60_000), 45 * 60_000);
+    const perSecond = median(runs.map((r) => Math.max(0, r.ms - 6 * 60_000) / Math.max(r.sourceSeconds, 60)));
+    const fromHistory = 6 * 60_000 + perSecond * sourceSeconds;
+    const trust = runs.length / (runs.length + 2);
+    guess = trust * fromHistory + (1 - trust) * usual;
   }
-  return Math.min(Math.max(10 * 60_000 + sourceSeconds * 8_000, 12 * 60_000), 40 * 60_000);
+  return Math.min(Math.max(guess, 8 * 60_000), 35 * 60_000);
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 function fixEstimate(): number {
