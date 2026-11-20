@@ -5,11 +5,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import {
-  CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, TRANSITION_LABEL, boardLength,
+  BEAT_LABEL, CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, type Verdict, type Layer, EFFECTS, FONTS, fontParts, fontStack, TRANSITION_LABEL, boardLength,
   movesOf,
 } from "../src/storyboard.ts";
 import { mediaUrl } from "./format.ts";
 import { Icon } from "./icons.tsx";
+import { StoryboardMark } from "./StoryboardMark.tsx";
+import { ClaudeSaid } from "./ClaudeSaid.tsx";
 import { SketchPad, sketching } from "./SketchPad.tsx";
 import { DictationBar, DictationNote, MicButton, appendSpeech, dictating, useDictation } from "./Dictation.tsx";
 import { type BoardState, useEditor } from "./store.ts";
@@ -123,14 +125,20 @@ export function StoryboardSheet() {
   const dictation = useDictation((said) => setChanges((c) => appendSpeech(c, said)));
   const [pdf, setPdf] = useState<"" | "making" | string>("");
   const [note, setNote] = useState("");
+  /** The user chose "All shots" while one was picked. Picking another shot goes back to just it. */
+  const [whole, setWhole] = useState(false);
+  const [hideSaid, setHideSaid] = useState(false);
   const close = () => useEditor.setState({ boardOpen: false });
 
+  // A new draft: the box empties; the open shot stays open (after a redraw of it, that's the new one).
   useEffect(() => {
-    setFocus(null);
     setChanges("");
     setNote("");
     setPdf("");
+    setHideSaid(false);
   }, [b?.round, b?.dir]);
+  useEffect(() => setFocus(null), [b?.dir]);
+  useEffect(() => setWhole(false), [focus]);
 
   // Keys: ← → between shots, space plays, esc closes, ⌘⏎ approves. Kept from the editor underneath.
   useEffect(() => {
@@ -147,6 +155,12 @@ export function StoryboardSheet() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") return e.preventDefault(), void approve();
       if (typing) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        // Undo / redo step between Claude's drafts (the editor underneath keeps its own undo).
+        e.preventDefault();
+        e.stopPropagation();
+        return stepDraft(e.shiftKey ? 1 : -1);
+      }
       const shots = b.draft.shots;
       const i = shots.findIndex((s) => s.id === focus);
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
@@ -182,12 +196,33 @@ export function StoryboardSheet() {
   const edited = shots.some((s) => s.dropped || s.ask?.trim() || s.marks?.length);
   const focused = shots.find((s) => s.id === focus);
   const sizes = frameSizes(board.format);
+  const numOf = (id: string) => String(shots.findIndex((s) => s.id === id) + 1).padStart(2, "0");
+  // What a Redraw changes: the open shot and any the user drew on or wrote a note on. Nothing else.
+  const noted = shots.filter((s) => s.ask?.trim() || s.marks?.length).map((s) => s.id);
+  const pickable = [...new Set([...(focus ? [focus] : []), ...noted])];
+  const picked = whole ? [] : pickable;
+  const pickedLabel = picked.length === 1 ? `Shot ${numOf(picked[0])}` : `${picked.length} shots`;
+  const redrawingOnly = redrawing && b.only?.length ? b.only : undefined;
+  const versions = b.versions ?? [board];
+  const at = b.at ?? versions.length - 1;
 
   const update = (id: string, patch: Partial<Shot>) => {
     const s = useEditor.getState().board;
     if (!s) return;
     useEditor.setState({ board: { ...s, draft: { ...s.draft, shots: s.draft.shots.map((x) => (x.id === id ? { ...x, ...patch } : x)) } } });
   };
+
+  /** Undo / redo: another of Claude's drafts. Edits on the one left (notes, drawings) stay with it. */
+  function stepDraft(by: number) {
+    const s = useEditor.getState().board;
+    if (!s?.versions || s.status !== "waiting") return;
+    const from = s.at ?? s.versions.length - 1;
+    const to = from + by;
+    if (to < 0 || to >= s.versions.length) return;
+    const versions = s.versions.slice();
+    versions[from] = s.draft;
+    useEditor.setState({ board: { ...s, versions, at: to, draft: versions[to] } });
+  }
 
   async function approve() {
     const s = useEditor.getState().board;
@@ -198,14 +233,16 @@ export function StoryboardSheet() {
     useEditor.setState({ board: { ...s, status: "approved" }, boardOpen: Boolean(s.plan) });
   }
 
-  async function redraw() {
+  /** Sends the changes to Claude: `only` = the shots that may change (the rest stay exactly as they are). */
+  async function redraw(text = changes, only: string[] | undefined = picked.length ? picked : undefined) {
     const s = useEditor.getState().board;
     if (!s || s.status !== "waiting") return;
-    if (!changes.trim() && !s.draft.shots.some((x) => x.ask?.trim() || x.dropped || x.marks?.length)) return setNote("Say what to change, draw on a shot, or add a note to one first.");
-    const ok = await window.creatron.storyboardAnswer(s.video, { approve: false, board: s.draft, changes, drawings: await drawings(s) });
+    const touched = s.draft.shots.filter((x) => !only || only.includes(x.id));
+    if (!text.trim() && !touched.some((x) => x.ask?.trim() || x.dropped || x.marks?.length)) return setNote("Say what to change, draw on a shot, or add a note to one first.");
+    const ok = await window.creatron.storyboardAnswer(s.video, { approve: false, board: s.draft, changes: text, drawings: await drawings(s), only });
     if (!ok) return setNote("This storyboard isn't waiting any more (the edit was stopped).");
     setNote("");
-    useEditor.setState({ board: { ...s, status: "redrawing" } });
+    useEditor.setState({ board: { ...s, status: "redrawing", only } });
   }
 
   async function makePdf() {
@@ -222,18 +259,26 @@ export function StoryboardSheet() {
     }
   }
 
-  let at = 0;
-  const outAt = new Map(kept.map((s) => [s.id, ((at += len(s)), at - len(s))]));
+  let t = 0;
+  const outAt = new Map(kept.map((s) => [s.id, ((t += len(s)), t - len(s))]));
 
   return (
     <div className={`sb ${theme === "light" ? "light" : ""}`} onKeyDown={(e) => e.stopPropagation()} style={{ ["--sb-accent" as string]: accent }}>
       <header className="sb-head">
         <button className="icon-btn" onClick={close} title="Close (esc). The storyboard stays in the chat."><Icon name="close" /></button>
         <div className="sb-head-title">
-          <span className={`sb-state ${b.status}`}><i />Storyboard{b.round > 1 ? ` · draft ${b.round}` : ""} · {b.status === "approved" ? "approved" : waiting ? "waiting for your OK" : redrawing ? "redrawing" : "closed"}</span>
+          <span className={`sb-state ${b.status}`}><i />Storyboard{versions.length < 2 && b.round > 1 ? ` · draft ${b.round}` : ""} · {b.status === "approved" ? "approved" : waiting ? "waiting for your OK" : redrawing ? "redrawing" : "closed"}</span>
           <h2>{board.title}</h2>
         </div>
         <div className="sb-head-r">
+          {versions.length > 1 && (
+            // Claude's drafts, oldest first: step back to one you liked better, and forward again. None is lost.
+            <div className="sb-versions" role="group" aria-label="Drafts">
+              <button onClick={() => stepDraft(-1)} disabled={!waiting || at <= 0} title={`Undo: back to draft ${at} (⌘Z)`}><Icon name="undo" size={14} /></button>
+              <span title={`You're looking at draft ${at + 1} of ${versions.length}`}>Draft <b>{at + 1}</b><em>/{versions.length}</em></span>
+              <button onClick={() => stepDraft(1)} disabled={!waiting || at >= versions.length - 1} title={`Redo: on to draft ${at + 2} (⇧⌘Z)`}><Icon name="redo" size={14} /></button>
+            </div>
+          )}
           <div className="sb-theme" role="group" aria-label="Page colour">
             <button className={theme === "dark" ? "on" : ""} onClick={() => setBoardTheme("dark")} title="Dark page" aria-pressed={theme === "dark"}><Icon name="moon" size={14} /></button>
             <button className={theme === "light" ? "on" : ""} onClick={() => setBoardTheme("light")} title="Light page: paper and ink, like the PDF" aria-pressed={theme === "light"}><Icon name="sun" size={14} /></button>
@@ -248,7 +293,7 @@ export function StoryboardSheet() {
         <div className="sb-facts">
           <span className="sb-fact"><b>Shots</b>{kept.length} · {clock(total)} · {board.format}</span>
           <span className="sb-fact"><b>Palette</b><span className="sb-swatches">{board.look.palette.map((c) => <i key={c} style={{ background: c }} title={c} />)}</span></span>
-          <span className="sb-fact"><b>Font</b><span style={{ fontFamily: `"${board.look.font}", system-ui` }}>{board.look.font}</span></span>
+          <span className="sb-fact"><b>Font</b><span style={{ fontFamily: fontStack(fontParts(board.look.font).family), fontWeight: fontParts(board.look.font).weight }}>{board.look.font}</span></span>
           <span className="sb-fact wide" title={board.look.mood}><b>Look</b>{board.look.mood || "—"}</span>
           <span className="sb-fact wide" title={board.look.captions}><b>Captions</b>{board.look.captions || "—"}</span>
           {board.music && <span className="sb-fact wide" title={board.music}><b>Music</b>{board.music}</span>}
@@ -256,20 +301,24 @@ export function StoryboardSheet() {
         <Ribbon shots={shots} total={total} focus={focus} onPick={setFocus} />
       </section>
 
-      <div className={`sb-board ${redrawing ? "redrawing" : ""} ${focused ? "with-drawer" : ""}`} style={{ ["--sb-card" as string]: `${sizes.card + 20}px`, ["--sb-cell" as string]: `${sizes.card + 42}px`, ["--sb-drawer" as string]: `${sizes.drawer + 88}px` }}>
+      <div className={`sb-board ${redrawing ? (redrawingOnly ? "redrawing some" : "redrawing") : ""} ${focused ? "with-drawer" : ""}`} style={{ ["--sb-card" as string]: `${sizes.card + 20}px`, ["--sb-cell" as string]: `${sizes.card + 42}px`, ["--sb-drawer" as string]: `${sizes.drawer + 88}px` }}>
         <div className="sb-grid">
           {shots.map((s, i) => (
             <div key={s.id} className="sb-cell">
               {/* Every card keeps the transition's slot (empty for the first), so the rows line up. */}
               <span className={`sb-trans t-${i ? s.transition : "none"}`} title={i ? `${TRANSITION_LABEL[s.transition]} into shot ${i + 1}` : undefined} aria-hidden={!i}>{i ? TRANSITION_LABEL[s.transition] : ""}</span>
-              <button className={`sb-card ${focus === s.id ? "on" : ""} ${s.dropped ? "dropped" : ""} ${s.ask?.trim() ? "noted" : ""}`} onClick={() => setFocus(focus === s.id ? null : s.id)}>
+              <button className={`sb-card ${focus === s.id ? "on" : ""} ${s.dropped ? "dropped" : ""} ${s.ask?.trim() ? "noted" : ""} ${redrawingOnly?.includes(s.id) ? "redrawn" : ""}`} onClick={() => setFocus(focus === s.id ? null : s.id)}>
                 <div className="sb-card-top">
                   <span className="sb-num">{String(i + 1).padStart(2, "0")}</span>
                   <span className="sb-time">{s.dropped ? "cut" : clock(outAt.get(s.id) ?? 0)}<em>{len(s).toFixed(1)}s</em></span>
                 </div>
-                <Sketch b={b} shot={s} width={sizes.card} />
+                <div className="sb-card-pic">
+                  <Sketch b={b} shot={s} width={sizes.card} />
+                  {redrawingOnly?.includes(s.id) && <RedrawMark size={44} />}
+                </div>
                 <p className="sb-line">{s.line ? `“${s.line}”` : <em>no words</em>}</p>
                 <div className="sb-chips">
+                  {s.beat && <span className="sb-chip beat">{BEAT_LABEL[s.beat]}</span>}
                   <span className="sb-chip">{KIND_LABEL[s.kind]}</span>
                   {s.camera !== "still" && <span className="sb-chip">{CAMERA_LABEL[s.camera]}</span>}
                   </div>
@@ -281,10 +330,20 @@ export function StoryboardSheet() {
             </div>
           ))}
         </div>
-        {redrawing && <div className="sb-redraw"><span className="shimmer">Claude is redrawing the storyboard…</span></div>}
-        {focused && <ShotDrawer b={b} shot={focused} index={shots.indexOf(focused)} editable={waiting} onClose={() => setFocus(null)} onChange={(p) => update(focused.id, p)} onDraw={() => setDrawing(focused.id)} />}
+        {redrawing && !redrawingOnly && (
+          <div className="sb-redraw">
+            <div className="sb-redraw-card">
+              <StoryboardMark size={84} animated />
+              <b>Redrawing the storyboard</b>
+              <span className="shimmer">Claude is working your changes into every shot</span>
+            </div>
+          </div>
+        )}
+        {focused && <ShotDrawer b={b} shot={focused} index={shots.indexOf(focused)} editable={waiting} redrawn={Boolean(redrawingOnly?.includes(focused.id))} onClose={() => setFocus(null)} onChange={(p) => update(focused.id, p)} onDraw={() => setDrawing(focused.id)} />}
         {drawing && shots.some((x) => x.id === drawing) && (
           <Pad b={b} shot={shots.find((x) => x.id === drawing)!} index={shots.findIndex((x) => x.id === drawing)} editable={waiting}
+            busy={redrawing && Boolean(b.only?.includes(drawing))} said={b.saidFor?.includes(drawing) ? b.said : undefined}
+            onFix={() => redraw("", [drawing])} onTry={(text) => redraw(text, [drawing])}
             onChange={(marks) => update(drawing, { marks })} onClose={() => setDrawing(null)} />
         )}
       </div>
@@ -300,18 +359,30 @@ export function StoryboardSheet() {
         </div>
       )}
       <footer className="sb-foot">
+        {waiting && b.said && !hideSaid && (
+          <ClaudeSaid said={b.said} onClose={() => setHideSaid(true)} onTry={(text) => redraw(text, b.saidFor?.length ? b.saidFor : undefined)} />
+        )}
         {waiting ? (
           <>
+            {pickable.length > 0 && (
+              <div className="sb-scope" role="group" aria-label="What the redraw changes">
+                <button className={picked.length ? "on" : ""} onClick={() => setWhole(false)} title={`Only ${pickable.map(numOf).join(", ")} change${pickable.length === 1 ? "s" : ""}; every other shot stays as it is`}>
+                  {pickable.length === 1 ? `Shot ${numOf(pickable[0])}` : `${pickable.length} shots`}
+                </button>
+                <button className={picked.length ? "" : "on"} onClick={() => setWhole(true)} title="The whole storyboard can change">All shots</button>
+              </div>
+            )}
             {dictation.listening ? <div className="sb-ask dict-host"><DictationBar d={dictation} /></div> : <input
-              className="sb-ask" value={changes} placeholder="Ask Claude for changes: “a stronger hook”, “more B-roll in the middle”, “calmer colours”…"
+              className="sb-ask" value={changes}
+              placeholder={picked.length ? `Change ${pickedLabel.toLowerCase()}: “closer on the face”, “bigger title”, “a whip pan in”…` : "Ask Claude for changes: “a stronger hook”, “more B-roll in the middle”, “calmer colours”…"}
               onChange={(e) => setChanges(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.metaKey && redraw()}
             />}
             {!dictation.listening && <MicButton d={dictation} className="sb-btn sb-mic" />}
-            <button className="sb-btn" onClick={redraw} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> Redraw</button>
+            <button className="sb-btn" onClick={() => redraw()} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> {picked.length ? `Redraw ${pickedLabel.toLowerCase()}` : "Redraw"}</button>
             <button className="export-btn" onClick={approve} title={b.plan ? "Lock in this plan: it's saved with your script, ready for the shoot" : "Build the video from these shots"}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>
           </>
         ) : (
-          <p className="sb-foot-note">{b.status === "approved" ? (b.plan ? "Approved. It's saved with your script; take the PDF to the shoot." : "Approved. Claude is building this video now; it follows these shots.") : redrawing ? "Your changes went to Claude. The new draft opens here when it's ready." : "This storyboard is no longer waiting for an answer."}</p>
+          <p className="sb-foot-note">{b.status === "approved" ? (b.plan ? "Approved. It's saved with your script; take the PDF to the shoot." : "Approved. Claude is building this video now; it follows these shots.") : redrawing ? (redrawingOnly ? `Claude is redrawing ${redrawingOnly.length === 1 ? "shot" : "shots"} ${redrawingOnly.map(numOf).join(", ")}. Every other shot stays exactly as it is.` : "Your changes went to Claude. The new draft opens here when it's ready.") : b.error ? `Claude stopped: ${friendlyError(b.error)}${b.plan ? " Open it again from the Storyboard Creator to go on." : ""}` : "This storyboard is no longer waiting for an answer."}</p>
         )}
         <DictationNote d={dictation} />
         {note && <p className="sb-note">{note}</p>}
@@ -338,18 +409,30 @@ function Ribbon({ shots, total, focus, onPick, at }: { shots: Shot[]; total: num
 }
 
 /** One shot, big, with everything about it you can change. */
-function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b: BoardState; shot: Shot; index: number; editable: boolean; onClose: () => void; onChange: (p: Partial<Shot>) => void; onDraw: () => void }) {
+/** Claude's errors in plain words: its usage limit says when it comes back. */
+function friendlyError(error: string): string {
+  const limit = /(?:session|usage|rate) limit[^·]*·\s*(resets[^"\n]*)/i.exec(error);
+  if (limit) return `your Claude usage limit is reached (it ${limit[1]!.trim()}). Nothing was lost.`;
+  return error.replace(/^The full edit didn.t finish:\s*/, "").replace(/^Claude:\s*/, "").slice(0, 220);
+}
+
+const EFFECT_LABEL: Record<(typeof EFFECTS)[number], string> = { none: "Flat", shadow: "Soft shadow", outline: "Outline", glow: "Glow", extrude: "3D block", gold: "Gold", chrome: "Chrome", tag: "Tag", highlight: "Highlighter" };
+
+function ShotDrawer({ b, shot, index, editable, redrawn, onClose, onChange, onDraw }: { b: BoardState; shot: Shot; index: number; editable: boolean; redrawn?: boolean; onClose: () => void; onChange: (p: Partial<Shot>) => void; onDraw: () => void }) {
   const texts = shot.layers.map((l, i) => ({ l, i })).filter(({ l }) => l.kind === "text" || l.kind === "caption" || l.kind === "sticker");
-  const setLayerText = (i: number, text: string) => onChange({ layers: shot.layers.map((l, j) => (j === i ? { ...l, text } : l)) });
+  const setLayer = (i: number, patch: Partial<Layer>) => onChange({ layers: shot.layers.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
+  const setLayerText = (i: number, text: string) => setLayer(i, { text });
+  const lookFont = fontParts(b.draft.look.font).family;
   return (
     <aside className="sb-drawer">
       <div className="sb-drawer-head">
         <span className="sb-num big">{String(index + 1).padStart(2, "0")}</span>
-        <span className="dim small">{shot.from.toFixed(1)}–{shot.to.toFixed(1)}s of the recording</span>
+        <span className="dim small">{shot.from.toFixed(1)}–{shot.to.toFixed(1)}s {b.plan ? "into the video" : "of the recording"}</span>
         <button className="icon-btn" onClick={onClose} title="Close (esc)"><Icon name="close" size={14} /></button>
       </div>
-      <div className="sb-drawable" onDoubleClick={onDraw} title="Double-click to draw on it">
+      <div className={`sb-drawable ${redrawn ? "redrawn" : ""}`} onDoubleClick={redrawn ? undefined : onDraw} title={redrawn ? "Claude is redrawing this shot" : "Double-click to draw on it"}>
         <Sketch b={b} shot={shot} width={frameSizes(b.draft.format).drawer} className="big" />
+        {redrawn && <RedrawMark size={72} label="Redrawing this shot" />}
       </div>
       <div className="sb-draw-row">
         <button className="sb-btn" onClick={onDraw} disabled={!editable && !shot.marks?.length}>
@@ -385,6 +468,23 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b
           <label className="sb-field" key={i}>
             <span>{l.kind === "caption" ? "Caption" : l.kind === "sticker" ? "Sticker" : "On-screen text"}</span>
             <input value={l.text ?? ""} onChange={(e) => setLayerText(i, e.target.value)} />
+            {l.kind === "text" && (() => {
+              // The title's typeface and finish: what the sketch draws, and what the video will use.
+              const family = l.font ? fontParts(l.font).family : "";
+              return (
+                <span className="sb-type">
+                  <select value={family} onChange={(e) => setLayer(i, { font: e.target.value || undefined })} title="Typeface"
+                    style={{ fontFamily: fontStack(family || lookFont) }}>
+                    <option value="">{lookFont} (the video's font)</option>
+                    {family && !FONTS[family] && <option value={family}>{family}</option>}
+                    {Object.entries(FONTS).map(([f, says]) => <option key={f} value={f}>{f}  ·  {says.split(":")[0]}</option>)}
+                  </select>
+                  <select value={l.effect ?? "none"} onChange={(e) => setLayer(i, { effect: e.target.value as Layer["effect"] })} title="Finish">
+                    {EFFECTS.map((f) => <option key={f} value={f}>{EFFECT_LABEL[f]}</option>)}
+                  </select>
+                </span>
+              );
+            })()}
           </label>
         ))}
         <div className="sb-field">
@@ -412,7 +512,10 @@ function ShotDrawer({ b, shot, index, editable, onClose, onChange, onDraw }: { b
 }
 
 /** The drawing view for one shot, with that shot's picture. */
-function Pad(props: { b: BoardState; shot: Shot; index: number; editable: boolean; onChange: (marks: NonNullable<Shot["marks"]>) => void; onClose: () => void }) {
+function Pad(props: {
+  b: BoardState; shot: Shot; index: number; editable: boolean; busy?: boolean; said?: Verdict;
+  onFix: () => void; onTry: (text: string) => void; onChange: (marks: NonNullable<Shot["marks"]>) => void; onClose: () => void;
+}) {
   const picture = usePicture(props.b, props.shot);
   const theme = useBoardTheme((t) => t.theme);
   return <SketchPad {...props} picture={picture} theme={sketchTheme(theme)} />;
@@ -585,7 +688,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
       <img src="${images[i]}" />
       <div class="txt">
       <p class="line">${s.line ? `“${esc(s.line)}”` : "<em>no words</em>"}</p>
-      <p class="tags"><span>${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
+      <p class="tags">${s.beat ? `<b class="beat">${BEAT_LABEL[s.beat]}</b> · ` : ""}<span>${KIND_LABEL[s.kind]}</span>${s.camera !== "still" ? ` · ${CAMERA_LABEL[s.camera]}` : ""}${i && s.transition !== "cut" ? ` · ${TRANSITION_LABEL[s.transition]} transition` : ""}${s.sound ? ` · ♪ ${esc(s.sound)}` : ""}</p>
       ${movesOf(s).map((m) => `<p class="move">→ ${esc(m)}</p>`).join("")}
       ${s.query && (s.kind === "broll" || s.kind === "image") ? `<p class="why">Shows: ${esc(s.query)}</p>` : ""}
       ${s.why ? `<p class="why">${esc(s.why)}</p>` : ""}
@@ -638,6 +741,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
     .line { font-size: 8.5pt; line-height: 1.32; margin-top: 2mm; font-weight: 600; }
     .tags { font-size: 7pt; color: #5d5a52; margin-top: 1.2mm; }
     .tags span { font-weight: 700; }
+    .tags .beat { font: 700 6.5pt "SF Mono", Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: ${accent}; }
     .move { font-size: 7pt; color: ${"#c81d16"}; margin-top: .8mm; line-height: 1.3; }
     .why { font-size: 7pt; color: #77736a; margin-top: 1mm; font-style: italic; line-height: 1.3; }
   </style></head><body>
@@ -661,4 +765,14 @@ async function pdfHtml(b: BoardState): Promise<string> {
     </section>
     ${sheets}
   </body></html>`;
+}
+
+/** On a shot Claude is redrawing: the storyboard mark, drawing itself over and over. */
+function RedrawMark({ size, label }: { size: number; label?: string }) {
+  return (
+    <div className="sb-redraw-mark">
+      <StoryboardMark size={size} animated />
+      {label && <span className="shimmer">{label}</span>}
+    </div>
+  );
 }

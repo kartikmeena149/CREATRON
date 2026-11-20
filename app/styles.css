@@ -2006,11 +2006,42 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-line em { color: var(--faint); }
 .sb-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px; }
 .sb-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--raised); font: 500 9.5px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-chip.beat { background: transparent; box-shadow: inset 0 0 0 1px var(--line, rgba(255,255,255,0.14)); color: var(--text, #eee); }
 .sb-sound { display: flex; align-items: center; gap: 5px; margin: 7px 10px 0; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sb-sound svg { flex: none; color: var(--faint); }
 .sb-flag { position: absolute; top: 9px; right: 44px; width: 6px; height: 6px; border-radius: 50%; background: var(--text); }
 
-.sb-redraw { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 500; pointer-events: none; }
+/* Redrawing everything: the storyboard mark draws itself, centred on the dimmed board. */
+.sb-redraw { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.sb-redraw-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 26px 34px 22px; border-radius: 16px; background: color-mix(in srgb, var(--bg) 88%, transparent); border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); backdrop-filter: blur(10px); color: var(--text); animation: sb-redraw-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.sb-redraw-card .sbm { color: var(--text); margin-bottom: 4px; }
+.sb-redraw-card b { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.sb-redraw-card span { font-size: 12.5px; color: var(--dim); }
+@keyframes sb-redraw-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* Redrawing picked shots: the rest of the board stays readable; the mark draws on the picked ones. */
+.sb-board.redrawing.some .sb-grid { opacity: 1; }
+.sb-board.redrawing.some .sb-card:not(.redrawn) { opacity: 0.55; }
+.sb .sb-card.redrawn, .sb .sb-card.redrawn:hover:not(:disabled) { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.sb-card-pic { position: relative; margin: 0 9px; }
+.sb-card .sb-card-pic .sb-sketch { margin: 0; }
+.sb-redraw-mark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(3px); color: var(--text); pointer-events: none; animation: sb-redraw-in 0.3s ease both; }
+.sb-redraw-mark span { font-size: 12.5px; font-weight: 500; color: var(--dim); }
+.sb-drawable.redrawn { position: relative; cursor: default; width: fit-content; margin: 0 auto; }
+
+/* Claude's drafts: undo back to an earlier one, redo forward again. */
+.sb-versions { display: inline-flex; align-items: center; gap: 2px; padding: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.sb .sb-versions button { width: 30px; height: 28px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--dim); }
+.sb .sb-versions button:hover:not(:disabled) { color: var(--text); background: var(--raised); border: none; }
+.sb .sb-versions button:disabled { opacity: 0.35; }
+.sb-versions span { padding: 0 6px; font: 500 11px var(--mono); letter-spacing: 0.04em; color: var(--dim); white-space: nowrap; }
+.sb-versions span b { color: var(--text); font-weight: 600; }
+.sb-versions span em { font-style: normal; color: var(--faint); }
+
+/* What a Redraw changes: the picked shot(s), or all of them. */
+.sb-scope { display: inline-flex; gap: 2px; padding: 2px; height: 36px; box-sizing: border-box; background: var(--panel-2); border-radius: 9px; flex: none; }
+.sb .sb-scope button { height: 32px; padding: 0 11px; border: none; border-radius: 7px; background: transparent; color: var(--faint); font: 500 11px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+.sb .sb-scope button:hover:not(:disabled) { color: var(--text); background: var(--raised); border: none; }
+.sb .sb-scope button.on, .sb .sb-scope button.on:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
 /* The shot, opened: the inspector's layout (sections, small headings, the editor's inputs). */
 .sb-drawer { width: var(--sb-drawer, 320px); flex: none; overflow-y: auto; background: var(--bg); border-left: 1px solid var(--line); }
@@ -2032,6 +2063,12 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-row-toggle { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
 .sb-field input, .sb-field textarea { height: 34px; padding: 0 10px; background: var(--panel-2); border: 1px solid transparent; border-radius: 9px; color: var(--text); font: inherit; font-size: 12.5px; outline: none; }
 .sb-field textarea { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.45; }
+/* A title's typeface and finish, under its words. */
+.sb-type { display: flex; gap: 6px; }
+.sb-type select { height: 32px; min-width: 0; padding: 0 8px; background: var(--panel-2); border: 1px solid transparent; border-radius: 8px; color: var(--text); font-size: 12.5px; outline: none; }
+.sb-type select:first-child { flex: 1 1 0; width: 0; }
+.sb-field > .sb-type { font-weight: 400; }
+.sb-type select:focus { border-color: #3a3a3a; }
 .sb-field input:focus, .sb-field textarea:focus { border-color: #3a3a3a; }
 .sb-field input::placeholder, .sb-field textarea::placeholder { color: var(--faint); }
 .sb-seg { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -2146,7 +2183,33 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb .sb-pad-group .sb-pad-color, .sb-pad-group .sb-pad-color { width: 20px; height: 20px; padding: 0; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--bg), 0 0 0 2px transparent; transition: box-shadow 0.12s, transform 0.12s; }
 .sb-pad-group .sb-pad-color:hover:not(:disabled) { background: var(--c); transform: scale(1.1); }
 .sb-pad-group .sb-pad-color.on { background: var(--c); box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--c); }
-.sb-pad-done { margin-left: 4px; }
+.sb-pad-fix { margin-left: 4px; display: inline-flex; align-items: center; gap: 7px; }
+.sb-pad-fix:disabled { opacity: 0.4; }
+.sb-pad-done { height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--dim); font: 500 11.5px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.sb-pad-done:hover { color: var(--text); background: var(--raised); }
+.sb-pad-done kbd, .sb-pad-fix kbd { font: 500 10px var(--mono); opacity: 0.55; }
+.sb-redraw-mark.big { gap: 12px; border-radius: 0; background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(5px); }
+.sb-redraw-mark.big b { font-size: 16px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.sb-redraw-mark.big span { font-size: 13px; }
+
+/* What Claude said after a redraw: changed (a tick), couldn't (amber, with why), and a way that works. */
+.sb-said { position: relative; display: flex; align-items: flex-start; gap: 14px; width: min(860px, 100%); box-sizing: border-box; padding: 12px 40px 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; animation: sb-redraw-in 0.3s ease both; }
+.sb-said.declined { border-color: color-mix(in srgb, #f5b83d 45%, var(--line)); }
+.sb-said-who { display: inline-flex; align-items: center; gap: 7px; flex: none; padding-top: 1px; font: 600 10.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text); }
+.sb-said-body { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; }
+.sb-said-body p { display: flex; gap: 8px; margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); }
+.sb-said-body p svg { flex: none; margin-top: 3px; }
+.sb-said-body p.yes svg { color: #4ade80; }
+.sb-said-body p.no svg { color: #f5b83d; }
+.sb .sb-said-try, .sb-said-try { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 30px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 12.5px; text-align: left; line-height: 1.35; }
+.sb-said-try:hover:not(:disabled) { background: var(--raised); border-color: #4a4a4a; }
+.sb-said-try svg { flex: none; }
+.sb-said-x { position: absolute; top: 9px; right: 9px; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--faint); }
+.sb-said-x:hover { color: var(--text); background: var(--raised); }
+.sb-foot .sb-said { width: 100%; }
+.sb.light .sb-said.declined { border-color: #e2b35a; }
+.sb.light .sb-said-body p.yes svg { color: #1f9d55; }
+.sb.light .sb-said-body p.no svg { color: #b7791f; }
 .sb-pad-stage { position: relative; flex: none; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--line), 0 20px 60px rgba(0, 0, 0, 0.6); }
 .sb-pad-stage canvas { position: absolute; inset: 0; display: block; }
 .sb-pad-ink { touch-action: none; cursor: none; }
@@ -2277,19 +2340,24 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sbc-drawing-head .dim { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .sbc-drawing-title { margin: 14px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.15; }
 .sbc-drawing-say { margin: 6px 0 18px; font-size: 13px; min-height: 18px; }
-.sbc-panels { display: flex; flex-wrap: wrap; gap: 14px 12px; padding: 16px; margin: 0 -4px; background: radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 18px 18px, var(--bg); border: 1px solid var(--line-soft); border-radius: 10px; }
-.sbc-panel { position: relative; display: flex; flex-direction: column; gap: 6px; transition: opacity 0.4s; }
-.sbc-panel canvas, .sbc-panel-blank { display: block; border-radius: 4px; }
-.sbc-panel canvas { box-shadow: 0 0 0 1px var(--line); }
-.sbc-panel.now canvas { box-shadow: 0 0 0 1.5px var(--accent), 0 8px 24px rgba(229, 35, 27, 0.18); }
-.sbc-panel.done { opacity: 0.78; }
-.sbc-panel-blank { border: 1px dashed #333; background: rgba(255, 255, 255, 0.015); }
-.sbc-panel-num { position: absolute; top: -7px; left: -5px; z-index: 1; padding: 2px 4px; border-radius: 3px; background: var(--panel); font: 600 9.5px/1 var(--mono); color: var(--dim); box-shadow: 0 0 0 1px var(--line); }
-.sbc-panel.now .sbc-panel-num { background: var(--accent); color: #fff; box-shadow: none; }
-.sbc-panel.done .sbc-panel-num { color: var(--text); }
-.sbc-panel-line { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--faint); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.sbc-panel.now .sbc-panel-line { color: var(--text); }
-.sbc-panel.done .sbc-panel-line { color: var(--dim); }
+.sbc-load { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 44px 24px 36px; margin: 16px -4px 0; border: 1px solid var(--line-soft); border-radius: 10px; background: radial-gradient(ellipse 60% 55% at 50% 34%, rgba(229, 35, 27, 0.07), transparent 70%), radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1.6px) 0 0 / 18px 18px, var(--bg); }
+.sbc-load-mark { position: relative; display: grid; place-items: center; width: 184px; height: 184px; border-radius: 50%; margin-bottom: 18px; }
+.sbc-load-mark::before { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1px dashed rgba(255, 255, 255, 0.09); animation: sbc-orbit 28s linear infinite; }
+.sbc-load-mark::after { content: ""; position: absolute; inset: 22px; border-radius: 50%; background: radial-gradient(circle, rgba(229, 35, 27, 0.12), transparent 68%); animation: sbc-breathe 3.5s ease-in-out infinite; }
+.sbc-load-mark .sbm { position: relative; z-index: 1; }
+.sbc-load .sbc-drawing-title { margin: 0; }
+.sbc-load .sbc-drawing-say { margin: 8px 0 0; }
+.sbc-load-line { max-width: 460px; margin: 18px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; animation: sbc-line-in 0.5s ease both; }
+.sbc-load-line .mono { margin-right: 8px; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 600; vertical-align: 1px; }
+.sbc-load-strip { display: flex; gap: 3px; width: min(420px, 100%); margin-top: 22px; }
+.sbc-load-strip i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); transition: background 0.4s; }
+.sbc-load-strip i.done { background: rgba(255, 255, 255, 0.55); }
+.sbc-load-strip i.now { background: var(--accent); animation: sbc-now 1.2s ease-in-out infinite; }
+@keyframes sbc-orbit { to { transform: rotate(360deg); } }
+@keyframes sbc-breathe { 0%, 100% { opacity: 0.55; transform: scale(0.94); } 50% { opacity: 1; transform: scale(1.04); } }
+@keyframes sbc-line-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes sbc-now { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .sbc-load-mark::before, .sbc-load-mark::after, .sbc-load-strip i.now, .sbc-load-line { animation: none; } }
 .sbc-drawing-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .sbc-drawing-foot .dim { font-size: 12px; color: var(--faint); }
 

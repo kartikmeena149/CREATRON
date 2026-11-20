@@ -6,14 +6,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import type { PlanEvent, SavedPlan } from "../src/chatTypes.ts";
-import { type Shot, type Storyboard, sayingTime, scenesOf, stripSceneMark } from "../src/storyboard.ts";
+import { type Storyboard, sayingTime, scenesOf, stripSceneMark } from "../src/storyboard.ts";
 import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } from "./Dictation.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
-import { useEditor } from "./store.ts";
+import { boardFromEvent, useEditor } from "./store.ts";
 import { StoryboardMark } from "./StoryboardMark.tsx";
 import { Sketch } from "./Storyboard.tsx";
-import { aspect, drawShot } from "./storyboardSketch.ts";
+import { aspect } from "./storyboardSketch.ts";
 
 type Job = {
   key: string;
@@ -47,14 +47,14 @@ window.creatron.onPlanEvent?.(({ key, event }: { key: string; event: PlanEvent }
     set({ fraction: event.fraction, remainingMs: event.remainingMs });
   } else if (event.type === "storyboard") {
     set({ status: "ready", step: "" });
-    useEditor.setState({ board: { video: event.video, dir: event.dir, round: event.round, draft: event.board, status: "waiting", plan: true }, boardOpen: true });
+    useEditor.setState({ board: boardFromEvent(event, true, useEditor.getState().board), boardOpen: true });
   } else if (event.type === "done") {
     set({ status: "approved", dir: event.dir });
   } else if (event.type === "error") {
     const stopped = /^Stopped/.test(event.error);
     set({ status: stopped ? "stopped" : "failed", error: stopped ? undefined : event.error });
     const b = useEditor.getState().board;
-    if (b?.plan && b.video === key && b.status !== "approved") useEditor.setState({ board: { ...b, status: "closed" } });
+    if (b?.plan && b.video === key && b.status !== "approved") useEditor.setState({ board: { ...b, status: "closed", error: stopped ? undefined : event.error } });
   }
 });
 
@@ -263,9 +263,9 @@ function ScriptEditor({ value, onChange: set, readOnly }: { value: string; onCha
 const BEATS = ["Reading your script", "Finding the hook", "Blocking out the shots", "Choosing the camera moves", "Planning what moves on screen", "Picking the B-roll", "Writing the sound", "Checking every scene against the script"];
 
 /**
- * The storyboard being drawn: a panel per scene of the script, the one Claude is on sketched live in
- * pencil with the red pencil moving over it, the finished ones kept, the rest waiting as blank frames.
- * The sketches here are stand-ins for the wait; Claude's real shots replace them when it's done.
+ * While Claude draws the storyboard: the Storyboard Creator's mark drawing itself in the middle of the
+ * page, what Claude is doing under it, the scene it's on, and a strip with a segment per scene of the
+ * script that fills as the scenes are done. Claude's real shots open on their own when it's finished.
  */
 function Drawing({ job, redrawing, onStop }: { job: Job; redrawing: boolean; onStop: () => void }) {
   const [now, setNow] = useState(Date.now());
@@ -273,35 +273,35 @@ function Drawing({ job, redrawing, onStop }: { job: Job; redrawing: boolean; onS
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
-  const scenes = job.scenes?.length ? job.scenes : ["", "", "", "", "", ""];
+  const scenes = job.scenes?.length ? job.scenes : [];
   const n = scenes.length;
   const opening = job.step === "Opening the storyboard";
-  const at = redrawing ? Math.floor(((now / 900) % n)) : Math.min(n - 1, Math.floor((job.fraction ?? 0) * n));
+  const at = n ? (redrawing ? Math.floor((now / 900) % n) : Math.min(n - 1, Math.floor((job.fraction ?? 0) * n))) : 0;
   const elapsed = Math.max(0, (now - (job.started ?? now)) / 1000);
   const left = redrawing ? "" : job.remainingMs && job.remainingMs > 45_000 ? `about ${Math.ceil(job.remainingMs / 60_000)} min left` : "almost there";
   const said = job.step && !/^(Step:|Tools:|Starting|Reading your script|Opening)/.test(job.step) ? job.step : BEATS[Math.min(BEATS.length - 1, Math.floor(elapsed / 9))];
-  const format = job.format ?? "9:16";
-  const ratio = aspect(format);
-  const w = ratio < 1 ? 92 : ratio === 1 ? 120 : 150;
+  const line = scenes[at]?.trim();
   return (
     <div className="sbc-card sbc-drawing">
       <div className="sbc-drawing-head">
         <span className="sbc-drawing-state">
           <i className="sbc-rec" />
-          {opening ? "Opening your storyboard" : redrawing ? "Redrawing with your changes" : `Drawing scene ${String(at + 1).padStart(2, "0")} of ${String(n).padStart(2, "0")}`}
+          {opening ? "Opening your storyboard" : redrawing ? "Redrawing with your changes" : n ? `Drawing scene ${String(at + 1).padStart(2, "0")} of ${String(n).padStart(2, "0")}` : "Drawing your storyboard"}
         </span>
         <span className="mono dim">{clock(elapsed)}{left ? ` · ${left}` : ""}</span>
       </div>
-      <h3 className="sbc-drawing-title">{job.title}</h3>
-      <p className="sbc-drawing-say"><span className="shimmer">{opening ? "Getting it back where you left it" : redrawing ? "Claude is reworking the shots you asked about" : said}</span></p>
-      <div className="sbc-panels">
-        {scenes.map((line, i) => (
-          <div key={i} className={`sbc-panel ${i < at ? "done" : i === at ? "now" : "todo"}`} style={{ width: w }}>
-            <span className="sbc-panel-num">{String(i + 1).padStart(2, "0")}</span>
-            <PanelSketch index={i} line={line} format={format} width={w} state={i < at ? "done" : i === at ? "now" : "todo"} />
-            {line && <p className="sbc-panel-line">{line}</p>}
+      <div className="sbc-load">
+        <div className="sbc-load-mark"><StoryboardMark size={132} animated /></div>
+        <h3 className="sbc-drawing-title">{job.title}</h3>
+        <p className="sbc-drawing-say"><span className="shimmer">{opening ? "Getting it back where you left it" : redrawing ? "Claude is reworking the shots you asked about" : said}</span></p>
+        {!opening && line && (
+          <p key={at} className="sbc-load-line"><span className="mono">{String(at + 1).padStart(2, "0")}</span>“{line}”</p>
+        )}
+        {!opening && n > 0 && (
+          <div className="sbc-load-strip" role="progressbar" aria-valuemin={0} aria-valuemax={n} aria-valuenow={at}>
+            {scenes.map((_, i) => <i key={i} className={i < at ? "done" : i === at ? "now" : ""} />)}
           </div>
-        ))}
+        )}
       </div>
       <div className="sbc-drawing-foot">
         <span className="dim">{redrawing ? "The new draft opens on its own when it's ready." : "The storyboard opens on its own when every scene is drawn. You can leave this page."}</span>
@@ -309,75 +309,6 @@ function Drawing({ job, redrawing, onStop }: { job: Job; redrawing: boolean; onS
       </div>
     </div>
   );
-}
-
-/** A stand-in shot for a scene, so the pencil has something to draw while Claude decides the real one. */
-function standIn(index: number, line: string): Shot {
-  const words = line.replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/).filter((x) => x.length > 2);
-  const kind = /\?$/.test(line.trim()) || index % 4 === 3 ? "text" : index % 4 === 1 ? "talking" : index % 4 === 2 ? "graphic" : "broll";
-  const big = words.slice(0, 2).join(" ").toUpperCase();
-  const layers: Shot["layers"] =
-    kind === "text" ? [{ kind: "text", x: 0.1, y: 0.36, w: 0.8, h: 0.2, text: big || "TITLE" }]
-    : kind === "graphic" ? [{ kind: "chart", x: 0.14, y: 0.3, w: 0.72, h: 0.32 }, { kind: "caption", x: 0.12, y: 0.74, w: 0.76, h: 0.06, text: words.slice(-2).join(" ") }]
-    : [{ kind: "caption", x: 0.12, y: 0.74, w: 0.76, h: 0.06, text: words.slice(0, 2).join(" ") }];
-  return { id: `wait-${index}`, line, from: 0, to: 1, kind, layers, camera: index % 3 === 0 ? "zoom-in" : "still", transition: "cut" };
-}
-const WAIT_BOARD = (format: Storyboard["format"]): Storyboard => ({ title: "", idea: "", format, look: { palette: [], font: "SF Pro Display", mood: "", captions: "" }, shots: [] });
-
-/**
- * One panel of the drawing view. Waiting: a blank dashed frame. Now: the stand-in sketch revealed
- * stroke by stroke, top to bottom, behind a red pencil tip. Done: the finished sketch.
- */
-function PanelSketch({ index, line, format, width, state }: { index: number; line: string; format: Storyboard["format"]; width: number; state: "done" | "now" | "todo" }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const h = Math.round(width / aspect(format));
-  useEffect(() => {
-    const c = ref.current;
-    if (!c || state === "todo") return;
-    const scale = Math.min(2, window.devicePixelRatio || 2);
-    const full = document.createElement("canvas");
-    drawShot(full, width, h, scale, standIn(index, line), WAIT_BOARD(format), null, "dark");
-    c.width = full.width;
-    c.height = full.height;
-    const g = c.getContext("2d")!;
-    if (state === "done") return void g.drawImage(full, 0, 0);
-    // Drawn in rows like a hand hatching down the panel; the red pencil at the edge of what's drawn.
-    let raf = 0;
-    const start = performance.now();
-    const rows = 14;
-    const frame = (t: number) => {
-      const p = ((t - start) % 3400) / 2800; // 2.8 s of drawing, a moment's pause, again
-      g.clearRect(0, 0, c.width, c.height);
-      const done = Math.min(1, p) * rows;
-      const rowH = c.height / rows;
-      for (let r = 0; r < Math.ceil(done); r++) {
-        const part = Math.min(1, done - r);
-        const ltr = r % 2 === 0;
-        const rw = c.width * part;
-        g.drawImage(full, ltr ? 0 : c.width - rw, r * rowH, rw, rowH + 1, ltr ? 0 : c.width - rw, r * rowH, rw, rowH + 1);
-      }
-      if (p < 1) {
-        const r = Math.floor(done);
-        const part = done - r;
-        const x = (r % 2 === 0 ? part : 1 - part) * c.width;
-        const y = (r + 0.5) * rowH;
-        g.fillStyle = "#e5231b";
-        g.beginPath();
-        g.arc(x, y, 3.2 * scale, 0, Math.PI * 2);
-        g.fill();
-        g.strokeStyle = "rgba(229,35,27,0.35)";
-        g.lineWidth = 1.2 * scale;
-        g.beginPath();
-        g.moveTo(x, y);
-        g.lineTo(x + 14 * scale, y - 22 * scale); // the pencil's body, trailing up and right
-        g.stroke();
-      }
-      raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [state, index, line, format, width]);
-  return state === "todo" ? <div className="sbc-panel-blank" style={{ width, height: h }} /> : <canvas ref={ref} style={{ width, height: h }} />;
 }
 
 function Progress({ job }: { job: Job }) {

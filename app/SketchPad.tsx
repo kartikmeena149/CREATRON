@@ -4,7 +4,9 @@
 // The sketch and the strokes are two canvases: the eraser only ever rubs out the user's own lines.
 // The arrow points from a note in the user's words to what it's about ("move the logo here").
 import { useEffect, useRef, useState } from "react";
-import { MARK_COLORS, type Mark, type Shot } from "../src/storyboard.ts";
+import { MARK_COLORS, type Mark, type Shot, type Verdict } from "../src/storyboard.ts";
+import { ClaudeSaid } from "./ClaudeSaid.tsx";
+import { StoryboardMark } from "./StoryboardMark.tsx";
 import { Icon } from "./icons.tsx";
 import type { BoardState } from "./store.ts";
 import { type SketchTheme, aspect, drawShot, noteBox, strokeMarks } from "./storyboardSketch.ts";
@@ -20,13 +22,17 @@ export const sketching = () => open > 0;
 
 const round = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
 
-export function SketchPad({ b, shot, index, picture, editable, onChange, onClose, theme = "dark" }: {
+export function SketchPad({ b, shot, index, picture, editable, busy, said, onFix, onTry, onChange, onClose, theme = "dark" }: {
   b: BoardState; shot: Shot; index: number; picture: HTMLImageElement | null | undefined; editable: boolean; theme?: SketchTheme;
+  /** Claude is fixing this shot now; `said` is its answer to the last fix. */
+  busy?: boolean; said?: Verdict;
+  /** Fix with Claude: just this shot, from the drawing and its notes. `onTry` asks for Claude's suggestion instead. */
+  onFix?: () => void; onTry?: (text: string) => void;
   onChange: (marks: Mark[]) => void; onClose: () => void;
 }) {
   const ratio = aspect(b.draft.format);
   const fit = () => {
-    const maxH = window.innerHeight - 48 - 170;
+    const maxH = window.innerHeight - 48 - (said ? 280 : 170); // room for Claude's answer under it
     const maxW = window.innerWidth - 160;
     let h = maxH;
     let w = h * ratio;
@@ -49,6 +55,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
   const marks = shot.marks ?? [];
   const scale = Math.min(3, window.devicePixelRatio || 2);
 
+  useEffect(() => setBox(fit()), [Boolean(said)]);
   useEffect(() => {
     open++;
     const onResize = () => setBox(fit());
@@ -72,7 +79,9 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     g.setTransform(scale, 0, 0, scale, 0, 0);
     strokeMarks(g, box.w, box.h, list, theme);
   };
-  useEffect(() => paint(marks), [JSON.stringify(marks), box.w, box.h, theme]);
+  // The note being typed is the box on top: its old words aren't drawn under it.
+  const shown = note ? marks.map((m, i) => (i === note.index ? { ...m, text: "" } : m)) : marks;
+  useEffect(() => paint(shown), [JSON.stringify(shown), box.w, box.h, theme]);
 
   const commit = (next: Mark[]) => {
     setHistory((h) => [...h.slice(-49), marks]);
@@ -94,6 +103,8 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     onChange(next);
   };
   const clear = () => marks.length && commit([]);
+  const canFix = Boolean(onFix && editable && !busy && (shot.marks ?? []).length);
+  const fix = () => canFix && onFix!();
 
   // Keys while drawing: P pencil, E eraser, [ ] size, ⌘Z undo, ⇧⌘Z redo, esc or return to finish.
   useEffect(() => {
@@ -102,6 +113,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
       const k = e.key.toLowerCase();
       const used = () => (e.preventDefault(), e.stopImmediatePropagation());
       if ((e.metaKey || e.ctrlKey) && k === "z") return used(), e.shiftKey ? redo() : undo();
+      if ((e.metaKey || e.ctrlKey) && k === "enter") return used(), fix();
       if (e.metaKey || e.ctrlKey) return;
       if (k === "escape" || k === "enter") return used(), onClose();
       if (k === "p" || k === "b") return used(), setTool("pen");
@@ -134,7 +146,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
     if (note) return saveNote(); // a click outside the note box finishes it
     const [x, y] = at(e);
     live.current = { tool, color, size: widthOf(tool, size), points: tool === "arrow" ? [x, y, x, y] : [x, y] };
-    paint([...marks, live.current]);
+    paint([...shown, live.current]);
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     moveCursor(e);
@@ -145,7 +157,7 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
       const [x, y] = at(e);
       m.points[2] = x;
       m.points[3] = y;
-      return paint([...marks, m]);
+      return paint([...shown, m]);
     }
     const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const g = ink.current!.getContext("2d")!;
@@ -231,7 +243,13 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
           <button className="icon" disabled={!editable || !undone.length} onClick={redo} title="Redo (⇧⌘Z)"><Icon name="redo" size={15} /></button>
           <button disabled={!editable || !marks.length} onClick={clear} title="Rub out all your lines on this shot">Clear</button>
         </div>
-        <button className="export-btn sb-pad-done" onClick={onClose}>Done <kbd>esc</kbd></button>
+        {onFix && (
+          <button className="export-btn sb-pad-fix" disabled={!canFix} onClick={fix}
+            title="Claude changes just this shot, from your drawing and notes. If something can't be filmed or found, it says why. (⌘↵)">
+            <Icon name="sparkle" size={13} /> {busy ? "Fixing…" : "Fix with Claude"} <kbd>⌘↵</kbd>
+          </button>
+        )}
+        <button className="sb-pad-done" onClick={onClose}>Done <kbd>esc</kbd></button>
       </div>
       <div className={`sb-pad-stage ${tool}`} style={{ width: box.w, height: box.h }}>
         <canvas ref={base} style={{ width: box.w, height: box.h }} />
@@ -241,6 +259,13 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
           onPointerLeave={() => cursor.current && (cursor.current.style.opacity = "0")}
         />
         {editable && tool !== "arrow" && <div ref={cursor} className={`sb-pad-cursor ${tool}`} style={{ ["--c" as string]: color }} />}
+        {busy && (
+          <div className="sb-redraw-mark big">
+            <StoryboardMark size={96} animated />
+            <b>Claude is fixing shot {String(index + 1).padStart(2, "0")}</b>
+            <span className="shimmer">Reading your drawing. Nothing else on the storyboard changes.</span>
+          </div>
+        )}
         {note && noteAt && (
           <input
             className="sb-pad-note" autoFocus value={note.text} placeholder="What should change here?" maxLength={80}
@@ -250,19 +275,25 @@ export function SketchPad({ b, shot, index, picture, editable, onChange, onClose
             onBlur={(e) => (performance.now() - noteOpened.current < 250 ? requestAnimationFrame(() => e.target.focus()) : saveNote())}
             onKeyDown={(e) => {
               e.stopPropagation();
-              if (e.key === "Enter") saveNote();
+              if (e.key === "Enter") {
+                saveNote();
+                // ⌘↵: save the note and have Claude fix the shot now.
+                if ((e.metaKey || e.ctrlKey) && note.text.trim() && onFix && editable && !busy) onFix();
+              }
               if (e.key === "Escape") setNote(null);
             }}
           />
         )}
       </div>
-      <p className="sb-pad-hint">
-        {editable
+      {said && !busy ? <ClaudeSaid said={said} onTry={editable ? onTry : undefined} disabled={!editable} /> : <p className="sb-pad-hint">
+        {busy
+          ? "Claude is reading your drawing and notes. The new version of this shot shows up right here."
+          : editable
           ? tool === "arrow"
-            ? "Drag from where your note goes to what it's about, then type. Double-click a note to change it."
-            : "Circle it, cross it out, sketch where it goes, or point at it with a note. Claude reads all of it when you press Redraw or Approve."
+            ? "Drag from where your note goes to what it's about, then type. ⌘↵ saves it and has Claude fix this shot."
+            : "Circle it, cross it out, sketch where it goes, or point at it with a note. Fix with Claude changes just this shot."
           : "This storyboard isn't waiting for an answer, so drawing is off."}
-      </p>
+      </p>}
     </div>
   );
 }

@@ -14,7 +14,7 @@
 // Its tool belt (autoedit-tools.ts) and the ffmpeg/ffprobe wrappers first on its PATH still send
 // tools through the wall, and validateProject still keeps the result an editable project.
 import { type ChildProcess, spawn } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, relative } from "node:path";
 import { ensureBrowser } from "@remotion/renderer";
@@ -22,7 +22,8 @@ import { analyze } from "./analyze.ts";
 import { startBroker } from "./autoedit-broll.ts";
 import { describe } from "./plan.ts";
 import { finalFile, projectName, projectPaths, scaffoldProject, validateProject } from "./project.ts";
-import { type Storyboard, approvedPrompt, checkScenes, parseStoryboard, redrawPrompt, sayingTime, scenesOf } from "./storyboard.ts";
+import { type Storyboard, type Verdict, approvedPrompt, checkScenes, keepUnpicked, parseStoryboard, readVerdict, redrawPrompt, sayingTime, scenesOf, withoutArrowNotes } from "./storyboard.ts";
+import { saveDraft } from "./storyboardFiles.ts";
 import { chromeOutsideProtectedFolders } from "./remotion.ts";
 import { find, health, healthProblems, healthReport } from "./toolchain.ts";
 import { ROOT, round, run, workDir } from "./tools.ts";
@@ -31,7 +32,12 @@ import { ROOT, round, run, workDir } from "./tools.ts";
  * Shows the storyboard to the user and waits for their answer: approve (with their edits), or
  * changes to redraw. Without one (the command line), the edit doesn't stop for a storyboard.
  */
-export type StoryboardReview = (board: Storyboard, dir: string, round: number) => Promise<{ approve: true; board: Storyboard } | { approve: false; board: Storyboard; changes: string }>;
+/** The user's answer to a storyboard. A redraw's `only` = the shots they picked: nothing else changes. */
+export type StoryboardReview = (
+  board: Storyboard, dir: string, round: number, drafts: Storyboard[],
+  /** After a redraw: what Claude changed, and what it couldn't and why. */
+  said?: Verdict,
+) => Promise<{ approve: true; board: Storyboard } | { approve: false; board: Storyboard; changes: string; only?: string[] }>;
 /** clips: the user's own clips (the library), linked into assets/clips/ for Claude to use. */
 export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string; clips?: string[]; review?: StoryboardReview };
 export type AutoEditMarker = { n: number; time: number; x: number; y: number };
@@ -135,13 +141,24 @@ async function storyboard(
     }
   };
   let { turn, board } = start ?? (await read(await ask(first)));
+  let said: Verdict | undefined;
   for (let round = 1; ; round++) {
     info("Storyboard ready: waiting for your OK");
-    const answer = await waitForUser(review(board, dir, round));
+    // Every draft is kept (notes/storyboard-drafts/): the user can step back to an earlier one.
+    const answer = await waitForUser(review(board, dir, round, saveDraft(dir, board), said));
     writeFileSync(file, JSON.stringify(answer.board, null, 2));
     if (answer.approve) return { turn, board: answer.board };
-    info("Redrawing the storyboard");
-    ({ turn, board } = await read(await ask(redrawPrompt(answer.board, answer.changes), turn.session)));
+    const only = answer.only?.filter((id) => answer.board.shots.some((s) => s.id === id));
+    info(only?.length ? `Redrawing ${only.length === 1 ? "shot" : "shots"} ${only.join(", ")}` : "Redrawing the storyboard");
+    const asked = await ask(redrawPrompt(answer.board, answer.changes, only), turn.session);
+    said = readVerdict(asked.text);
+    ({ turn, board } = await read(asked));
+    // Only the picked shots change, whatever else Claude touched. Their notes and drawings are
+    // answered now: they go, so the next redraw doesn't do them again (other shots keep theirs).
+    if (only?.length) board = keepUnpicked(answer.board, board, only);
+    const answered = (id: string) => !only?.length || only.includes(id);
+    board = { ...board, shots: board.shots.map(({ drawing: _, ...shot }) => ({ ...shot, ask: answered(shot.id) ? undefined : withoutArrowNotes(shot.ask) })) };
+    writeFileSync(file, JSON.stringify(board, null, 2));
   }
 }
 
@@ -255,7 +272,7 @@ export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) 
   writeFileSync(join(p.notes, "script.md"), `# The script\n\nWhat will be said, one scene per line, in order. Nothing is filmed yet. The times are each line's speaking time at a natural pace.\n\n${numbered.join("\n")}\n`);
   writeFileSync(join(p.notes, "brief.md"), `# What the user wants\n\n${req.title?.trim() ? `Title: ${req.title.trim()}\n` : ""}Format: ${req.format}\n\n${req.direction?.trim() || "(no direction given: plan the strongest video for this script and format)"}\n`);
   writeFileSync(join(p.notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
-  writeFileSync(join(p.notes, "PLAYBOOK.md"), playbook());
+  writeGuides(dir);
   const assets = req.assets.filter((a) => existsSync(a));
   if (assets.length) {
     const into = join(dir, "assets", "clips");
@@ -317,10 +334,23 @@ export async function reopenPlan(dir: string, model: string, review: StoryboardR
   const saved = existsSync(lastSessionFile(dir)) ? readFileSync(lastSessionFile(dir), "utf8").trim() : "";
   const scenes = readPlanInfo(dir).scenes;
   writeShims(dir);
+  // Like every AI job: which tools work now. And the playbook as it is today (the folder keeps the
+  // one from when it was made), so a redraw follows what Creatro knows now (title fonts, effects...).
+  const tools = health(true);
+  for (const line of healthProblems(tools)) info(`Tools: ${line}`);
+  const notes = projectPaths(dir).notes;
+  writeFileSync(join(notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
+  writeGuides(dir);
   const estimate = new Estimate(BOARD_STAGES, 60_000, Date.now(), dir, emit);
   const broker = await startBroker(dir);
-  const ask = (prompt: string, session?: string) =>
-    claude(dir, model, session || saved ? prompt : `Read notes/PLAYBOOK.md, section "Storyboard first", notes/script.md and notes/brief.md: you planned this storyboard earlier.\n\n${prompt}`, session || saved || undefined, emit, estimate, broker.url);
+  let first = true;
+  const ask = (prompt: string, session?: string) => {
+    const intro = session || saved
+      ? first ? `notes/PLAYBOOK.md has been updated since you last read it: read its section "Storyboard first" again before you change anything.\n\n` : ""
+      : `Read notes/PLAYBOOK.md, section "Storyboard first", notes/script.md and notes/brief.md: you planned this storyboard earlier.\n\n`;
+    first = false;
+    return claude(dir, model, intro + prompt, session || saved || undefined, emit, estimate, broker.url);
+  };
   try {
     const r = await storyboard(dir, review, ask, info, "", scenes?.length ? (b) => checkScenes(b, scenes) : undefined, { turn: { text: "", session: saved }, board });
     writePlanInfo(dir, { approved: new Date().toISOString() });
@@ -344,6 +374,7 @@ export async function autoEditFix(
   const started = Date.now();
   const dir = autoEditDir(video);
   const final = finalFile(dir);
+  installSkills(dir);
   const pictures = markers.length ? await markerFrames(dir, final, markers) : [];
   const estimate = new Estimate(FIX_STAGES, fixEstimate(), started, dir, emit);
   estimate.stage("fix");
@@ -439,7 +470,7 @@ function prepare(dir: string, req: AutoEditRequest, analysis: Awaited<ReturnType
   if (!hasVideo) appendFileSync(join(notes, "brief.md"), "\nThe recording is AUDIO ONLY: build every picture yourself (B-roll, graphics, captions).\n");
   if (!analysis.words.length) appendFileSync(join(notes, "brief.md"), "\nThere is NO TRANSCRIPT (no speech, or the transcriber isn't working): cut on the pauses and type any captions yourself into project/timeline.json.\n");
   writeFileSync(join(notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${tools}\n\`\`\`\n\nBROKEN or FALLBACK lines: don't try that tool, use what the line says instead and carry on. Mention it in one sentence of your summary.\n`);
-  writeFileSync(join(notes, "PLAYBOOK.md"), playbook());
+  writeGuides(dir);
   // The user's own clips (their library), linked in so the project stays local and complete.
   const clips = (req.clips ?? []).filter((c) => c !== req.video && existsSync(c));
   if (clips.length) {
@@ -501,6 +532,29 @@ function linkOrCopy(from: string, to: string) {
     linkSync(from, to); // same disk: instant and no extra space
   } catch {
     copyFileSync(from, to);
+  }
+}
+
+/**
+ * What Claude reads before it works: the playbook (notes/PLAYBOOK.md) and Creatro's own skills
+ * (skills/ -> .claude/skills/), written fresh before every job so a redraw or fix follows what
+ * Creatro knows today. The skills ship with Creatro, so any Claude it starts knows how Creatro
+ * storyboards and edits, even a fresh account with no skills of its own.
+ */
+function writeGuides(dir: string) {
+  writeFileSync(join(projectPaths(dir).notes, "PLAYBOOK.md"), playbook());
+  installSkills(dir);
+}
+/** Creatro's skills into the project's .claude/skills/, where Claude finds them. */
+function installSkills(dir: string) {
+  const from = join(ROOT, "skills");
+  if (!existsSync(from)) return;
+  const into = join(dir, ".claude", "skills");
+  mkdirSync(into, { recursive: true });
+  for (const e of readdirSync(from, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    rmSync(join(into, e.name), { recursive: true, force: true }); // the version shipped today, nothing stale
+    cpSync(join(from, e.name), join(into, e.name), { recursive: true });
   }
 }
 

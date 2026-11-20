@@ -9,7 +9,7 @@ import { compactTracks, freeTrack, isEffectsTrack, spanFree, userClip } from "..
 import { effectDef, registerPresets } from "../motion/Effects.tsx";
 import type { EffectPreset } from "../src/sceneEffects.ts";
 import { nearestCut } from "./cuts.ts";
-import type { Storyboard } from "../src/storyboard.ts";
+import type { Storyboard, Verdict } from "../src/storyboard.ts";
 import { useFx } from "./fxState.ts";
 import { AUDIO_KEYS, BROLL_KEYS, SEGMENT_KEYS, routeToKeys, shiftKeys } from "../src/keyframes.ts";
 import { type LayerEdit, type Scene, voiceOf } from "../src/scene.ts";
@@ -63,7 +63,36 @@ export type BoardState = {
   status: "waiting" | "redrawing" | "approved" | "closed";
   /** Made by the Storyboard creator from a script: no recording behind it (video is its job's key). */
   plan?: boolean;
+  /** Every draft Claude made, oldest first, and the one shown: Undo and Redo step through them. */
+  versions?: Storyboard[];
+  at?: number;
+  /** While redrawing: the shots being redrawn (none = the whole storyboard). */
+  only?: string[];
+  /** After a redraw: what Claude changed, and what it couldn't make and why; `saidFor` = the shots it was about. */
+  said?: Verdict;
+  saidFor?: string[];
+  /** Why it stopped waiting, when it wasn't the user (Claude's usage limit, a failed run). */
+  error?: string;
 };
+
+/**
+ * The board state for a new draft from Claude: the newest of its drafts, shown. After a redraw of
+ * picked shots, every other shot is the user's own as they left it (drawings and notes still on it),
+ * and a picked shot Claude couldn't change keeps the user's drawing, to try another way.
+ */
+export function boardFromEvent(
+  e: { board: Storyboard; dir: string; round: number; video: string; drafts?: Storyboard[]; said?: Verdict }, plan?: boolean, prev?: BoardState | null,
+): BoardState {
+  const versions = e.drafts?.length ? e.drafts : [e.board];
+  const sent = prev?.status === "redrawing" && prev.dir === e.dir ? prev : undefined;
+  let draft = e.board;
+  if (sent?.only?.length) {
+    const mine = new Map(sent.draft.shots.map((s) => [s.id, s]));
+    const keepMine = (id: string) => !sent.only!.includes(id) || (e.said?.declined && !e.said.changed);
+    draft = { ...draft, shots: draft.shots.map((s) => (keepMine(s.id) && mine.has(s.id) ? mine.get(s.id)! : s)) };
+  }
+  return { video: e.video, dir: e.dir, round: e.round, draft, status: "waiting", plan, versions, at: versions.length - 1, said: e.said, saidFor: sent ? sent.only ?? [] : undefined };
+}
 
 type State = {
   project?: Project;
@@ -674,7 +703,7 @@ export const useEditor = create<State>((set, get) => ({
       if (s.board?.status === "waiting" || s.board?.status === "redrawing") set({ board: { ...s.board, status: "closed" } });
     } else if (e.type === "storyboard") {
       m.board = e.round;
-      set({ board: { video: e.video, dir: e.dir, round: e.round, draft: e.board, status: "waiting" }, boardOpen: true });
+      set({ board: boardFromEvent(e, false, s.board), boardOpen: true });
     } else if (e.type === "plan") {
       // The first change of a turn is one undo step; after that the timeline follows Claude live.
       if (!m.before) (m.before = s.plan), get().checkpoint();
@@ -684,7 +713,7 @@ export const useEditor = create<State>((set, get) => ({
       Object.assign(m, { status: e.question ? "waiting" : "done", question: e.question, ended: Date.now(), after: m.before ? get().plan : undefined });
     } else if (e.type === "error") {
       Object.assign(m, { status: "error", error: e.error, ended: Date.now() });
-      if (s.board && s.board.status !== "approved") set({ board: { ...s.board, status: "closed" } });
+      if (s.board && s.board.status !== "approved") set({ board: { ...s.board, status: "closed", error: e.error } });
     }
     msgs[i] = m;
     set({ messages: msgs, busy: e.type === "done" || e.type === "error" ? false : s.busy });

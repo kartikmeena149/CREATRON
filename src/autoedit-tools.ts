@@ -63,6 +63,10 @@ const COMMANDS: Record<string, Command> = {
     usage: "cutout                                  the speaker without background -> assets/cutouts/speaker.webm",
     run: async () => (await import("./belt/cutout.ts")).cutout(),
   },
+  "3d": {
+    usage: "3d new <name> [--seconds 5] | 3d still <name> <t>[,<t>] | 3d render <name> [--n 16]   a 3D shot in code (assets/3d/<name>) -> assets/broll/<name>.mp4",
+    run: async (args) => (await import("./belt/scene3d.ts")).scene3d(args),
+  },
   broll: {
     usage: 'broll search "<words>" [--landscape|--portrait|--web]  |  broll get <id> <name> [--from s --to s | --find "..."] [--audio]',
     run: async ([what, ...rest]) => {

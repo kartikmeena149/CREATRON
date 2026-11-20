@@ -45,7 +45,7 @@ declare global {
       /** Adds a Claude edit's effects to the library; the names of the new ones. */
       extractEffects(file: string): Promise<Result<string[]>>;
       chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean, library?: string[]): Promise<Result<void>>;
-      storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string> }): Promise<boolean>;
+      storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string>; only?: string[] }): Promise<boolean>;
       planStart(req: { title?: string; script: string; direction?: string; format: "9:16" | "16:9" | "1:1" | "4:5"; assets: string[]; model: string }): Promise<Result<{ key: string; dir: string }>>;
       planStop(): Promise<void>;
       planOpen(dir: string, model: string): Promise<Result<{ key: string; dir: string }>>;

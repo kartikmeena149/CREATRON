@@ -188,10 +188,10 @@ ipcMain.handle(
     if (!handoff) return;
     try {
       // Storyboard first: shown in the window, the edit waits for the answer (storyboard-answer below).
-      const review: StoryboardReview = (board, dir, round) =>
+      const review: StoryboardReview = (board, dir, round, drafts, said) =>
         new Promise((resolve) => {
           boardAnswers.set(path, { resolve, dir });
-          emit({ type: "storyboard", board, dir, round, video: path });
+          emit({ type: "storyboard", board, dir, round, video: path, drafts, said });
         });
       const result = await runFullEdit(path, handoff, model.replace(/^claude-code\//, ""), emit, { clips: library, review });
       emit({ type: "result", result: { ...result, url: `${mediaUrl(result.final)}&v=${Date.now()}` } });
@@ -208,14 +208,15 @@ ipcMain.handle("chat-stop", (_e, path: string) => (boardAnswers.delete(path), st
 
 /** Storyboards waiting for the user, by video: their answer lets the full edit go on (or redraw). */
 const boardAnswers = new Map<string, { resolve: (answer: Awaited<ReturnType<StoryboardReview>>) => void; dir: string }>();
-ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string> }) => {
+ipcMain.handle("storyboard-answer", (_e, video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string>; only?: string[] }) => {
   const waiting = boardAnswers.get(video);
   if (!waiting) return false;
   const parsed = Storyboard.safeParse(answer.board);
   if (!parsed.success) return false;
   boardAnswers.delete(video);
   const board = withDrawings(parsed.data, waiting.dir, answer.drawings ?? {});
-  waiting.resolve(answer.approve ? { approve: true, board } : { approve: false, board, changes: answer.changes ?? "" });
+  const only = Array.isArray(answer.only) ? answer.only.filter((id): id is string => typeof id === "string") : undefined;
+  waiting.resolve(answer.approve ? { approve: true, board } : { approve: false, board, changes: answer.changes ?? "", only: only?.length ? only : undefined });
   return true;
 });
 
@@ -236,12 +237,12 @@ function runPlan(dir: string, job: (review: StoryboardReview, emit: (e: unknown)
   const me: NonNullable<typeof planning> = { key, phase: "drafting" };
   planning = me;
   const emit = (event: unknown) => !me.quiet && send("plan-event", { key, event });
-  const review: StoryboardReview = (board, dir, round) =>
+  const review: StoryboardReview = (board, dir, round, drafts, said) =>
     new Promise((resolve, reject) => {
       me.phase = "waiting";
       me.close = () => reject(new Error("Stopped."));
       boardAnswers.set(key, { resolve: (a) => ((me.phase = "drafting"), (me.close = undefined), resolve(a)), dir });
-      emit({ type: "storyboard", board, dir, round, video: key });
+      emit({ type: "storyboard", board, dir, round, video: key, drafts, said });
     });
   void job(review, emit)
     .then(({ dir }) => emit({ type: "done", dir }))

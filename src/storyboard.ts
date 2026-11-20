@@ -6,10 +6,81 @@
 // Pure: no Node or browser APIs, the app imports it too.
 import { z } from "zod";
 
-export const SHOT_KINDS = ["talking", "broll", "image", "split", "cutout", "text", "graphic"] as const;
+export const SHOT_KINDS = ["talking", "broll", "image", "split", "cutout", "text", "graphic", "document"] as const;
+/** Where a shot sits in the story: the claim, the context, the surprise, the evidence, what it means, the ask. */
+export const BEATS = ["hook", "setup", "turn", "proof", "payoff", "cta"] as const;
 export const CAMERAS = ["still", "zoom-in", "zoom-out", "punch-in", "pan-left", "pan-right", "shake"] as const;
 export const TRANSITIONS = ["cut", "whip", "zoom", "fade", "slide", "glitch", "flash"] as const;
 export const LAYER_KINDS = ["text", "caption", "image", "footage", "box", "arrow", "sticker", "chart"] as const;
+/**
+ * How a title's letters are finished: plain, a soft shadow, hollow, lit, 3D block, metal; or as a
+ * tag (an accent box behind dark letters, naming a thing) or a highlight (a marker stroke over words
+ * on a page, the way a creator shows a source).
+ */
+export const EFFECTS = ["none", "shadow", "outline", "glow", "extrude", "gold", "chrome", "tag", "highlight"] as const;
+
+/**
+ * Typefaces every Mac has (checked in Creatro's window and its renderer), with what each one says.
+ * Titles pick from these by name; a weight word may follow ("Avenir Next Condensed Heavy").
+ */
+export const FONTS: Record<string, string> = {
+  "SF Pro": "Apple's own: clean, modern, tech (default)",
+  "Helvetica Neue": "neutral Swiss sans: news, corporate, minimal",
+  "Avenir Next": "friendly geometric sans: premium, product, calm",
+  "Avenir Next Condensed": "tall and tight: trailers, headlines, sport",
+  "Futura": "bold geometry: fashion, retro-future, Kubrick",
+  "Gill Sans": "humanist British sans: heritage, documentary",
+  "Optima": "flared sans: elegant, wellness, luxury without serifs",
+  "DIN Condensed": "industrial: data, engineering, sport scores",
+  "Impact": "loud and blunt: memes, thumbnails",
+  "Didot": "high-contrast serif: fashion magazine, luxury",
+  "Bodoni 72": "editorial serif: Vogue, perfume, drama",
+  "Big Caslon": "dramatic old-style: big statements, history",
+  "Baskerville": "classic book serif: literary, trustworthy",
+  "Hoefler Text": "refined serif: wine, finance, old money",
+  "Iowan Old Style": "warm readable serif: stories, essays",
+  "Copperplate": "engraved capitals: formal, banks, invitations",
+  "Rockwell": "slab serif: vintage, sturdy, Americana",
+  "Superclarendon": "chunky slab: posters, westerns, bold retro",
+  "American Typewriter": "typed: documentary, evidence, letters",
+  "Marker Felt": "felt pen: playful, kids, notes",
+  "Chalkduster": "chalk: classroom, sketchy",
+  "Snell Roundhand": "formal script: weddings, romance",
+  "Zapfino": "flourished calligraphy: one word, very elegant",
+  "Phosphate": "inline poster display: circus, retro signage",
+  "Trattatello": "medieval: fantasy, legends",
+};
+
+/**
+ * A font as the user or Claude wrote it ("Futura Condensed ExtraBold", "Didot Bold Italic", even
+ * "Futura for titles, SF Pro for captions"): its family, weight, italic and width. A family on the
+ * list is matched whatever its case; a condensed cut of one is the family made narrow.
+ */
+const WEIGHT_WORDS: Record<string, number> = { thin: 100, hairline: 100, ultralight: 200, extralight: 200, light: 300, regular: 400, book: 400, roman: 400, medium: 500, demibold: 600, semibold: 600, bold: 700, heavy: 800, extrabold: 800, ultrabold: 800, black: 900, ultra: 900 };
+const NARROW = /^(condensed|compressed|narrow)$/i;
+export function fontParts(name = ""): { family: string; weight?: number; italic?: boolean; condensed?: boolean } {
+  let weight: number | undefined;
+  let italic: boolean | undefined;
+  let condensed: boolean | undefined;
+  // Only the first font named.
+  const first = name.replace(/["']/g, "").split(/[,;(]|\s(?:for|and|with|\+)\s/i)[0]!.trim();
+  const words = first.split(/\s+/).filter(Boolean);
+  const known = (ws: string[]) => Object.keys(FONTS).find((f) => f.toLowerCase() === ws.join(" ").toLowerCase());
+  while (words.length > 1 && !known(words)) {
+    const w = words[words.length - 1]!.toLowerCase();
+    if (w === "italic" || w === "oblique") (italic = true), words.pop();
+    else if (WEIGHT_WORDS[w]) (weight ??= WEIGHT_WORDS[w]), words.pop();
+    else if (NARROW.test(w)) (condensed = true), words.pop();
+    else break;
+  }
+  return { family: known(words) ?? (words.join(" ") || "SF Pro"), weight, italic, condensed };
+}
+/** The CSS font-family for a family name: SF Pro is the system font (it has no name of its own). */
+export function fontStack(family: string): string {
+  if (/^(sf( pro)?( display| text)?|san francisco|system)$/i.test(family.trim()) || !family.trim()) return 'system-ui, "Helvetica Neue", sans-serif';
+  return `"${family.replace(/"/g, "")}", system-ui, sans-serif`;
+}
+
 /** How a layer arrives: just there (cut), or moving in. */
 export const ENTERS = ["cut", "pop", "fade", "zoom", "type", "draw", "from-left", "from-right", "from-top", "from-bottom"] as const;
 
@@ -28,6 +99,16 @@ export const Layer = z.object({
   enter: pick(ENTERS, "cut").optional().catch(undefined),
   /** Where its box's top left travels to during the shot (fractions of the frame), if it moves. */
   to: z.object({ x: unit, y: unit }).optional().catch(undefined),
+  /** A title's typeface (one of FONTS, a weight word may follow); the look's font when not given. */
+  font: str().optional(),
+  /** 100 (hairline) to 900 (black). */
+  weight: z.coerce.number().transform((v) => Math.min(900, Math.max(100, Math.round(v / 100) * 100))).optional().catch(undefined),
+  italic: z.boolean().optional().catch(undefined),
+  /** All capitals (the default for titles); false keeps the words as written. */
+  caps: z.boolean().optional().catch(undefined),
+  /** Letter spacing, in em: -0.05 tight to 0.4 wide. */
+  tracking: z.coerce.number().transform((v) => Math.min(0.5, Math.max(-0.1, v))).optional().catch(undefined),
+  effect: pick(EFFECTS, "none").optional().catch(undefined),
 });
 export type Layer = z.infer<typeof Layer>;
 
@@ -69,6 +150,8 @@ export const Shot = z.object({
   from: z.coerce.number().catch(0),
   to: z.coerce.number().catch(0),
   kind: pick(SHOT_KINDS, "talking"),
+  /** Its part in the story (hook, setup, turn, proof, payoff, cta). */
+  beat: z.enum(BEATS).optional().catch(undefined),
   /** What the picture comes from: "main" (the recording) or a project file (assets/clips/x.mp4), and when. */
   source: z.object({ file: str("main"), at: z.coerce.number().optional().catch(undefined) }).optional().catch(undefined),
   /** For B-roll still to be found: what it must show. */
@@ -142,6 +225,7 @@ export function checkStoryboard(b: Storyboard): string[] {
     ids.add(s.id);
     if (!s.layers.length && s.kind !== "talking" && s.kind !== "broll") out.push(`shot ${s.id} (${s.kind}) has no layers: draw what is on screen`);
     if (s.kind === "broll" && !s.query && s.source?.file === "main") out.push(`shot ${s.id} is B-roll but says neither what it must show (query) nor which file`);
+    if (s.kind === "document" && !s.query) out.push(`shot ${s.id} is a document but doesn't say which page (query: the publication and its headline or title)`);
   }
   return out;
 }
@@ -173,8 +257,9 @@ export const boardLength = (b: Storyboard) => b.shots.filter((s) => !s.dropped).
 
 /** The plain name of a shot kind, a camera move, a transition. */
 export const KIND_LABEL: Record<Shot["kind"], string> = {
-  talking: "On camera", broll: "B-roll", image: "Image", split: "Split screen", cutout: "Cutout", text: "Title card", graphic: "Graphic",
+  talking: "On camera", broll: "B-roll", image: "Image", split: "Split screen", cutout: "Cutout", text: "Title card", graphic: "Graphic", document: "Document",
 };
+export const BEAT_LABEL: Record<(typeof BEATS)[number], string> = { hook: "Hook", setup: "Setup", turn: "Turn", proof: "Proof", payoff: "Payoff", cta: "Ask" };
 export const CAMERA_LABEL: Record<Shot["camera"], string> = {
   still: "Still", "zoom-in": "Slow zoom in", "zoom-out": "Zoom out", "punch-in": "Punch in", "pan-left": "Pan left", "pan-right": "Pan right", shake: "Shake",
 };
@@ -182,14 +267,28 @@ export const ENTER_LABEL: Record<NonNullable<Layer["enter"]>, string> = {
   cut: "", pop: "Pops in", fade: "Fades in", zoom: "Zooms in", type: "Types on", draw: "Draws on",
   "from-left": "Slides in from the left", "from-right": "Slides in from the right", "from-top": "Drops in from the top", "from-bottom": "Rises from the bottom",
 };
-/** Each layer's movement in words ("“WHY LONG HAIR?” slides in from the left"), as the sketch draws it. */
+/** Circled numbers for the notes under a panel: the sketch marks the layer with the same one. */
+const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
+/** Each layer with a note, by its index in shot.layers: its callout number on the sketch (1, 2...). */
+export function noteNumbers(shot: Shot): Map<number, number> {
+  const out = new Map<number, number>();
+  shot.layers.forEach((l, i) => { if (l.note?.trim() && out.size < CIRCLED.length) out.set(i, out.size + 1); });
+  return out;
+}
+export const circled = (n: number) => CIRCLED[n - 1] ?? `(${n})`;
+/**
+ * Each layer's movement in words ("“WHY LONG HAIR?” slides in from the left"), as the sketch draws it.
+ * A layer with a note starts with its callout number (①), the mark next to it on the sketch.
+ */
 export function movesOf(shot: Shot): string[] {
+  const numbers = noteNumbers(shot);
   const NAME: Record<Layer["kind"], string> = { text: "Title", caption: "Caption", image: "Picture", footage: "Video card", box: "Frame", arrow: "Arrow", sticker: "Sticker", chart: "Chart" };
-  return shot.layers.flatMap((l) => {
+  return shot.layers.flatMap((l, i) => {
     const what = l.text?.trim() ? `${NAME[l.kind]} “${l.text.trim()}”` : NAME[l.kind];
     const how = [l.enter && l.enter !== "cut" ? ENTER_LABEL[l.enter].toLowerCase() : "", l.to ? "then moves across" : ""].filter(Boolean).join(", ");
     if (!how && !l.note?.trim()) return [];
-    return [`${what}${how ? ` ${how}` : ""}${l.note?.trim() ? ` (${l.note.trim()})` : ""}`];
+    const n = numbers.get(i);
+    return [`${n ? `${circled(n)} ` : ""}${what}${how ? ` ${how}` : ""}${l.note?.trim() ? ` (${l.note.trim()})` : ""}`];
   });
 }
 
@@ -199,8 +298,8 @@ export const TRANSITION_LABEL: Record<Shot["transition"], string> = {
 
 /** What Claude is told about the user's answer, to build from (or to redraw). */
 /** Where the user drew on shots: the pictures to look at, and how to read them. */
-function drawingsNote(b: Storyboard): string {
-  const drawn = b.shots.filter((s) => s.drawing);
+function drawingsNote(b: Storyboard, only?: string[]): string {
+  const drawn = b.shots.filter((s) => s.drawing && (!only?.length || only.includes(s.id)));
   if (!drawn.length) return "";
   return [
     "The user drew on these shots. Read each picture: it is the shot as they saw it, with their own pencil strokes on top",
@@ -224,12 +323,75 @@ export function approvedPrompt(b: Storyboard): string {
   ].filter(Boolean).join("\n");
 }
 
-export function redrawPrompt(b: Storyboard, changes: string): string {
-  const asks = b.shots.filter((s) => s.ask?.trim()).map((s) => `- ${s.id}: ${s.ask!.trim()}`);
+/**
+ * What Claude is told to change. `only` = the shots the user picked (the one open beside the board,
+ * and any they drew on or wrote a note on): those change, nothing else does.
+ */
+export function redrawPrompt(b: Storyboard, changes: string, only?: string[]): string {
+  const asks = b.shots.filter((s) => s.ask?.trim() && (!only?.length || only.includes(s.id))).map((s) => `- ${s.id}: ${s.ask!.trim()}`);
+  const picked = only?.length ? only.join(", ") : "";
   return [
-    `The user looked at the storyboard and wants changes: ${changes.trim() || "(see their notes on shots)"}`,
+    `The user looked at the storyboard and wants changes${picked ? ` to ${only!.length === 1 ? "shot" : "shots"} ${picked}` : ""}: ${changes.trim() || "(see their notes on shots)"}`,
     asks.length ? `Their notes on single shots:\n${asks.join("\n")}` : "",
-    drawingsNote(b),
-    "notes/storyboard.json holds their version (they may have edited shots, or dropped some: keep those edits). Redraw it with the changes, same format, then stop and reply with one sentence on what changed. Don't build anything yet.",
+    drawingsNote(b, only),
+    picked
+      ? `Change only ${picked}: the user picked ${only!.length === 1 ? "that shot" : "those shots"}. Every other shot, and the title, idea, look and music, stay exactly as they are: don't touch them. Keep each changed shot's id, and its from/to unless the change is about timing.`
+      : "",
+    CAN_IT_BE_MADE,
+    "notes/storyboard.json holds their version (they may have edited shots, or dropped some: keep those edits). Redraw it with the changes, same format, then stop. Don't build anything yet.",
+    REPLY_FORM,
   ].filter(Boolean).join("\n");
+}
+
+/** Before a change: can it be made? Real footage only shows what exists; a drawn picture shows anything. */
+const CAN_IT_BE_MADE = [
+  "Before you change a shot, check the change can really be made. Footage (B-roll to find, the speaker on camera, a real product, place or",
+  "person) can only show what exists and can be filmed or found: a real car with square wheels, a logo on a building that doesn't have one,",
+  "a famous person doing something they never did, can't be. Leave that part out and say why. A graphic, title card, illustration,",
+  "3D or animated shot can show anything: there, nothing is illogical, so just make it. A change that would break the video's own logic",
+  "(contradict the line being said, or the shots around it) is worth a word too.",
+].join(" ");
+
+/** How Claude answers a redraw, so the window can show it: what changed, and what it didn't do and why. */
+const REPLY_FORM = [
+  "Reply in this form and nothing else (each line only if it applies; short, plain words, addressed to the user; call shots \"shot 2\", never by id):",
+  "Changed: <what you changed, one sentence>",
+  "Not changed: <what you left out and why it can't be made, one sentence>",
+  "Try: <one change that would work instead, as an instruction, e.g. \"make this shot an animated graphic, then the wheels can be square\">",
+].join("\n");
+
+/** An arrow's note, copied into the shot's `ask` for Claude; taken out again once answered. */
+const ARROW_NOTE = " (an arrow note on their drawing)";
+export const arrowNote = (text: string) => `“${text.trim()}”${ARROW_NOTE}`;
+export function withoutArrowNotes(ask?: string): string | undefined {
+  const kept = (ask ?? "").split("; ").filter((p) => p.trim() && !p.endsWith(ARROW_NOTE)).join("; ");
+  return kept || undefined;
+}
+
+/** "s2" as the user knows it: "shot 02". */
+const named = (t: string) => t.replace(/\b(?:shot\s+)?s(\d{1,3})\b/gi, (_, n: string) => `shot ${n.padStart(2, "0")}`);
+
+/** Claude's answer to a redraw, read from its reply. */
+export type Verdict = { changed?: string; declined?: string; tryThis?: string };
+export function readVerdict(text: string): Verdict | undefined {
+  const v: Verdict = {};
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.replace(/^[\s*_>#-]+/, "").replace(/\*\*/g, "").trim();
+    const m = /^(not changed|changed|try)\s*:\s*(.+)$/i.exec(line);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase() === "try" ? "tryThis" : m[1]!.toLowerCase() === "changed" ? "changed" : "declined";
+    v[key] ??= named(m[2]!.trim().replace(/^["“]|["”]$/g, "")).slice(0, 300);
+  }
+  if (!v.changed && !v.declined && text.trim()) v.changed = named(text.trim().split(/\n/)[0]!).slice(0, 300);
+  return v.changed || v.declined ? v : undefined;
+}
+
+/**
+ * A redraw of picked shots, held to it: Claude's version of those shots, the user's version of
+ * everything else (even if Claude changed more than asked).
+ */
+export function keepUnpicked(before: Storyboard, after: Storyboard, only: string[]): Storyboard {
+  const picked = new Set(only);
+  const byId = new Map(after.shots.map((s) => [s.id, s]));
+  return { ...before, shots: before.shots.map((s, i) => (picked.has(s.id) ? (byId.get(s.id) ?? after.shots[i] ?? s) : s)) };
 }

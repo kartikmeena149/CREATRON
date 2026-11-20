@@ -71,6 +71,11 @@ this folder, never install anything, and never print, read or ask for API keys.
 - `node <script>.mjs` for your own helper scripts, and any shell command you need. WebSearch / WebFetch to
   research facts and visuals for the topic.
 - Read / Write / Edit / Glob / Grep: write only in this folder. Read images (PNG/JPG) to SEE them.
+- Creatro's own skills, in `.claude/skills/` (they ship with Creatro, so they are here even if your account has
+  none): storyboard-director, explainer-reels, editorial-reels, and 3d-animator (cinematic 3D shots made in code; read its
+  `IN-CREATRO.md` first).
+- `$T 3d new <name> [--seconds 5]` / `$T 3d still <name> 0.5,2 [--n 8]` / `$T 3d render <name> [--n 16]`: a 3D shot
+  made in code (three.js, the 3d-animator skill) in `assets/3d/<name>/`, rendered to `assets/broll/<name>.mp4`.
 
 ## When a tool doesn't work (state it in one line, use the next one, finish)
 | Job | First choice | If that's broken | Last resort |
@@ -80,6 +85,7 @@ this folder, never install anything, and never print, read or ask for API keys.
 | B-roll and music | `$T broll` (stock + web) | stock only (no `--web`) | No B-roll: design with type, shapes, the speaker and colour |
 | Sound effects | earshot bank | ffmpeg (`-f lavfi -i "sine=..."`, `anoisesrc` sweeps) into assets/sfx/ | No SFX |
 | Speaker cutout | `$T cutout` | (none) | Speaker as a rounded card or split screen instead |
+| 3D shot in code | `$T 3d` (Chrome on the GPU) | the same, in a headless Chrome (slower: `--n 4-8`) | The shot as Remotion/HyperFrames layers, B-roll or an illustration |
 | A frame to look at | `$T still` | `ffmpeg -ss <t> -i Export/<Name>.mp4 -frames:v 1` after a render | Reason from the code and check after rendering |
 Whatever the engine, the folder layout, timeline.json, README and render command stay exactly the same.
 
@@ -115,7 +121,14 @@ look and draw it (call `$T stage board`): read the notes, look at a few frames o
 `assets/clips/` (the user's own clips: use them where they fit), decide the edit, and write
 `notes/storyboard.json`. Don't cut, download or build yet. Creatro draws each shot as a sketch made from the real
 footage, lays them out like a film storyboard, plays them as an animatic over the voice, and makes a PDF of it.
-So it must read as the finished video, shot by shot:
+So it must read as the finished video, shot by shot.
+
+First read Creatro's own skills, which ship with it in this folder: `.claude/skills/storyboard-director/SKILL.md`
+(how a professional board is planned: beats, one idea per shot, evidence shots, how to write shots so the sketch
+reads), and the house style that fits: `.claude/skills/explainer-reels/SKILL.md` (a presenter on camera:
+science, tech, news) or `.claude/skills/editorial-reels/SKILL.md` (voice-over documentary: business, money,
+history). Plan to them.
+Where a skill and this playbook disagree, this playbook wins.
 
 ```json
 {
@@ -123,18 +136,18 @@ So it must read as the finished video, shot by shot:
   "idea": "One sentence: what the video says and why someone keeps watching.",
   "format": "9:16",
   "look": { "palette": ["#0B0B12", "#F5F5F0", "#FF3B30"], "font": "SF Pro Display Black", "mood": "fast, techy, news",
-            "captions": "white bold, 2 words a page, accent word red, lower third" },
+            "captions": "white bold capitals, one line of 3-5 words, no box, low-middle" },
   "music": "dark pulsing synth, low under the voice",
   "shots": [
-    { "id": "s1", "line": "Google just put an AI chip in space.", "from": 0.12, "to": 2.40,
+    { "id": "s1", "beat": "hook", "line": "Google just put an AI chip in space.", "from": 0.12, "to": 2.40,
       "kind": "broll", "query": "satellite orbiting earth at night", "camera": "punch-in", "transition": "cut",
       "sound": "whoosh + bass hit",
       "focus": { "x": 0.5, "y": 0.42 },
       "layers": [ { "kind": "text", "x": 0.08, "y": 0.12, "w": 0.84, "h": 0.16, "text": "AI CHIP IN SPACE", "color": "#FF3B30",
-                    "enter": "from-left" },
-                  { "kind": "sticker", "x": 0.66, "y": 0.5, "w": 0.2, "h": 0.11, "text": "NEW", "enter": "pop",
-                    "note": "small bounce, then holds" },
-                  { "kind": "caption", "x": 0.1, "y": 0.72, "w": 0.8, "h": 0.07, "text": "AI chip in space" } ],
+                    "font": "Avenir Next Condensed Heavy", "tracking": 0.01, "effect": "none", "enter": "from-left" },
+                  { "kind": "text", "x": 0.56, "y": 0.5, "w": 0.34, "h": 0.06, "text": "TPU CHIP", "effect": "tag", "enter": "pop",
+                    "note": "tag lands on the satellite" },
+                  { "kind": "caption", "x": 0.1, "y": 0.75, "w": 0.8, "h": 0.04, "text": "AI chip in space" } ],
       "why": "Hook: the strongest claim with the most striking picture, first 2 seconds." }
   ]
 }
@@ -142,8 +155,27 @@ So it must read as the finished video, shot by shot:
 - One shot per line or beat, in order, covering everything that stays in the video (usually a new shot every
   2-4 s). `line` is the exact words said in it; `from`/`to` are SOURCE seconds from notes/transcript.md. Leave out
   what you'd cut (retakes, dead air): those lines simply have no shot.
+- `beat`: the shot's part in the story: hook, setup, turn, proof, payoff, cta (the storyboard-director skill
+  says what each is for). Every shot gets one, and they run in that order.
+- **Hook**: the claim or question, said in the first sentence, with the picture that proves it on screen by
+  second 3. Open on the speaker's face when the claim is personal or surprising, or on the visual when it is
+  striking. Never open with a title card, a logo, a greeting or "in this video".
+- **The speaker is the bookends**: open with them, come back to them for the turn ("but…") and the closing
+  ask (framed tighter: `punch-in`). Everything between is pictures that explain.
+- **Visual first**: decide each shot's picture before its words: for every claim, what concrete object or
+  diagram would make it understandable in one second? One visual world for the whole video (one background, one
+  material, one lighting), one accent colour (the palette's brightest) for tags, highlights, the hero title and
+  the ask. Every big or tiny number gets a familiar comparison on screen (elephants, a skyscraper, Mount
+  Everest, a dog).
+- **Research and news as evidence**: when the video is about a study, paper, announcement or the news, show the
+  sources as `document` shots, in this order: the coverage (headline), the primary source, the key number or
+  sentence in it, the paper itself (pages), how it was checked, a caveat or critic, then what it means. Each
+  2-3 s, the page full frame (no card, no browser bar), pushed in (`zoom-in`, `focus` on the words) until the
+  text runs off the edge, with a `text` layer, `effect: "highlight"`, holding exactly the words said at that
+  moment. A real photo, paper or chart gets a small source line top left ("SOURCE: NASA").
 - `kind`: talking (the speaker), broll, image, split (speaker + picture), cutout (speaker cut out on a designed
-  background), text (a title card), graphic (chart, diagram, counter). `source`: `{ "file": "main", "at": 12.3 }`
+  background), text (a title card), graphic (chart, diagram, counter), document (a page on screen: an article,
+  a paper, a lab's announcement; `query` names the publication and its headline). `source`: `{ "file": "main", "at": 12.3 }`
   for a frame of the recording, or `{ "file": "assets/clips/x.mp4", "at": 2 }` for the user's clip. `query`: what
   B-roll still to be found must show (concrete visual words).
 - `layers`: everything on screen besides the base picture, as boxes in fractions of the frame (x, y, w, h from the
@@ -152,6 +184,28 @@ So it must read as the finished video, shot by shot:
   they will really be. How each one moves is drawn as arrows, so say it: `enter` (cut, pop, fade, zoom, type, draw,
   from-left, from-right, from-top, from-bottom), `to` `{ "x", "y" }` when it travels during the shot (where its top
   left ends), `note` for a detail of the build ("counter rolls 0 to 7", "underline draws under SPACE").
+- Titles (`text` layers) are drawn in their real typeface and finish, so set them like a designer, never leave
+  them generic: `font` (a family from the list below, a weight word may follow: "Avenir Next Condensed Heavy"),
+  `weight` (100-900), `italic`, `caps` (titles are capitals unless `false`), `tracking` (letter spacing in em,
+  -0.05 to 0.4), `effect`: none (the default: flat colour reads most premium), tag (an accent box behind dark
+  capitals, tilted a hair: names a thing, placed against it), highlight (a marker band over words quoted from a
+  page, in document shots), shadow (only over busy footage), outline (hollow, minimal), and the hero effects:
+  glow (neon, night), extrude (3D block, retro, pop), gold, chrome (polished metal). At most one title per video
+  gets a hero effect, and only when the mood asks for it. Fonts every Mac has, and what they say:
+  SF Pro (Apple, clean tech), Helvetica Neue (neutral, news), Avenir Next (friendly premium), Avenir Next Condensed
+  (trailers, headlines), Futura (fashion, retro-future), Gill Sans (heritage), Optima (elegant sans), DIN Condensed
+  (data, engineering, sport), Impact (memes), Didot and Bodoni 72 (fashion, luxury, editorial), Big Caslon (big
+  dramatic statements), Baskerville, Hoefler Text, Iowan Old Style (classic, literary, old money), Copperplate
+  (engraved, formal), Rockwell and Superclarendon (slab, vintage, posters), American Typewriter (documentary),
+  Marker Felt and Chalkduster (handwritten, playful), Snell Roundhand and Zapfino (script: one or two words only),
+  Phosphate (retro signage), Trattatello (fantasy). "Condensed" after Futura or Helvetica Neue gives their narrow
+  cut ("Futura Condensed ExtraBold"). Use these names only (any other may not exist here), and `look.font` is one
+  font name, nothing else. Taste: one display face for the video's titles (make it
+  `look.font`), at most one contrasting face for accents; pick it for the mood, not by habit; 1-4 words per title,
+  big, with air around it; serifs and scripts read best in title case (`"caps": false`); light or wide capitals
+  want tracking 0.08-0.2, heavy condensed ones -0.02 to 0.02. Never stack two text layers with the same words to
+  fake depth, a shadow or a 3D look: that is what `effect` is for. Asked for "a better font", choose a specific
+  face that fits the video and say which in your reply.
 - `sketch`: for every shot whose picture isn't a frame of the footage (B-roll still to find, a title card's
   background, a graphic, the speaker before they're filmed), draw what the frame shows, like a storyboard artist's
   quick pencil drawing: the real subject (the robotaxi, the chip, the hand on the table, the city at night), its
@@ -165,8 +219,11 @@ So it must read as the finished video, shot by shot:
   "M300 1010 L360 950 L520 945 L520 1010 Z", "M60 1225 L940 1225"]`.
 - `focus` `{ "x", "y" }`: where a zoom-in, zoom-out or punch-in is aimed (the face, the chip), so the sketch draws
   the frame it ends on.
-- `camera`: still, zoom-in, zoom-out, punch-in, pan-left, pan-right, shake. `transition` into the shot: cut, whip,
-  zoom, fade, slide, glitch, flash. `sound`: the effect on it, if any. `why`: one short sentence for the user.
+- `camera`: still, zoom-in, zoom-out, punch-in, pan-left, pan-right, shake. `transition` into the shot: cut
+  (the default), whip, zoom, fade, slide, glitch, flash: those only between beats, at most 2-3 in a short.
+  `sound`: the effect on it, if any (different events, different sounds). `why`: one short sentence for the user.
+- One idea per shot, drawn cleanly: at most 3-4 layers, one camera move plus at most two moving layers (the
+  sketch draws only two), and each `note` 2-8 words (it is printed under the panel as a numbered callout).
 - If the user changes the storyboard, their version in notes/storyboard.json is the plan: a dropped shot's line is
   cut, a shot's `ask` is their note on it. Once approved, build exactly that video (better in detail, same structure).
 
@@ -183,8 +240,9 @@ So it must read as the finished video, shot by shot:
    Then open timeline.json and fix the captions: wrong words, names, numbers; 1-3 words per page, a new page at
    every sentence end or comma (never "owner. No,"); add `accent` on the key word of a phrase.
 3. **plan**: When an approved notes/storyboard.json exists, it is the plan: skip this step. Otherwise write `notes/plan.md`: the beats (hook, points, payoff), and for every few seconds what is on screen:
-   which layout, which B-roll and why, captions, graphics/annotations, SFX cues, music. Give the video a hook in the
-   first 2 s (a bold title or a striking visual) and something changing on screen at least every 2-4 s.
+   which layout, which B-roll and why, captions, graphics/annotations, SFX cues, music. Give the video a hook (the claim in the
+   first sentence, its picture by second 3, never a title card) and something changing on screen every 2-4 s,
+   not uniformly: linger on the big image, speed through lists.
 4. **broll**: For each B-roll idea search with concrete visual words ("seedling time lapse", "plant roots soil").
    Prefer stock (Pixabay) for generic shots; web videos for specific things. Get 4-10 clips, 3-6 s each. Look at a
    frame of every clip you download (ffmpeg -> jpg -> Read) and drop ones that don't show the thing.
@@ -194,8 +252,10 @@ So it must read as the finished video, shot by shot:
    - `src/index.ts`, `src/Root.tsx` (composition "Main": size, fps and length come from timeline.json; add an outro's
      frames in Root if you make one), `src/Main.tsx` (the layers), `src/Captions.tsx` (restyle it freely).
    - Your components in `src/` (Scene files, Broll cards, Titles, Annotations...). Import only from "react",
-     "remotion", "@remotion/media-utils", `./creatron/*` and your own files. Inline styles only. System fonts only
-     (e.g. "SF Pro Display", "Helvetica Neue", "Avenir Next", "Futura", "Georgia", "Menlo", "Marker Felt", "Chalkboard SE").
+     "remotion", "@remotion/media-utils", `./creatron/*` and your own files. Inline styles only. System fonts only:
+     the storyboard titles' `font`s by name ("Didot", "Avenir Next Condensed"...); "SF Pro" is `-apple-system, system-ui`
+     (it has no font-family name of its own). Recreate each title's `effect` in CSS (text-shadow, -webkit-text-stroke,
+     a background-clip gradient for gold or chrome).
    - Media: `<Footage />` for the recording (it carries the voice: use it exactly once un-muted, `<Footage muted />`
      for extra copies; when your scenes cover the whole frame for the whole video, the voice copy is
      `<Footage soundOnly />` so the hidden picture isn't decoded), `<Video muted src={staticFile("assets/broll/x.mp4")} />`
@@ -208,11 +268,24 @@ So it must read as the finished video, shot by shot:
      as a rounded card or split screen, B-roll as floating cards that slide/scale in with a little motion blur
      (blur filter during movement) and shadows, full-screen B-roll moments, zooms/punch-ins on emphasis,
      transitions between sections.
-   - Captions: in a style that suits the video (default: bold white text on a dark rounded pill, the `accent` word in
-     the accent colour), placed where they never cover the face or important B-roll. Every spoken word appears
-     exactly once, on time.
-   - Annotations and labels: highlighted key terms, arrows, boxes, typed-on labels, numbers that count up, emoji or
-     simple SVG icons where they help understanding.
+   - Captions: in a style that suits the video. Default (explainer): one line of 3-5 words, white bold capitals,
+     about 44-52 px on a 1080-wide frame, no box, a thin dark outline or soft shadow, always at the same height
+     (about 76-80 % down, inside the safe zone: text between y 210 and 1600 of 1920), the same style throughout.
+     Editorial style (editorial-reels skill): shots where the words are set as kinetic type carry no captions (the
+     type is the caption); story scenes get one small white sentence-case line, centred, soft shadow.
+     Punchy style only when the brief or reference asks: 1-3 words a page, big heavy capitals, the `accent` word
+     in the accent colour. Never over the face or important B-roll. Every spoken word appears exactly once, on time.
+   - Annotations and labels: name things where they are, with tags in the accent colour stuck to the object (dark
+     bold capitals on an accent box, tilted a hair), diagram labels that follow the shape, measurement brackets,
+     numbers that count up in an accent box, highlighted key terms. A small source line top left on every real
+     photo, paper, chart or archive clip. Charts from a source are redrawn in the video's style: the real data
+     points, one labelled marker at the key event, and the trend traced by a thick accent stroke that draws on.
+   - Documents (`document` shots): build the page as live text in code (headline, date, byline, a few body lines,
+     in the publication's kind of typeface), or use a real screenshot if you can get one into assets/. The
+     highlight is its own layer that sweeps on as the words are said. Its words, timing and box live in
+     timeline.json (e.g. `"documents"`), never baked into a picture.
+   - The ask: a pill in the accent colour ("FOLLOW") for about 1 s at 25-45 % of the length, and again at the
+     end with the speaker, framed tighter. Same outro in every video of a series.
    - Sound: music bed at about -26 to -30 LUFS under speech (volume ~0.06-0.12), SFX on visual events (whoosh on
      slide-ins, pop on labels, click on typed text) at modest volume. Never let music or SFX mask words.
    Check as you go: `$T still <s> <name>` at several moments, Read each PNG, fix what looks wrong.
@@ -227,13 +300,16 @@ So it must read as the finished video, shot by shot:
    Last, make sure README.md's "How to edit this" matches what you built.
 
 ## The bar (a first draft that misses these isn't finished)
-- At least 4 different full-frame layouts across the video (e.g. speaker cut out on a designed background, split
-  screen speaker + B-roll, B-roll card floating over the background with the speaker small, full-screen B-roll,
-  a title/diagram card), and something new on screen every 2-4 s.
+- Layouts used with intent (2-4): the speaker full frame for the claim, the turn and the ask; full-frame
+  visuals for everything that explains; a split or a card only when two things must be seen together. Something
+  new on screen every 2-4 s. One visual world and one accent colour across the video.
 - If there's a reference: write its style down in notes/plan.md as a checklist (background, fonts, colours, caption
   look, how B-roll enters, outlines, annotation style, music feel, SFX density) and tick every item off in the build.
 - At least one annotation or label per 5 s (highlight, arrow, box, typed label, counter, icon), on the key idea.
-- Sound effects on most visual events (whoosh, pop, click, ding...): typically 1 per 2-3 s, never louder than speech.
+- A sound on every meaningful visual event (a pop when a tag lands, a soft whoosh on a camera move, a riser into
+  the turn, a click on the ask), different sounds for different events, never the same whoosh on every cut,
+  audible on a phone (2-8 kHz), never louder than speech.
+- Hard cuts by default; a whip, zoom or flash only between sections, at most 2-3 per short.
 - Smooth motion: springs and eased moves, no jumps or zooms that reset; transitions between sections.
 - Text never cut off, never over the face, readable on a phone.
 - `EDITABLE: yes`, and a README a non-programmer can follow.
