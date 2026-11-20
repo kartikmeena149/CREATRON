@@ -14,8 +14,15 @@ import { PlanEntry, StoryboardCreator, usePlan } from "./StoryboardCreator.tsx";
 import { StoryboardMark } from "./StoryboardMark.tsx";
 
 type View = "home" | "connections" | "storyboard";
-/** Whether the Dashboard is showing (and which page), and a request waiting for its video to open. */
-export const useHome = create<{ view: View | null; pending: string | null }>(() => ({ view: "home", pending: null }));
+/**
+ * Whether the Dashboard is showing (and which page), and a request waiting for its video to open.
+ * opening: a file to open in the editor (asked from outside the app shell, e.g. the storyboard).
+ * build: "Make the video" from a storyboard: once `media` is open, the full edit builds it from `plan`.
+ */
+export const useHome = create<{
+  view: View | null; pending: string | null; opening: string | null;
+  build: { media: string; plan: string; title: string; model: string } | null;
+}>(() => ({ view: "home", pending: null, opening: null, build: null }));
 export const openHome = (view: View = "home") => useHome.setState({ view });
 export const closeHome = () => useHome.setState({ view: null });
 
@@ -24,7 +31,8 @@ const IDEAS: [string, string][] = [
   ["Reel", "Make it a tight 9:16 reel with bold captions, cut the pauses and retakes"],
   ["Talking head", "Clean up this talking-head video: cut dead air and retakes, add captions"],
   ["Podcast clip", "Find the best 45 seconds and make a vertical clip with captions"],
-  ["Explainer", "Turn this into a clear explainer with titles for each point"],
+  ["Explainer", "Make it a full explainer reel in Creatro's Explainer style: me on camera for the claim and the turns, pictures in between, tags on things, sources highlighted, calm captions"],
+  ["Documentary", "Make it a full documentary reel in Creatro's Editorial style: kinetic type on warm paper, ring charts, archive and cinematic story scenes, a punchline at the end"],
   ["Vlog", "Cut this into a fast, fun vlog with music and sound effects"],
   ["Ad", "Make a punchy 30-second ad with a strong hook in the first 2 seconds"],
 ];

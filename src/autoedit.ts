@@ -22,7 +22,7 @@ import { analyze } from "./analyze.ts";
 import { startBroker } from "./autoedit-broll.ts";
 import { describe } from "./plan.ts";
 import { finalFile, projectName, projectPaths, scaffoldProject, validateProject } from "./project.ts";
-import { type Storyboard, type Verdict, approvedPrompt, checkScenes, keepUnpicked, parseStoryboard, readVerdict, redrawPrompt, sayingTime, scenesOf, withoutArrowNotes } from "./storyboard.ts";
+import { STYLE_INFO, type Style, type Storyboard, type Verdict, approvedPrompt, checkScenes, keepUnpicked, parseStoryboard, readVerdict, redrawPrompt, sayingTime, scenesOf, withoutArrowNotes } from "./storyboard.ts";
 import { saveDraft } from "./storyboardFiles.ts";
 import { chromeOutsideProtectedFolders } from "./remotion.ts";
 import { find, health, healthProblems, healthReport } from "./toolchain.ts";
@@ -39,7 +39,11 @@ export type StoryboardReview = (
   said?: Verdict,
 ) => Promise<{ approve: true; board: Storyboard } | { approve: false; board: Storyboard; changes: string; only?: string[] }>;
 /** clips: the user's own clips (the library), linked into assets/clips/ for Claude to use. */
-export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string; clips?: string[]; review?: StoryboardReview };
+/**
+ * plan: a storyboard approved in the Storyboard Creator (its folder): the video is built from it,
+ * with no new storyboard, once the user has a recording (their footage, or the script spoken in a voice).
+ */
+export type AutoEditRequest = { video: string; brief: string; reference?: string; model: string; clips?: string[]; review?: StoryboardReview; plan?: string };
 export type AutoEditMarker = { n: number; time: number; x: number; y: number };
 /** dir is the open project folder; project is the part to import into the timeline; final is the exported video. */
 export type AutoEditResult = { dir: string; project: string; final: string; session: string; notes: string; version: number };
@@ -91,6 +95,22 @@ function waitForUser<T>(p: Promise<T>): Promise<T> {
 
 export const storyboardFile = (dir: string) => join(projectPaths(dir).notes, "storyboard.json");
 
+/**
+ * A storyboard approved in the Storyboard Creator, brought into this edit's folder: the storyboard,
+ * the script and the user's direction, as the plan. Returns it (or throws when it can't be read).
+ */
+function fromPlan(dir: string, plan: string): Storyboard {
+  const from = projectPaths(plan).notes;
+  const text = existsSync(join(from, "storyboard.json")) ? readFileSync(join(from, "storyboard.json"), "utf8") : "";
+  const { board } = parseStoryboard(text);
+  if (!board) throw new Error("The approved storyboard can't be read any more (its folder moved or its file is broken).");
+  const notes = projectPaths(dir).notes;
+  writeFileSync(storyboardFile(dir), JSON.stringify(board, null, 1));
+  if (existsSync(join(from, "script.md"))) copyFileSync(join(from, "script.md"), join(notes, "script.md"));
+  if (existsSync(join(from, "brief.md"))) appendFileSync(join(notes, "brief.md"), `\n## From the Storyboard Creator\n\n${readFileSync(join(from, "brief.md"), "utf8").replace(/^# .*\n/, "")}`);
+  return board;
+}
+
 /** The storyboard's first turn for a recording: decide the edit from the footage and its transcript. */
 function fromRecording(dir: string): string {
   return [
@@ -112,6 +132,7 @@ function fromScript(dir: string): string {
     assets
       ? "- The user's own assets are in assets/clips/: look at each one (frames with ffmpeg) and use them where they fit, with `source` { \"file\": \"assets/clips/<name>\", \"at\": <seconds> }. Everything else is B-roll to find (`query`), title cards, graphics."
       : "- The user gave no footage: every picture is B-roll to find (`query`), a title card, a graphic, or the speaker on camera.",
+    "- The style is in notes/brief.md (\"Style:\"): follow that skill, and set the storyboard's top-level \"style\" to the one you plan in (\"explainer\", \"editorial\" or \"3d\").",
     "- Direct it like a director: a hook in the first 2 seconds, a reason to keep watching, a clear ending; motion (`enter`, `to`, `focus`) and sound on every shot that needs them.",
     "Then stop and reply with the video's idea in one sentence. Don't download or build anything: this is the plan for a video not filmed yet.",
   ].join("\n");
@@ -194,7 +215,17 @@ export async function autoEdit(req: AutoEditRequest, emit: (e: AutoEditEvent) =>
   try {
     let turn: Turn;
     let building = started;
-    if (req.review) {
+    const planned = req.plan ? fromPlan(dir, req.plan) : undefined;
+    if (planned) {
+      // Approved in the Storyboard Creator: that storyboard is the plan, nothing is drawn again.
+      info("Building from your approved storyboard");
+      turn = await ask([
+        "Now make the finished video as an editable project, following notes/PLAYBOOK.md from step 1 (look).",
+        approvedPrompt(planned),
+        "This storyboard was planned from the script before anything was recorded (notes/script.md). Its shots' from/to are estimates on the finished video's clock, not times in the recording: find each shot's `line` in notes/transcript.md and use those SOURCE times for the cut and the shot. A shot's source \"assets/clips/<name>\" is the user's own file, linked in assets/clips/.",
+        planned.style ? `Style: ${STYLE_INFO[planned.style].brief}` : "",
+      ].filter(Boolean).join("\n"));
+    } else if (req.review) {
       // Storyboard first: nothing is built until the user approves how the video will look.
       const board = await storyboard(dir, req.review, ask, info);
       estimate.stop();
@@ -235,6 +266,8 @@ export type PlanRequest = {
   /** How they want it: style, mood, audience, length. */
   direction?: string;
   format: Storyboard["format"];
+  /** The house style they picked (STYLES); "auto" or none lets Claude choose. */
+  style?: Style;
   /** Their own clips, photos and music, to use where they fit. */
   assets: string[];
   model: string;
@@ -270,7 +303,8 @@ export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) 
     return row;
   });
   writeFileSync(join(p.notes, "script.md"), `# The script\n\nWhat will be said, one scene per line, in order. Nothing is filmed yet. The times are each line's speaking time at a natural pace.\n\n${numbered.join("\n")}\n`);
-  writeFileSync(join(p.notes, "brief.md"), `# What the user wants\n\n${req.title?.trim() ? `Title: ${req.title.trim()}\n` : ""}Format: ${req.format}\n\n${req.direction?.trim() || "(no direction given: plan the strongest video for this script and format)"}\n`);
+  const style = STYLE_INFO[req.style ?? "auto"];
+  writeFileSync(join(p.notes, "brief.md"), `# What the user wants\n\n${req.title?.trim() ? `Title: ${req.title.trim()}\n` : ""}Format: ${req.format}\nStyle: ${style.brief}\n\n${req.direction?.trim() || "(no direction given: plan the strongest video for this script and format)"}\n`);
   writeFileSync(join(p.notes, "TOOLS.md"), `# Tools on this Mac, checked just now\n\n\`\`\`\n${healthReport(tools)}\n\`\`\`\n`);
   writeGuides(dir);
   const assets = req.assets.filter((a) => existsSync(a));
@@ -292,7 +326,7 @@ export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) 
   const broker = await startBroker(dir);
   const ask = (prompt: string, session?: string) => claude(dir, req.model, prompt, session, emit, estimate, broker.url);
   try {
-    writePlanInfo(dir, { title: req.title?.trim() || "", format: req.format, scenes, model: req.model, created: new Date().toISOString() });
+    writePlanInfo(dir, { title: req.title?.trim() || "", format: req.format, style: req.style ?? "auto", scenes, model: req.model, created: new Date().toISOString() });
     const { board } = await storyboard(dir, req.review, ask, info, fromScript(dir), (b) => checkScenes(b, scenes));
     writePlanInfo(dir, { approved: new Date().toISOString() });
     return { dir, board };
@@ -303,7 +337,7 @@ export async function planStoryboard(req: PlanRequest, emit: (e: AutoEditEvent) 
 }
 
 /** What Creatro keeps about a storyboard made from a script (.creatron/plan.json). */
-export type PlanInfo = { title: string; format: Storyboard["format"]; scenes: string[]; model: string; created: string; approved?: string };
+export type PlanInfo = { title: string; format: Storyboard["format"]; style?: Style; scenes: string[]; model: string; created: string; approved?: string };
 const planInfoFile = (dir: string) => join(projectPaths(dir).internal, "plan.json");
 export function readPlanInfo(dir: string): Partial<PlanInfo> {
   try {

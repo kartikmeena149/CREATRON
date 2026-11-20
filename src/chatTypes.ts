@@ -11,7 +11,8 @@ export type Question = { question: string; detail?: string; options: { label: st
  * Claude handing a request to the full edit (src/fulledit.ts): a whole finished video from the raw
  * footage (`brief`), or a change to the finished video it made before (`change`).
  */
-export type FullEditAsk = { brief?: string; change?: string; reference?: string };
+/** plan: build from a storyboard approved in the Storyboard Creator (its folder). */
+export type FullEditAsk = { brief?: string; change?: string; reference?: string; plan?: string };
 /** A finished full edit: the open project folder, the part the timeline imports, the exported video. */
 export type FullEditResult = { dir: string; project: string; final: string; notes: string; version: number; url?: string };
 /** Where a running full edit is: its step, how far along, and the time left. */

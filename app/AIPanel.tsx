@@ -121,6 +121,15 @@ export function AIPanel() {
     apply(before, after, q.says, `instant · ${d0.toFixed(1)}s → ${d1.toFixed(1)}s`);
   };
 
+  // "Make the video" from a storyboard: once its recording is open here, the full edit builds it.
+  const build = useHome((h) => h.build);
+  useEffect(() => {
+    if (!build || !project || project.path !== build.media || busy) return;
+    useHome.setState({ build: null });
+    say({ role: "user", text: `Make the video from the storyboard “${build.title}”` });
+    void window.creatron.planBuild(build.media, build.plan, build.model, useEditor.getState().library).then((r) => !r.ok && say({ role: "error", text: r.error }));
+  }, [build, project?.path]);
+
   // A request typed on the Dashboard: sent as soon as its video is open here.
   const pending = useHome((h) => h.pending);
   useEffect(() => {

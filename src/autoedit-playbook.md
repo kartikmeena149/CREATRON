@@ -211,7 +211,12 @@ Where a skill and this playbook disagree, this playbook wins.
   quick pencil drawing: the real subject (the robotaxi, the chip, the hand on the table, the city at night), its
   setting and the framing, in 4-16 strokes. Each stroke is an SVG path `d` in units where the frame is 1000 wide
   and 1000 x height/width tall (1778 for 9:16, 563 for 16:9, 1000 for 1:1, 1250 for 4:5), x right, y down;
-  `{ "d": "...", "shade": 0.5 }` hatches the inside of a closed shape (0.3 light to 0.8 dark). Draw the object
+  `{ "d": "...", "shade": 0.5 }` hatches the inside of a closed shape (0.3 light to 0.8 dark). Give every stroke
+  an `object`, the thing it is part of (`"object": "satellite"`, `"earth"`, `"car"`): the user picks, moves and
+  resizes the drawing by those objects, so one name per thing, never one name for the whole drawing. Creatro
+  paints the drawing like a watercolour illustration: give every closed shape its real `color` (`"#3f7fbf"`
+  for the Earth, `"#b8332e"` a red car, natural and slightly muted, the look's palette for designed things)
+  and a `shade` for how dark it is; open lines and details need neither. Draw the object
   itself (wheels, windows, a face's eyes and hair, a chip's pins), not a generic blob; no text (titles are
   layers). Example, a car side-on in a 9:16 frame:
   `"sketch": [{ "d": "M120 1150 L180 1010 Q260 930 420 920 L640 920 Q760 930 840 1030 L880 1150 Z", "shade": 0.35 },
@@ -225,7 +230,8 @@ Where a skill and this playbook disagree, this playbook wins.
 - One idea per shot, drawn cleanly: at most 3-4 layers, one camera move plus at most two moving layers (the
   sketch draws only two), and each `note` 2-8 words (it is printed under the panel as a numbered callout).
 - If the user changes the storyboard, their version in notes/storyboard.json is the plan: a dropped shot's line is
-  cut, a shot's `ask` is their note on it. Once approved, build exactly that video (better in detail, same structure).
+  cut, a shot's `ask` is their note on it. A layer or sketch stroke with `"added": true` is something they put on the shot
+  themselves (a title, a thing, their own picture with a `file`): keep it where they put it and make it real. Once approved, build exactly that video (better in detail, same structure).
 
 ## The steps
 1. **look**: Read notes/TOOLS.md, notes/brief.md, notes/transcript.md, notes/source.json, and the reference frames

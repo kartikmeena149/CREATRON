@@ -2448,3 +2448,102 @@ body .conn > .conn-row { border: 1px solid var(--line); border-radius: 10px; }
 .sb-pad-note::placeholder { color: rgba(255, 255, 255, 0.45); font-weight: 500; }
 .sb.light .sb-pad-note { background: rgba(255, 253, 248, 0.97); color: #1c1b1f; }
 .sb.light .sb-pad-note::placeholder { color: #8a8478; }
+
+/* Storyboard: the style it's planned in, and "Make the video" (what it's built over). */
+.sb-style { appearance: none; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); font: 600 12px var(--sans, system-ui); padding: 3px 22px 3px 8px; background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%); background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%; background-size: 4px 4px; background-repeat: no-repeat; cursor: pointer; }
+.sb-style:disabled { cursor: default; opacity: 0.8; background-image: none; padding-right: 8px; }
+.sb-make-wrap { position: absolute; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 16px 70px; background: color-mix(in srgb, var(--bg) 35%, transparent); animation: sb-in 0.14s ease-out; }
+.sb-make { width: 400px; max-height: calc(100% - 120px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 16px 14px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); }
+.sb-make-head { display: flex; align-items: center; justify-content: space-between; }
+.sb-make-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.sb-make-group { display: flex; flex-direction: column; gap: 5px; }
+.sb-make-group > b { font: 500 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 2px; }
+.sb-make-opt { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 13px; text-align: left; cursor: pointer; }
+.sb-make-opt span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-make-opt em { font: 500 10px var(--mono); font-style: normal; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.sb-make-opt:hover:not(:disabled) { border-color: var(--dim); }
+.sb-make-opt.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.sb-make-opt.add { border-style: dashed; background: transparent; color: var(--dim); }
+.sb-make-foot { display: flex; align-items: center; gap: 10px; justify-content: space-between; padding-top: 4px; }
+
+/* Storyboard Creator: the style cards, each with a tiny picture of its look. */
+.sbc-styles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sbc-style { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); text-align: left; cursor: pointer; min-width: 0; }
+.sbc-style:hover { border-color: var(--dim); }
+.sbc-style.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.sbc-style b { font-size: 12.5px; font-weight: 650; margin-top: 4px; }
+.sbc-style > span:last-child { font-size: 11px; line-height: 1.35; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sbp { position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; }
+.sbp i, .sbp em { position: absolute; display: block; font-style: normal; }
+.sbp-explainer { background: radial-gradient(circle at 50% 30%, #3a3f4a, #121418); }
+.sbp-explainer .face { left: 34%; top: 14%; width: 32%; height: 56%; border-radius: 45% 45% 40% 40%; background: linear-gradient(#c79a7c, #a87a5f); box-shadow: 0 30px 0 6px #2b5db8; }
+.sbp-explainer .tag { right: 8%; top: 26%; padding: 1px 4px; background: #39e1ff; color: #111; font: 800 8px system-ui; transform: rotate(-3deg); border-radius: 2px; }
+.sbp-explainer .cap { left: 0; right: 0; bottom: 10%; text-align: center; color: #fff; font: 800 7.5px system-ui; letter-spacing: 0.02em; text-shadow: 0 1px 2px #000; }
+.sbp-editorial { background: radial-gradient(circle at 50% 45%, #ece9e5, #bdbab5); }
+.sbp-editorial .big { left: 10%; top: 16%; color: #d2462f; font: 700 24px/1 "DIN Condensed", "Avenir Next Condensed", sans-serif; letter-spacing: -0.01em; }
+.sbp-editorial .serif { left: 11%; top: 58%; color: #5b4a3b; font: italic 9px "Bodoni 72", Didot, serif; }
+.sbp-editorial .ring { right: 10%; top: 20%; width: 34%; aspect-ratio: 1; border-radius: 50%; border: 3px solid #d2462f; border-left-color: transparent; border-bottom-color: transparent; transform: rotate(20deg); }
+.sbp-3d { background: radial-gradient(circle at 60% 25%, #3c2a20, #0c0b0d 70%); }
+.sbp-3d .cube { left: 38%; top: 22%; width: 26%; aspect-ratio: 1; background: linear-gradient(135deg, #ffb27a, #c4502e 60%, #5a1f12); transform: rotate(45deg) skew(-8deg, -8deg); box-shadow: 0 0 18px rgba(255, 150, 90, 0.45); }
+.sbp-3d .floor { left: 0; right: 0; bottom: 0; height: 30%; background: repeating-linear-gradient(90deg, rgba(255,255,255,0.08) 0 1px, transparent 1px 14px), linear-gradient(transparent, rgba(255,255,255,0.05)); }
+.sbp-auto { background: linear-gradient(135deg, #1a1c22 0 33%, #e6e3df 33% 66%, #1a1210 66%); }
+.sbp-auto em { left: 0; right: 0; bottom: 8%; text-align: center; font: 600 8.5px var(--mono, monospace); color: #fff; text-shadow: 0 1px 3px #000; letter-spacing: 0.04em; text-transform: uppercase; }
+.sb-make-select select { flex: 1; min-width: 0; appearance: none; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; outline: none; }
+
+/* Drawing view: the sketch's own words, editable where they are (Text tool, or double-click). */
+.sb-pad-stage.text .sb-pad-ink { cursor: default; }
+.sb-pad-t { display: inline-grid; place-items: center; width: 15px; height: 15px; font: 700 13px/1 Georgia, "Times New Roman", serif; }
+.sb-pad-texthover { position: absolute; pointer-events: none; border: 1.5px dashed #4cc9f0; border-radius: 6px; background: rgba(76, 201, 240, 0.08); }
+.sb-pad-edit { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 5px; padding: 8px; border-radius: 10px; background: #141414; border: 1px solid #4cc9f0; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45); color: #f2f2f2; }
+.sb-pad-edit b { font: 500 9.5px var(--mono, monospace); letter-spacing: 0.08em; text-transform: uppercase; color: #4cc9f0; }
+.sb-pad-edit textarea { resize: none; border: 0; outline: none; background: transparent; color: inherit; font: 600 14px/1.35 system-ui, sans-serif; padding: 0; }
+.sb-pad-edit.menu button { text-align: left; padding: 6px 8px; border-radius: 6px; border: 0; background: transparent; color: inherit; font-size: 13px; cursor: pointer; }
+.sb-pad-edit.menu button:hover { background: rgba(255, 255, 255, 0.08); }
+.sb-pad-edit.menu button.on { background: rgba(76, 201, 240, 0.18); }
+.sb-pad-edit.menu button.cancel { color: #9a9a9a; display: flex; justify-content: space-between; }
+.sb-pad-picked { position: absolute; pointer-events: none; border: 1.5px solid #4cc9f0; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.sb-pad-handle { position: absolute; right: -6px; bottom: -6px; top: auto; left: auto; width: 11px; height: 11px; border-radius: 3px; background: #4cc9f0; border: 2px solid #0e0e0e; }
+
+/* Drawing view: Add (the user's own objects on a shot). */
+.sb-pad-addwrap { position: relative; display: inline-flex; }
+.sb-pad-add { position: absolute; top: calc(100% + 10px); left: 0; z-index: 20; width: 340px; display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; background: #141414; border: 1px solid #2a2a2a; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); color: #f2f2f2; }
+.sb-pad-add > b { font: 500 9.5px var(--mono, monospace); letter-spacing: 0.08em; text-transform: uppercase; color: #8a8a8a; margin-top: 4px; }
+.sb-pad-add .row { display: flex; gap: 6px; }
+.sb-pad-add .row button, .sb-pad-add .picture { flex: 1; padding: 7px 8px; border-radius: 7px; border: 1px solid #2c2c2c; background: #1c1c1c; color: inherit; font-size: 12.5px; cursor: pointer; }
+.sb-pad-add .row button:hover, .sb-pad-add .picture:hover, .sb-pad-add .things button:hover { border-color: #4cc9f0; }
+.sb-pad-add .things { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.sb-pad-add .things button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px 5px; border-radius: 7px; border: 1px solid #2c2c2c; background: #1c1c1c; color: #cfcfcf; font-size: 10px; cursor: pointer; }
+.sb-pad-add .things svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 7; stroke-linejoin: round; stroke-linecap: round; }
+.sb-pad-add .things span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.sb-pad-add .other input { flex: 3; min-width: 0; padding: 7px 9px; border-radius: 7px; border: 1px solid #2c2c2c; background: #0e0e0e; color: inherit; font-size: 12.5px; outline: none; }
+.sb-pad-add .other input:focus { border-color: #4cc9f0; }
+.sb-pad-add .picture { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; }
+.sb-pad-add .row.make button { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.sb-pad-add .row.make button:disabled { opacity: 0.45; cursor: default; }
+/* The Add menu sits in a toolbar group: its buttons keep their own shape, not the toolbar's. */
+.sb-pad-group .sb-pad-add button { height: auto; display: flex; justify-content: center; gap: 6px; border: 1px solid #2c2c2c; background: #1c1c1c; color: #e6e6e6; }
+.sb-pad-group .sb-pad-add button:hover:not(:disabled) { background: #232323; border: 1px solid #4cc9f0; color: #fff; }
+.sb-pad-group .sb-pad-add .row button { padding: 7px 8px; }
+.sb-pad-group .sb-pad-add .things button { flex-direction: column; padding: 7px 2px 6px; gap: 4px; color: #d8d8d8; font-size: 10.5px; }
+.sb-pad-group .sb-pad-add .things svg { width: 34px; height: 34px; flex: none; }
+.sb-pad-group .sb-pad-add .picture { padding: 8px; }
+
+/* Drawing view: a thing the user named, drawn by Claude in front of them. */
+.sb-pad-asking { position: absolute; z-index: 3; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; border: 1.5px dashed #4cc9f0; border-radius: 8px; background: rgba(12, 12, 12, 0.72); color: #e8e8e8; font-size: 12.5px; text-align: center; }
+.sb-pad-asking svg { color: #4cc9f0; animation: sb-pencil 0.9s ease-in-out infinite; }
+.sb-pad-asking.failed { border-color: #e2b35a; color: #f1d39b; font-size: 11.5px; line-height: 1.35; }
+@keyframes sb-pencil { 0%, 100% { transform: translate(-6px, 2px) rotate(-8deg); } 50% { transform: translate(6px, -2px) rotate(6deg); } }
+.sb-pad-drawon { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.sb-pad-drawon .line { fill: none; stroke: var(--ink); stroke-width: 1.7px; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: sb-drawon 0.5s cubic-bezier(0.5, 0, 0.3, 1) forwards; }
+.sb-pad-drawon .fill { fill: var(--ink); opacity: 0; animation: sb-shade-in 0.6s ease-out forwards; }
+@keyframes sb-drawon { to { stroke-dashoffset: 0; } }
+@keyframes sb-shade-in { to { opacity: var(--o, 0.15); } }
+/* Under a named placeholder box: the two ways to make it real. */
+.sb-pad-drawit { position: absolute; z-index: 4; display: flex; gap: 6px; }
+.sb-pad-drawit button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 8px; border: 1px solid #4cc9f0; background: #0f1a1e; color: #bfeefc; font: 600 12px system-ui, sans-serif; white-space: nowrap; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); }
+.sb-pad-drawit button:hover { background: #12303a; color: #fff; }
+/* A picture drawn in front of the user: the paper over it wiped away as the pencil sweeps across. */
+.sb-pad-reveal { position: absolute; z-index: 3; pointer-events: none; background: var(--page); -webkit-mask-image: linear-gradient(120deg, transparent 0 42%, #000 58% 100%); mask-image: linear-gradient(120deg, transparent 0 42%, #000 58% 100%); -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 100% 0; mask-position: 100% 0; animation: sb-reveal 2.6s cubic-bezier(0.45, 0, 0.35, 1) forwards; }
+.sb-pad-reveal i { position: absolute; color: #4cc9f0; animation: sb-reveal-pencil 2.6s cubic-bezier(0.45, 0, 0.35, 1) forwards; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4)); }
+@keyframes sb-reveal { to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+@keyframes sb-reveal-pencil { 0% { left: -4%; top: -6%; } 25% { left: 30%; top: 20%; } 50% { left: 10%; top: 55%; } 75% { left: 70%; top: 45%; } 100% { left: 96%; top: 98%; opacity: 0; } }

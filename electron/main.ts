@@ -1,8 +1,8 @@
 import "./env.ts";
 import { BrowserWindow, app, dialog, ipcMain, shell, systemPreferences } from "electron";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type StoryboardReview, autoEditDir, cancelAutoEdit, planDir, planStoryboard, readPlanInfo, renamePlan, reopenPlan } from "../src/autoedit.ts";
-import { Storyboard, scenesOf } from "../src/storyboard.ts";
+import { STYLES, type Style, Storyboard, scenesOf } from "../src/storyboard.ts";
 import { withDrawings } from "../src/storyboardFiles.ts";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { runAgent } from "../src/agent.ts";
@@ -10,6 +10,11 @@ import { isDocument, readDocument } from "../src/documents.ts";
 import { type ChatEvent, chat, stop as stopChat } from "../src/chat.ts";
 import { analyze } from "../src/analyze.ts";
 import { runFullEdit, stopFullEdit } from "../src/fulledit.ts";
+// Imported here, not lazily: a lazy import would split src/tools.ts into a chunk that runs before
+// env.ts sets CREATRON_ROOT, and the app would look for its folders in the wrong place.
+import { askClaude } from "../src/claudecli.ts";
+import { drawPrompt, parseDrawing } from "../src/sketchLibrary.ts";
+import { findPicture } from "../src/pictures.ts";
 import { compileCustom, customDir } from "../src/customcode.ts";
 import { freeFallbacks, listModels } from "../src/models.ts";
 import { type AgentId, INSTALL_COMMAND, agentState, cancel, enabled, install, openRouterKey, setEnabled, setOpenRouterKey, signIn, signOut } from "../src/agents.ts";
@@ -204,6 +209,96 @@ ipcMain.handle(
     }
   }),
 );
+/**
+ * "Make the video" on a storyboard approved in the Storyboard Creator: the recording (the user's own
+ * footage, or the script spoken in a voice) is open in the editor; the full edit builds it from that
+ * storyboard and streams into its chat, like any full edit.
+ */
+ipcMain.handle(
+  "plan-build",
+  safe(async (path: string, plan: string, model: string, library?: string[]) => {
+    const emit = (event: ChatEvent) => send("chat-event", { path, event });
+    emit({ type: "start" });
+    const clips = [...(library ?? []), ...planMedia(plan).map((m) => m.path)].filter((c, i, all) => c !== path && all.indexOf(c) === i);
+    try {
+      const result = await runFullEdit(path, { plan, brief: "Make the video from the approved storyboard." }, model.replace(/^claude-code\//, ""), emit, { clips });
+      emit({ type: "result", result: { ...result, url: `${mediaUrl(result.final)}&v=${Date.now()}` } });
+      emit({ type: "text", delta: plainNotes(result.notes) || "Done." });
+      emit({ type: "done", changed: false });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      if (!/^Stopped/.test(error)) emit({ type: "error", error: `The video didn't finish: ${error}` });
+    }
+  }),
+);
+
+/**
+ * A picture the user added to a storyboard shot (Add → Your picture): copied into the storyboard's
+ * folder (assets/clips/), so the project keeps it and stays local. Returns its path there.
+ */
+ipcMain.handle(
+  "board-add-file",
+  safe(async (dir: string, file: string) => {
+    if (!existsSync(join(dir, "notes"))) throw new Error("That storyboard's folder isn't there any more.");
+    const into = join(dir, "assets", "clips");
+    mkdirSync(into, { recursive: true });
+    const base = file.split("/").pop()!.replace(/[^\w.-]+/g, "-") || "picture";
+    let name = base;
+    for (let n = 2; existsSync(join(into, name)); n++) name = base.replace(/(\.[^.]+)?$/, `-${n}$1`);
+    copyFileSync(file, join(into, name));
+    return `assets/clips/${name}`;
+  }),
+);
+
+/**
+ * "Something else" added to a storyboard shot: Claude draws it as a pencil sketch (strokes in a
+ * 300 x 300 box), which the drawing view then draws on, stroke by stroke, where the user put it.
+ */
+ipcMain.handle(
+  "draw-thing",
+  safe(async (name: string, model?: string) => {
+    const answer = await askClaude((model || "sonnet").replace(/^claude-code\//, ""), drawPrompt(name.trim().slice(0, 80)));
+    return parseDrawing(answer);
+  }),
+);
+
+/**
+ * A thing the user named on a storyboard shot, drawn from a real picture of it: Claude searches the web,
+ * each photo found is downloaded into the storyboard's folder and checked, and its subject cut out
+ * (src/pictures.ts). Each step is told to the app as it happens ("picture-progress").
+ */
+ipcMain.handle("find-picture", (e, dir: string, name: string) =>
+  safe(async () => {
+    if (!existsSync(join(dir, "notes"))) throw new Error("That storyboard's folder isn't there any more.");
+    return findPicture(dir, name, (step) => {
+      if (!e.sender.isDestroyed()) e.sender.send("picture-progress", { name, step });
+    });
+  })(e),
+);
+
+/** The files a storyboard from a script came with (its assets/clips/): pictures, footage and sound. */
+function planMedia(plan: string): { path: string; name: string }[] {
+  const dir = join(plan, "assets", "clips");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => ({ path: join(dir, f), name: f }));
+}
+/** Its footage and recordings (with sound), the ones a video can be built over. */
+ipcMain.handle(
+  "plan-media",
+  safe(async (plan: string) => {
+    const out: { path: string; name: string; kind: "video" | "audio"; seconds: number }[] = [];
+    for (const m of planMedia(plan)) {
+      if (!/\.(mov|mp4|m4v|mkv|webm|avi|mp3|wav|m4a|aac|aiff?|flac|ogg)$/i.test(m.name)) continue;
+      const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", m.path]).catch(() => ({ stdout: "{}" }));
+      const info = JSON.parse(stdout || "{}");
+      const types = (info.streams ?? []).map((s: { codec_type: string }) => s.codec_type);
+      if (!types.includes("audio")) continue; // a silent clip is B-roll, not a recording to build over
+      out.push({ path: m.path, name: m.name, kind: types.includes("video") ? "video" : "audio", seconds: Number(info.format?.duration) || 0 });
+    }
+    return out;
+  }),
+);
+
 ipcMain.handle("chat-stop", (_e, path: string) => (boardAnswers.delete(path), stopFullEdit(path), stopChat(path)));
 
 /** Storyboards waiting for the user, by video: their answer lets the full edit go on (or redraw). */
@@ -255,12 +350,13 @@ function runPlan(dir: string, job: (review: StoryboardReview, emit: (e: unknown)
 }
 const planModel = (m: string) => (m.startsWith("claude-code/") ? m.slice("claude-code/".length) : "sonnet");
 
-ipcMain.handle("plan-start", safe(async (req: { title?: string; script: string; direction?: string; format: Storyboard["format"]; assets: string[]; model: string }) => {
+ipcMain.handle("plan-start", safe(async (req: { title?: string; script: string; direction?: string; format: Storyboard["format"]; style?: Style; assets: string[]; model: string }) => {
   if (!req.script.trim()) throw new Error("Write or paste the script first.");
   const scenes = scenesOf(req.script).length;
   if (scenes < 3) throw new Error(`The script has ${scenes} scene${scenes === 1 ? "" : "s"}: put each scene on its own line (at least 3).`);
   const dir = planDir(req.title || req.script.split(/\s+/).slice(0, 6).join(" "));
-  return runPlan(dir, (review, emit) => planStoryboard({ ...req, model: planModel(req.model), review }, emit, dir));
+  const style = (STYLES as readonly string[]).includes(req.style ?? "") ? req.style : "auto";
+  return runPlan(dir, (review, emit) => planStoryboard({ ...req, style, model: planModel(req.model), review }, emit, dir));
 }));
 /** A saved storyboard opened again: drawing, Redraw and Approve, with Claude where it left off. */
 ipcMain.handle("plan-open", safe(async (dir: string, model: string) => {

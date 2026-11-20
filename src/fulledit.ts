@@ -48,7 +48,7 @@ export async function runFullEdit(
   try {
     const r = change
       ? await autoEditFix(video, before!.session, model, change, [], steps.on)
-      : await autoEdit({ video, brief: ask.brief ?? ask.change ?? "", reference: ask.reference, model, clips: opts.clips, review: opts.review }, steps.on);
+      : await autoEdit({ video, brief: ask.brief ?? ask.change ?? "", reference: ask.reference, model, clips: opts.clips, review: ask.plan ? undefined : opts.review, plan: ask.plan }, steps.on);
     steps.end();
     writeFileSync(savedFile(video), JSON.stringify({ session: r.session, version: r.version, notes: r.notes, model } satisfies Saved, null, 1));
     return { dir: r.dir, project: r.project, final: r.final, notes: r.notes, version: r.version };

@@ -44,6 +44,13 @@ export function App() {
   useEffect(() => window.creatron.onExportProgress((f: number) => set({ exporting: f })), []);
   useShortcuts();
   useEffect(() => window.creatron.onOpenPath((p: string) => open(p)), []);
+  // A file another part of the app asked to open (the storyboard's "Make the video").
+  const opening = useHome((h) => h.opening);
+  useEffect(() => {
+    if (!opening) return;
+    useHome.setState({ opening: null });
+    void open(opening).then((ok) => !ok && useHome.setState({ build: null }));
+  }, [opening]);
   // No window buttons in full screen: the top bar drops the space it keeps for them.
   useEffect(() => window.creatron.onFullScreen((on) => document.documentElement.classList.toggle("no-window-buttons", on)), []);
 

@@ -5,17 +5,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import {
-  BEAT_LABEL, CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, type Verdict, type Layer, EFFECTS, FONTS, fontParts, fontStack, TRANSITION_LABEL, boardLength,
-  movesOf,
+  STYLES, STYLE_INFO, BEAT_LABEL, CAMERAS, CAMERA_LABEL, KIND_LABEL, SHOT_KINDS, type Shot, type Storyboard, TRANSITIONS, type Verdict, type Layer, EFFECTS, FONTS, fontParts, fontStack, TRANSITION_LABEL, boardLength,
+  movesOf, handled,
 } from "../src/storyboard.ts";
 import { mediaUrl } from "./format.ts";
 import { Icon } from "./icons.tsx";
 import { StoryboardMark } from "./StoryboardMark.tsx";
 import { ClaudeSaid } from "./ClaudeSaid.tsx";
+import { useHome } from "./Dashboard.tsx";
+import { useModelChoice } from "./modelChoice.tsx";
 import { SketchPad, sketching } from "./SketchPad.tsx";
 import { DictationBar, DictationNote, MicButton, appendSpeech, dictating, useDictation } from "./Dictation.tsx";
 import { type BoardState, useEditor } from "./store.ts";
-import { INK, PAPER, accentOf, aspect, drawShot } from "./storyboardSketch.ts";
+import type { VoiceInfo } from "./env.d.ts";
+import { INK, PAPER, accentOf, aspect, drawShot, loadPictures, usePictures } from "./storyboardSketch.ts";
 
 
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;
@@ -101,10 +104,11 @@ export function Sketch({ b, shot, width, className, theme: fixed }: { b: BoardSt
   const data = JSON.stringify(shot);
   const chosen = useBoardTheme((t) => t.theme);
   const theme = fixed ?? chosen;
+  const pictures = usePictures((p) => p.version); // a picture layer arrived: draw again
   useEffect(() => {
     if (!ref.current || picture === undefined) return;
-    drawShot(ref.current, width, height, Math.min(3, window.devicePixelRatio || 2), shot, b.draft, picture, sketchTheme(theme));
-  }, [data, look, picture, width, theme]);
+    drawShot(ref.current, width, height, Math.min(3, window.devicePixelRatio || 2), shot, b.draft, picture, sketchTheme(theme), b.dir);
+  }, [data, look, picture, width, theme, pictures]);
   return (
     <div className={`sb-sketch ${picture === undefined ? "loading" : ""} ${className ?? ""}`} style={{ width, height }}>
       <canvas ref={ref} style={{ width, height }} />
@@ -127,6 +131,7 @@ export function StoryboardSheet() {
   const [note, setNote] = useState("");
   /** The user chose "All shots" while one was picked. Picking another shot goes back to just it. */
   const [whole, setWhole] = useState(false);
+  const [making, setMaking] = useState(false);
   const [hideSaid, setHideSaid] = useState(false);
   const close = () => useEditor.setState({ boardOpen: false });
 
@@ -153,7 +158,7 @@ export function StoryboardSheet() {
         else close();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") return e.preventDefault(), void approve();
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") return e.preventDefault(), void (b.plan ? setMaking(true) : approve());
       if (typing) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         // Undo / redo step between Claude's drafts (the editor underneath keeps its own undo).
@@ -193,12 +198,12 @@ export function StoryboardSheet() {
   const accent = accentOf(board);
   const waiting = b.status === "waiting";
   const redrawing = b.status === "redrawing";
-  const edited = shots.some((s) => s.dropped || s.ask?.trim() || s.marks?.length);
+  const edited = shots.some((s) => s.dropped || s.ask?.trim() || handled(s));
   const focused = shots.find((s) => s.id === focus);
   const sizes = frameSizes(board.format);
   const numOf = (id: string) => String(shots.findIndex((s) => s.id === id) + 1).padStart(2, "0");
   // What a Redraw changes: the open shot and any the user drew on or wrote a note on. Nothing else.
-  const noted = shots.filter((s) => s.ask?.trim() || s.marks?.length).map((s) => s.id);
+  const noted = shots.filter((s) => s.ask?.trim() || handled(s)).map((s) => s.id);
   const pickable = [...new Set([...(focus ? [focus] : []), ...noted])];
   const picked = whole ? [] : pickable;
   const pickedLabel = picked.length === 1 ? `Shot ${numOf(picked[0])}` : `${picked.length} shots`;
@@ -238,7 +243,7 @@ export function StoryboardSheet() {
     const s = useEditor.getState().board;
     if (!s || s.status !== "waiting") return;
     const touched = s.draft.shots.filter((x) => !only || only.includes(x.id));
-    if (!text.trim() && !touched.some((x) => x.ask?.trim() || x.dropped || x.marks?.length)) return setNote("Say what to change, draw on a shot, or add a note to one first.");
+    if (!text.trim() && !touched.some((x) => x.ask?.trim() || x.dropped || handled(x))) return setNote("Say what to change, draw on or add something to a shot, or add a note to one first.");
     const ok = await window.creatron.storyboardAnswer(s.video, { approve: false, board: s.draft, changes: text, drawings: await drawings(s), only });
     if (!ok) return setNote("This storyboard isn't waiting any more (the edit was stopped).");
     setNote("");
@@ -292,6 +297,16 @@ export function StoryboardSheet() {
         <p className="sb-idea">{board.idea}</p>
         <div className="sb-facts">
           <span className="sb-fact"><b>Shots</b>{kept.length} · {clock(total)} · {board.format}</span>
+          <label className="sb-fact" title={waiting ? "Change the style: the whole storyboard is redrawn in it" : STYLE_INFO[board.style ?? "auto"].says}>
+            <b>Style</b>
+            <select className="sb-style" value={board.style ?? "auto"} disabled={!waiting} onChange={(e) => {
+              const st = e.target.value as (typeof STYLES)[number];
+              setWhole(true);
+              setChanges(st === "auto" ? "Pick the style that fits best and redraw the whole storyboard in it." : `Restyle the whole storyboard in the ${STYLE_INFO[st].name} style. ${STYLE_INFO[st].brief}`);
+            }}>
+              {STYLES.map((st) => <option key={st} value={st}>{STYLE_INFO[st].name}</option>)}
+            </select>
+          </label>
           <span className="sb-fact"><b>Palette</b><span className="sb-swatches">{board.look.palette.map((c) => <i key={c} style={{ background: c }} title={c} />)}</span></span>
           <span className="sb-fact"><b>Font</b><span style={{ fontFamily: fontStack(fontParts(board.look.font).family), fontWeight: fontParts(board.look.font).weight }}>{board.look.font}</span></span>
           <span className="sb-fact wide" title={board.look.mood}><b>Look</b>{board.look.mood || "—"}</span>
@@ -344,7 +359,7 @@ export function StoryboardSheet() {
           <Pad b={b} shot={shots.find((x) => x.id === drawing)!} index={shots.findIndex((x) => x.id === drawing)} editable={waiting}
             busy={redrawing && Boolean(b.only?.includes(drawing))} said={b.saidFor?.includes(drawing) ? b.said : undefined}
             onFix={() => redraw("", [drawing])} onTry={(text) => redraw(text, [drawing])}
-            onChange={(marks) => update(drawing, { marks })} onClose={() => setDrawing(null)} />
+            onChange={(marks) => update(drawing, { marks })} onEdit={(patch) => update(drawing, patch)} onClose={() => setDrawing(null)} />
         )}
       </div>
 
@@ -379,7 +394,19 @@ export function StoryboardSheet() {
             />}
             {!dictation.listening && <MicButton d={dictation} className="sb-btn sb-mic" />}
             <button className="sb-btn" onClick={() => redraw()} disabled={!changes.trim() && !edited}><Icon name="sparkle" size={13} /> {picked.length ? `Redraw ${pickedLabel.toLowerCase()}` : "Redraw"}</button>
-            <button className="export-btn" onClick={approve} title={b.plan ? "Lock in this plan: it's saved with your script, ready for the shoot" : "Build the video from these shots"}>{b.plan ? "Approve storyboard" : <>Approve &amp; build</>} <kbd>⌘↵</kbd></button>
+            {b.plan ? (
+              <>
+                <button className="sb-btn" onClick={approve} title="Approve it and keep it for the shoot: saved with your script, PDF ready">Save plan</button>
+                <button className="export-btn" onClick={() => setMaking(true)} title="Approve it, then open the editor and build the video from these shots">Make the video <kbd>⌘↵</kbd></button>
+              </>
+            ) : (
+              <button className="export-btn" onClick={approve} title="Build the video from these shots">Approve &amp; build <kbd>⌘↵</kbd></button>
+            )}
+          </>
+        ) : b.plan && !redrawing ? (
+          <>
+            <p className="sb-foot-note">{b.status === "approved" ? "Approved and saved with your script. Make the video now, or take the PDF to the shoot." : "This storyboard is saved. Make the video from it whenever you're ready."}</p>
+            <button className="export-btn" onClick={() => setMaking(true)}>Make the video <kbd>⌘↵</kbd></button>
           </>
         ) : (
           <p className="sb-foot-note">{b.status === "approved" ? (b.plan ? "Approved. It's saved with your script; take the PDF to the shoot." : "Approved. Claude is building this video now; it follows these shots.") : redrawing ? (redrawingOnly ? `Claude is redrawing ${redrawingOnly.length === 1 ? "shot" : "shots"} ${redrawingOnly.map(numOf).join(", ")}. Every other shot stays exactly as it is.` : "Your changes went to Claude. The new draft opens here when it's ready.") : b.error ? `Claude stopped: ${friendlyError(b.error)}${b.plan ? " Open it again from the Storyboard Creator to go on." : ""}` : "This storyboard is no longer waiting for an answer."}</p>
@@ -390,6 +417,114 @@ export function StoryboardSheet() {
       </footer>
 
       {playing && <Animatic b={b} onClose={() => setPlaying(false)} />}
+      {making && <MakeVideo b={b} approve={waiting ? approve : undefined} onClose={() => setMaking(false)} />}
+    </div>
+  );
+}
+
+/**
+ * "Make the video" from a storyboard planned from a script: what the video is built over. The user's
+ * own footage when the storyboard came with some (picked first), else the script spoken in a voice
+ * from the Voice Lab (their own cloned voice first). Then the editor opens it and Claude builds the
+ * video from these shots, its progress in the chat.
+ */
+type Media = { path: string; name: string; kind: "video" | "audio"; seconds: number };
+function MakeVideo({ b, approve, onClose }: { b: BoardState; approve?: () => Promise<void>; onClose: () => void }) {
+  const [media, setMedia] = useState<Media[] | null>(null);
+  const [voices, setVoices] = useState<VoiceInfo[] | null>(null);
+  const [pick, setPick] = useState<{ file: string } | { voice: string } | null>(null);
+  const [step, setStep] = useState("");
+  const [error, setError] = useState("");
+  const [model] = useModelChoice();
+  useEffect(() => {
+    void Promise.all([window.creatron.planMedia(b.dir), window.creatron.voices()]).then(([m, v]) => {
+      const files = m.ok ? m.value : [];
+      const list = v.ok ? [...v.value].sort((x, y) => Number(y.kind === "cloned") - Number(x.kind === "cloned")) : [];
+      setMedia(files);
+      setVoices(list);
+      // Their footage first (a video over a sound file), else a voice: their own first.
+      const own = files.find((f) => f.kind === "video") ?? files[0];
+      setPick((p) => p ?? (own ? { file: own.path } : list[0] ? { voice: list[0].id } : null));
+    });
+  }, [b.dir]);
+  useEffect(() => window.creatron.onVoiceProgress((p) => p.stage === "speaking" && setStep(`Speaking line ${p.done + 1} of ${p.total}`)), []);
+
+  const lines = b.draft.shots.filter((s) => !s.dropped && s.line.trim()).map((s) => s.line.trim());
+  const go = async () => {
+    if (!pick) return;
+    setError("");
+    if (approve) {
+      setStep("Approving the storyboard");
+      await approve();
+    }
+    let file = "file" in pick ? pick.file : "";
+    if ("voice" in pick) {
+      setStep("Starting the voice");
+      const r = await window.creatron.generateVoiceover({ text: lines.join("\n"), voiceId: pick.voice, speed: 1 });
+      if (!r.ok) return setStep(""), setError(`The voice didn't work: ${r.error}`);
+      file = r.value.file;
+    }
+    const claude = model.startsWith("claude-code/") ? model : "claude-code/sonnet";
+    useHome.setState({ build: { media: file, plan: b.dir, title: b.draft.title, model: claude }, opening: file });
+    useEditor.setState({ boardOpen: false });
+    onClose();
+  };
+  const choose = async () => {
+    const path = await window.creatron.pickVideo();
+    if (!path) return;
+    const name = path.split("/").pop() ?? path;
+    setMedia((m) => [...(m ?? []).filter((x) => x.path !== path), { path, name, kind: /\.(mp3|wav|m4a|aac|aiff?|flac|ogg)$/i.test(path) ? "audio" : "video", seconds: 0 }]);
+    setPick({ file: path });
+  };
+  const busy = Boolean(step);
+  return (
+    <div className="sb-make-wrap" onClick={(e) => e.target === e.currentTarget && !busy && onClose()}>
+      <div className="sb-make" role="dialog" aria-label="Make the video">
+        <div className="sb-make-head">
+          <h3>Make the video</h3>
+          <button className="icon-btn" onClick={onClose} disabled={busy} title="Close"><Icon name="close" size={14} /></button>
+        </div>
+        <p className="dim small">Claude builds it from these {lines.length} shots in the editor{approve ? ", once the storyboard is approved" : ""}. What should it be built over?</p>
+        {media === null ? <p className="dim small">Looking at your files…</p> : (
+          <>
+            <div className="sb-make-group"><b>Your footage</b>
+              {media.length ? media.map((m) => (
+                <button key={m.path} className={`sb-make-opt ${pick && "file" in pick && pick.file === m.path ? "on" : ""}`} onClick={() => setPick({ file: m.path })} disabled={busy}>
+                  <Icon name={m.kind === "video" ? "video" : "music"} size={13} /><span>{m.name}</span>{m.seconds > 0 && <em>{clock(m.seconds)}</em>}
+                </button>
+              )) : <span className="dim small">None came with this storyboard.</span>}
+              <button className="sb-make-opt add" onClick={() => void choose()} disabled={busy}><Icon name="plus" size={13} /><span>Choose a recording…</span></button>
+            </div>
+            <div className="sb-make-group"><b>Or a voice reads the script</b>
+              {(voices ?? []).filter((v) => v.kind === "cloned").map((v) => (
+                <button key={v.id} className={`sb-make-opt ${pick && "voice" in pick && pick.voice === v.id ? "on" : ""}`} onClick={() => setPick({ voice: v.id })} disabled={busy}>
+                  <Icon name="mic" size={13} /><span>{v.name}</span><em>your voice</em>
+                </button>
+              ))}
+              {(voices ?? []).some((v) => v.kind === "builtin") && (() => {
+                const builtin = (voices ?? []).filter((v) => v.kind === "builtin");
+                const chosen = pick && "voice" in pick && builtin.some((v) => v.id === pick.voice) ? pick.voice : "";
+                return (
+                  <label className={`sb-make-opt sb-make-select ${chosen ? "on" : ""}`}>
+                    <Icon name="mic" size={13} />
+                    <select value={chosen} disabled={busy} onChange={(e) => e.target.value && setPick({ voice: e.target.value })}>
+                      <option value="">Another voice…</option>
+                      {builtin.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                    <em>built in</em>
+                  </label>
+                );
+              })()}
+              {voices && !voices.length && <span className="dim small">No voices yet: clone yours in the Voice Lab.</span>}
+            </div>
+          </>
+        )}
+        {error && <p className="sb-note">{error}</p>}
+        <div className="sb-make-foot">
+          <span className="dim small">{step ? `${step}…` : "Opens in the editor; progress shows in the chat."}</span>
+          <button className="export-btn" onClick={() => void go()} disabled={!pick || busy}>{busy ? "Working…" : "Make it"}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -515,6 +650,7 @@ function ShotDrawer({ b, shot, index, editable, redrawn, onClose, onChange, onDr
 function Pad(props: {
   b: BoardState; shot: Shot; index: number; editable: boolean; busy?: boolean; said?: Verdict;
   onFix: () => void; onTry: (text: string) => void; onChange: (marks: NonNullable<Shot["marks"]>) => void; onClose: () => void;
+  onEdit?: (patch: Partial<Shot>) => void;
 }) {
   const picture = usePicture(props.b, props.shot);
   const theme = useBoardTheme((t) => t.theme);
@@ -530,12 +666,13 @@ async function drawings(b: BoardState): Promise<Record<string, string>> {
   const ratio = aspect(b.draft.format);
   const w = ratio < 1 ? 540 : 960;
   const h = Math.round(w / ratio);
+  await loadPictures(b.dir, b.draft);
   for (const s of b.draft.shots) {
-    if (!s.marks?.length) continue;
+    if (!handled(s)) continue;
     const src = shotSource(b, s);
     const picture = src ? await loadPicture(src.file, src.at) : null;
     const c = document.createElement("canvas");
-    drawShot(c, w, h, 1, s, b.draft, picture, "dark");
+    drawShot(c, w, h, 1, s, b.draft, picture, "dark", b.dir);
     out[s.id] = c.toDataURL("image/png");
   }
   return out;
@@ -660,6 +797,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /** A print-ready page: a cover with the idea and look, then the shots like a film storyboard. */
 async function pdfHtml(b: BoardState): Promise<string> {
   const board = b.draft;
+  await loadPictures(b.dir, board);
   const shots = board.shots.filter((s) => !s.dropped);
   const ratio = aspect(board.format);
   const w = ratio < 1 ? 300 : 420;
@@ -669,7 +807,7 @@ async function pdfHtml(b: BoardState): Promise<string> {
     const src = shotSource(b, s);
     const picture = src ? await loadPicture(src.file, src.at) : null;
     const c = document.createElement("canvas");
-    drawShot(c, w, h, 2, s, board, picture, "paper");
+    drawShot(c, w, h, 2, s, board, picture, "paper", b.dir);
     images.push(c.toDataURL("image/jpeg", 0.9));
   }
   const accent = accentOf(board);

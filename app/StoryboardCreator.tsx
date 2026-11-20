@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import type { PlanEvent, SavedPlan } from "../src/chatTypes.ts";
-import { type Storyboard, sayingTime, scenesOf, stripSceneMark } from "../src/storyboard.ts";
+import { STYLES, STYLE_INFO, type Style, type Storyboard, sayingTime, scenesOf, stripSceneMark } from "../src/storyboard.ts";
 import { DictationBar, DictationNote, MicButton, appendSpeech, useDictation } from "./Dictation.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker, useModelChoice } from "./modelChoice.tsx";
@@ -82,6 +82,7 @@ function Form({ failed }: { failed?: string }) {
   const [script, setScript] = useState("");
   const [direction, setDirection] = useState("");
   const [format, setFormat] = useState<(typeof FORMATS)[number][0]>("9:16");
+  const [style, setStyle] = useState<Style>("auto");
   const [assets, setAssets] = useState<string[]>([]);
   const [dropping, setDropping] = useState(false);
   const [error, setError] = useState(failed ?? "");
@@ -112,7 +113,7 @@ function Form({ failed }: { failed?: string }) {
     if (!claude) return setError("The Storyboard Creator runs on your Claude plan: pick a Claude model below.");
     setError("");
     setStarting(true);
-    const r = await window.creatron.planStart({ title: title.trim() || undefined, script, direction: direction.trim() || undefined, format, assets, model });
+    const r = await window.creatron.planStart({ title: title.trim() || undefined, script, direction: direction.trim() || undefined, format, style, assets, model });
     setStarting(false);
     if (!r.ok) return setError(r.error);
     usePlan.setState({ job: { key: r.value.key, dir: r.value.dir, title: title.trim() || script.trim().split(/\s+/).slice(0, 6).join(" "), status: "drafting", step: "", scenes, format, started: Date.now() } });
@@ -176,6 +177,19 @@ function Form({ failed }: { failed?: string }) {
         </div>
       </div>
 
+      <div className="sbc-field">
+        <div className="sbc-label"><span>Style</span><span className="mono dim">how it looks and moves</span></div>
+        <div className="sbc-styles" role="radiogroup" aria-label="Style">
+          {STYLES.map((st) => (
+            <button key={st} role="radio" aria-checked={style === st} className={`sbc-style ${style === st ? "on" : ""}`} onClick={() => setStyle(st)} title={STYLE_INFO[st].says}>
+              <StylePreview style={st} />
+              <b>{STYLE_INFO[st].name}</b>
+              <span>{STYLE_INFO[st].says}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="sbc-row">
         <label className="sbc-field grow">
           <div className="sbc-label"><span>Direction</span><span className="mono dim">optional</span></div>
@@ -201,6 +215,26 @@ function Form({ failed }: { failed?: string }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A tiny picture of each style, drawn in CSS: what the video will feel like at a glance. Explainer:
+ * a face with an accent tag and a calm caption. Editorial: warm paper, a huge red number over an
+ * italic serif line. 3D: a lit block on a dark floor. Auto: the three, shuffled.
+ */
+function StylePreview({ style }: { style: Style }) {
+  if (style === "explainer") return (
+    <span className="sbp sbp-explainer"><i className="face" /><i className="tag">H₂O</i><i className="cap">LOOK FOR WATER</i></span>
+  );
+  if (style === "editorial") return (
+    <span className="sbp sbp-editorial"><i className="big">$10T</i><i className="serif">in assets</i><i className="ring" /></span>
+  );
+  if (style === "3d") return (
+    <span className="sbp sbp-3d"><i className="cube" /><i className="floor" /></span>
+  );
+  return (
+    <span className="sbp sbp-auto"><i /><i /><i /><em>Claude picks</em></span>
   );
 }
 

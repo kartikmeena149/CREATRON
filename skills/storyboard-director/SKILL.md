@@ -103,7 +103,10 @@ To keep panels clean:
 - **`focus`** on every zoom or punch-in: where it ends (the face, the chip, the highlighted words).
 - **`sketch`** (for shots with no footage): draw the subject big and simple, with a readable silhouette,
   in 6-16 strokes. Shade the subject (`shade` 0.5-0.8) and leave the background light or empty, so it reads
-  by contrast. Draw the real object (wheels, windows, pins, eyes), not a blob, and never text.
+  by contrast. Draw the real object (wheels, windows, pins, eyes), not a blob, and never text. Name each
+  stroke's `object` ("satellite", "earth"): the user moves and resizes the drawing thing by thing. Give every
+  closed shape its real `color` (#rrggbb, natural and a little muted): Creatro paints the sketch as a
+  watercolour illustration, and colour is what makes it read as a picture, not a diagram.
 - **Transitions are cuts.** Use `whip`, `zoom` or `flash` only between beats, at most 2-3 in a short.
 - **`sound`** names a sound for a meaningful event ("riser into the turn", "pop as the tag lands"). Don't put the
   same whoosh on every shot.

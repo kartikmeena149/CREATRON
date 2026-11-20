@@ -46,7 +46,14 @@ declare global {
       extractEffects(file: string): Promise<Result<string[]>>;
       chatSend(path: string, message: string, current: EditPlan, model: string, focus?: unknown, answer?: boolean, library?: string[]): Promise<Result<void>>;
       storyboardAnswer(video: string, answer: { approve: boolean; board: unknown; changes?: string; drawings?: Record<string, string>; only?: string[] }): Promise<boolean>;
-      planStart(req: { title?: string; script: string; direction?: string; format: "9:16" | "16:9" | "1:1" | "4:5"; assets: string[]; model: string }): Promise<Result<{ key: string; dir: string }>>;
+      planStart(req: { title?: string; script: string; direction?: string; format: "9:16" | "16:9" | "1:1" | "4:5"; style?: "auto" | "explainer" | "editorial" | "3d"; assets: string[]; model: string }): Promise<Result<{ key: string; dir: string }>>;
+      boardAddFile(dir: string, file: string): Promise<Result<string>>;
+      findPicture(dir: string, name: string): Promise<Result<{ file: string; credit: string; cutout: boolean }>>;
+      /** Each step of finding a picture, as it happens ("Searching the web…"). */
+      onPictureProgress(fn: (p: { name: string; step: string }) => void): () => void;
+      drawThing(name: string, model?: string): Promise<Result<{ d: string; shade?: number }[]>>;
+      planMedia(dir: string): Promise<Result<{ path: string; name: string; kind: "video" | "audio"; seconds: number }[]>>;
+      planBuild(path: string, plan: string, model: string, library?: string[]): Promise<Result<void>>;
       planStop(): Promise<void>;
       planOpen(dir: string, model: string): Promise<Result<{ key: string; dir: string }>>;
       plansList(): Promise<SavedPlan[]>;
